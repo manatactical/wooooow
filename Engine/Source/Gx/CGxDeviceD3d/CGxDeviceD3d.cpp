@@ -2824,6 +2824,10 @@ int32_t CGxDeviceD3d::DeviceSetFormat(const CGxFormat& format) {
     this->m_hwnd = nullptr;
     this->m_format = format;
 
+    // Not in the original binary. DIAG only: m_format.m_fixLag drives a per-frame GPU sync spin in
+    // ScenePresent, and it defaults from the video-hardware DB so it is not visible in Config.wtf.
+    CGxDevice::Log("DeviceSetFormat(): m_fixLag = %d", static_cast<int32_t>(format.m_fixLag));
+
     CGxFormat createFormat = format;
 
     if (this->ICreateWindow(createFormat) && this->ICreateD3dDevice(createFormat) && CGxDevice::DeviceSetFormat(createFormat)) {
@@ -3229,10 +3233,21 @@ void CGxDeviceD3d::ScenePresent() {
         int32_t scrShotClick = this->m_scrShotClick;
 
         CGxDevice::ScenePresent();
-        this->ISceneEnd();
-        this->ICursorDraw();
+
+        {
+            RenderProfileScope endScope(RenderPhase_PresentSceneEnd);
+            this->ISceneEnd();
+        }
+
+        {
+            RenderProfileScope cursorScope(RenderPhase_PresentCursor);
+            this->ICursorDraw();
+        }
 
         if (this->m_format.m_fixLag) {
+            // DIAG: times the believed full-GPU-sync spin. See RenderProfiler.h for why it suspicious.
+            RenderProfileScope fixLagScope(RenderPhase_PresentFixLag);
+
             if (this->m_eventQuery) {
                 this->m_eventQuery->Issue(D3DISSUE_END);
 
@@ -3261,10 +3276,17 @@ void CGxDeviceD3d::ScenePresent() {
             this->DeviceScreenShot();
         }
 
-        this->WaitForFPSCap();
+        {
+            RenderProfileScope capScope(RenderPhase_PresentFpsCap);
+            this->WaitForFPSCap();
+        }
 
-        if (FAILED(this->m_d3dDevice->Present(nullptr, nullptr, nullptr, nullptr))) {
-            this->m_context = 0;
+        {
+            RenderProfileScope presentScope(RenderPhase_PresentCall);
+
+            if (FAILED(this->m_d3dDevice->Present(nullptr, nullptr, nullptr, nullptr))) {
+                this->m_context = 0;
+            }
         }
 
         if (this->m_d3dStereoHandle && this->m_d3dStereoDirty) {

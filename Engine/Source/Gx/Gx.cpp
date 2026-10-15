@@ -9,6 +9,8 @@
 #include "Engine/Source/Tempest/C3Vector.h"
 #include "Engine/Source/Tempest/CImVector.h"
 #include "Engine/Source/Storm/H/storm.h"
+// Not in the original binary: DIAG only, see RenderProfiler.h.
+#include "Engine/Source/Os/RenderProfiler.h"
 
 // STATIC: 0x00A2D57C
 static const uint32_t s_texelSize[GxTexFormats_Last] = { 0, 4, 4, 2, 2, 2, 2, 4, 4, 2, 4, 4, 4 };
@@ -1096,7 +1098,12 @@ void GxuFlushDrawList(EGxuDrawListCategory category, const C3Vector& viewPos) {
 // OFFSET: 0x00682A00
 void GxScenePresent() {
     C3Vector viewPos(0.0f, 0.0f, 0.0f);
-    GxuFlushDrawList(GxuCat_2, viewPos);
+
+    {
+        RenderProfileScope flushScope(RenderPhase_PresentFlush);
+        GxuFlushDrawList(GxuCat_2, viewPos);
+    }
+
     g_theGxDevicePtr->ScenePresent();
 }
 

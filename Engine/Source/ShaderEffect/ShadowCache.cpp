@@ -6,6 +6,7 @@
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/CGxTexFlags.h"
 #include "Engine/Source/Gx/Gx.h"
+#include "Engine/Source/Os/RenderProfiler.h"
 #include "Engine/Source/Services/Texture.h"
 #include "Engine/Source/ShaderEffect/ShaderEffect.h"
 #include "Engine/Source/Tempest/CFrustum.h"
@@ -1062,7 +1063,11 @@ int32_t CShadowCache::Update(const C3Vector& pos, int32_t useCullFrustum) {
             }
 
             CShadowCache::GatherBands(data, pos, frustum, useBandCull);
-            CShadowCache::RenderBands(data);
+
+            {
+                RenderProfileScope bandScope(RenderPhase_ShadowBands);
+                CShadowCache::RenderBands(data);
+            }
         }
     }
 

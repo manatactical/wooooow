@@ -20,6 +20,7 @@
 #include "Engine/Source/Tempest/CAaBox.h"
 #include "WoW/Source/WorldClient/CWorldOcclusion.h"
 #include "Engine/Source/Gx/Gx.h"
+#include "Engine/Source/Os/RenderProfiler.h"
 #include "Engine/Source/ShaderEffect/ShaderEffectManager.h"
 #include "Engine/Source/Tempest/CRect.h"
 #include "WoW/Source/WorldClient/MapObj.h"
@@ -112,12 +113,23 @@ void CShadowQuery::Update() {
     direction.x = direction.x * inv;
     direction.y = direction.y * inv;
     direction.z = z * inv;
-    CShadowCache::PreUpdate(direction);
+    {
+        RenderProfileScope preScope(RenderPhase_ShadowPreUpdate);
+        CShadowCache::PreUpdate(direction);
+    }
+
     C3Vector viewer(0.0f, 0.0f, 0.0f);
     GetViewerPosition(&viewer);
     CShadowCache::SetDebugParams(1.0f, 0);
+
+    // NOTE: the whole-update timer is the caller's ShadowQuery scope, so there is deliberately no scope
+    // here. Adding one double-counts: both would increment the same phase counter for a single call.
     CShadowCache::Update(viewer, useCullFrustum);
-    CShadowCache::PostUpdate();
+
+    {
+        RenderProfileScope postScope(RenderPhase_ShadowPostUpdate);
+        CShadowCache::PostUpdate();
+    }
 }
 
 // VERIFY: 7421bb67 manual
@@ -270,6 +282,8 @@ void CShadowQuery::AllocBuffers() {
 // VERIFY: 3e3dfd04 manual
 // OFFSET: 0x007BD200
 int32_t CShadowQuery::QueryCallback(CShadowCacheQueryData& data, uint32_t frame) {
+    RenderProfileScope callScope(RenderPhase_ShadowQueryCall);
+
     CShadowQuery::AllocBuffers();
 
     if (!++CShadowQuery::s_stamp) {
@@ -323,6 +337,8 @@ int32_t CShadowQuery::QueryCallback(CShadowCacheQueryData& data, uint32_t frame)
 // VERIFY: 2abab737 manual
 // OFFSET: 0x007BBC50
 int32_t CShadowQuery::RenderCallback(CShadowCacheQueryData& data, int32_t band, CGxTex* target, CGxTex* colorTarget, C3Vector& direction) {
+    RenderProfileScope callScope(RenderPhase_ShadowRenderCall);
+
     ShadowQueryBuffers& buffers = CShadowQuery::s_bandBuffers[band];
 
     if (!buffers.m_groupCount && !buffers.m_untextured.m_count && !buffers.m_textured.m_count) {

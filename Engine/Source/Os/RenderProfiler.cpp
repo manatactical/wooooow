@@ -15,6 +15,18 @@ const char* s_phaseNames[RenderPhase_Count] = {
     "uiLayers",
     "gxuFont",
     "present",
+    "presentFlush",
+    "presentFixLag",
+    "presentSceneEnd",
+    "presentCursor",
+    "presentFpsCap",
+    "presentCall",
+    "shadowPreUpdate",
+    "shadowQuery",
+    "shadowQueryCall",
+    "shadowRenderCall",
+    "shadowBands",
+    "shadowPostUpdate",
     "worldScene",
     "m2Draw",
     "m2Setup",
@@ -42,7 +54,6 @@ const char* s_phaseNames[RenderPhase_Count] = {
     "entities",
     "liquid",
     "gxuScene",
-    "shadowQuery",
     "collisionDebug",
     "cullTblChunks",
     "cullTblMapObj",
@@ -57,6 +68,12 @@ const char* s_phaseNames[RenderPhase_Count] = {
     "occlProj",
     "occlScatter",
 };
+
+// The array above is indexed by the RenderProfilePhase enum, so a missing entry silently shifts every
+// name after it and the report lies about which phase is which. That happened once already (six shadow
+// names were dropped by a failed edit and shadowQuery was reported as worldScene), so it is checked at
+// compile time rather than trusted.
+static_assert(sizeof(s_phaseNames) / sizeof(s_phaseNames[0]) == RenderPhase_Count, "s_phaseNames must have one entry per RenderProfilePhase");
 
 // Per-frame accumulators, in QPC ticks.
 uint64_t s_phaseTicks[RenderPhase_Count];

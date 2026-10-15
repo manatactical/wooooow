@@ -22,6 +22,25 @@ enum RenderProfilePhase {
     RenderPhase_UiLayers,      // the per-layer paint loop (contains worldRender)
     RenderPhase_GxuFont,
     RenderPhase_Present,
+
+    // Inner: what the present phase actually spends its time on. m_fixLag is believed to spin on a D3D
+    // event query (a full GPU sync) before Present, which would make it the whole cost.
+    RenderPhase_PresentFlush,      // GxuFlushDrawList(GxuCat_2) in GxScenePresent, the caller of ScenePresent
+    RenderPhase_PresentFixLag,     // the m_fixLag event-query spin loop
+    RenderPhase_PresentSceneEnd,   // ISceneEnd
+    RenderPhase_PresentCursor,     // ICursorDraw
+    RenderPhase_PresentFpsCap,     // WaitForFPSCap
+    RenderPhase_PresentCall,       // the D3D9 Present call itself, plus NvAPI stereo
+
+    // Inner: CShadowQuery::Update. With extShadowQuality 5 (cascaded shadow maps) this is the single
+    // largest named phase; these say whether the cost is the frustum setup, the caster query (which
+    // walks the world and draws them) or the band pyramid.
+    RenderPhase_ShadowPreUpdate,   // CShadowCache::PreUpdate, sun direction in view space
+    RenderPhase_ShadowQuery,       // CShadowCache::Update, the whole thing
+    RenderPhase_ShadowQueryCall,   // s_queryCallback -> CShadowQuery::QueryCallback, collects casters
+    RenderPhase_ShadowRenderCall,  // s_renderCallback -> CShadowQuery::RenderCallback, draws the map
+    RenderPhase_ShadowBands,       // GatherBands + RenderBands, the cascade pyramid
+    RenderPhase_ShadowPostUpdate,  // CShadowCache::PostUpdate
     RenderPhase_WorldScene,     // CWorld::Render -> CWorldScene::Render, everything below it
     RenderPhase_M2Draw,         // the scene->Draw(M2PASS_*) passes
     RenderPhase_M2Setup,        // inner: the redundant per-batch state setup inside DrawBatch
@@ -54,7 +73,6 @@ enum RenderProfilePhase {
     // Inner: the parts of CWorldScene::Render that sit outside the named phases above. Without these the
     // draw-group report lumps them all into worldScene and the biggest bucket has no name.
     RenderPhase_GxuScene,        // CWorldScene::s_unk_B2EB68.Render()
-    RenderPhase_ShadowQuery,     // CShadowQuery::Update, the shadow-map pass
     RenderPhase_CollisionDebug,
 
     // Inner: the six per-bucket culls inside CullSortTable's 64-iteration loop.

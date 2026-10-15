@@ -12,6 +12,7 @@
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/CGxMatrixStack.h"
 #include "Engine/Source/Gx/CGxVertexPC.h"
+#include "Engine/Source/Os/RenderProfiler.h"
 #include "Engine/Source/Tempest/CWFrustum.h"
 #include "Engine/Source/Gx/Gx.h"
 #include "Engine/Source/Gx/Types.h"
@@ -2564,42 +2565,54 @@ void CWorldScene::UpdateOcclusion(CSortEntry* entry) {
 
     CMapChunk* chunk = entry->m_holedChunkList.Head();
 
-    while (chunk) {
-        CMapChunk* next = entry->m_holedChunkList.Next(chunk);
+    {
+        RenderProfileScope scope(RenderPhase_OcclHoledGuarded);
 
-        if (!chunk->m_header->m_holes) {
-            chunk->m_sortListLink.Unlink();
+        while (chunk) {
+            CMapChunk* next = entry->m_holedChunkList.Next(chunk);
 
-            if (CWorldScene::s_occlusionFarDepth > chunk->m_distToCamera && CWorldScene::s_occlusionNearDepth < chunk->m_distToCamera) {
-                chunk->ClipBufferUpdate();
+            if (!chunk->m_header->m_holes) {
+                chunk->m_sortListLink.Unlink();
+
+                if (CWorldScene::s_occlusionFarDepth > chunk->m_distToCamera && CWorldScene::s_occlusionNearDepth < chunk->m_distToCamera) {
+                    chunk->ClipBufferUpdate();
+                }
             }
-        }
 
-        chunk = next;
+            chunk = next;
+        }
     }
 
     chunk = entry->m_holedChunkList.Head();
 
-    while (chunk) {
-        CMapChunk* next = entry->m_holedChunkList.Next(chunk);
-        chunk->m_sortListLink.Unlink();
-        chunk->ClipBufferUpdate();
-        chunk = next;
+    {
+        RenderProfileScope scope(RenderPhase_OcclHoledAll);
+
+        while (chunk) {
+            CMapChunk* next = entry->m_holedChunkList.Next(chunk);
+            chunk->m_sortListLink.Unlink();
+            chunk->ClipBufferUpdate();
+            chunk = next;
+        }
     }
 
     CWorldOccluder* occluder = entry->m_occluderList.Head();
 
-    while (occluder) {
-        CWorldOccluder* next = entry->m_occluderList.Next(occluder);
-        occluder->ClipBufferUpdate();
+    {
+        RenderProfileScope scope(RenderPhase_OcclOccluders);
 
-        if (CWorld::enables & Enable_PortalVis) {
-            CWorldScene::sortTable.m_visibleOccluderList.LinkToTail(occluder);
-        } else {
-            occluder->Recycle();
+        while (occluder) {
+            CWorldOccluder* next = entry->m_occluderList.Next(occluder);
+            occluder->ClipBufferUpdate();
+
+            if (CWorld::enables & Enable_PortalVis) {
+                CWorldScene::sortTable.m_visibleOccluderList.LinkToTail(occluder);
+            } else {
+                occluder->Recycle();
+            }
+
+            occluder = next;
         }
-
-        occluder = next;
     }
 }
 
@@ -4121,12 +4134,38 @@ void CWorldScene::CullSortTable(CRect* rect) {
     CSortEntry* entry = CWorldScene::sortTable.m_table;
 
     for (uint32_t i = 0; i < 64; i++) {
-        CWorldScene::CullChunks(entry, i);
-        CWorldScene::CullMapObjDefGroups(entry, rect, i);
-        CWorldScene::CullLiquid(entry);
-        CWorldScene::CullEntitys(entry);
-        CWorldScene::CullDoodads(entry, CWorldView::GetFadeLevelForDistance(i * 33.333332f));
-        CWorldScene::UpdateOcclusion(entry);
+        // DIAG: which of the six per-bucket culls actually costs the frame. The phase names in the log
+        // are per-frame totals (calls/frame ~= 64), so the whole CullSortTable cost is split across them.
+        {
+            RenderProfileScope scope(RenderPhase_CullTblChunks);
+            CWorldScene::CullChunks(entry, i);
+        }
+
+        {
+            RenderProfileScope scope(RenderPhase_CullTblMapObj);
+            CWorldScene::CullMapObjDefGroups(entry, rect, i);
+        }
+
+        {
+            RenderProfileScope scope(RenderPhase_CullTblLiquid);
+            CWorldScene::CullLiquid(entry);
+        }
+
+        {
+            RenderProfileScope scope(RenderPhase_CullTblEntitys);
+            CWorldScene::CullEntitys(entry);
+        }
+
+        {
+            RenderProfileScope scope(RenderPhase_CullTblDoodads);
+            CWorldScene::CullDoodads(entry, CWorldView::GetFadeLevelForDistance(i * 33.333332f));
+        }
+
+        {
+            RenderProfileScope scope(RenderPhase_CullTblOcclusion);
+            CWorldScene::UpdateOcclusion(entry);
+        }
+
         entry++;
     }
 

@@ -11,6 +11,10 @@
 
 #include <cstdint>
 
+// DIAG: counts fint_ calls that fall outside int32 range, where the fast path falls back to lrintf.
+// Should stay 0; if it does not, the fast path is not safe for that call site.
+void RenderProfilerCountFintOutOfRange();
+
 enum RenderProfilePhase {
     // Outer scope: the whole CGWorldFrame::OnWorldRender, the real per-frame budget.
     RenderPhase_Frame = 0,
@@ -42,14 +46,63 @@ enum RenderProfilePhase {
     RenderPhase_Portals,
     RenderPhase_Entities,
     RenderPhase_Liquid,
+
+    // Inner: the six per-bucket culls inside CullSortTable's 64-iteration loop.
+    RenderPhase_CullTblChunks,
+    RenderPhase_CullTblMapObj,
+    RenderPhase_CullTblLiquid,
+    RenderPhase_CullTblEntitys,
+    RenderPhase_CullTblDoodads,
+    RenderPhase_CullTblOcclusion,
+
+    // Inner: the three walks inside UpdateOcclusion, so we learn whether the cost is the scanline
+    // clip-buffer scatter (ClipBufferUpdate, vectorizable) or occluder/volume iteration.
+    RenderPhase_OcclHoledGuarded,   // walk 1: holed chunks with the depth-range guard
+    RenderPhase_OcclHoledAll,       // walk 2: remaining holed chunks, ClipBufferUpdate unconditionally
+    RenderPhase_OcclOccluders,      // walk 3: occluder ClipBufferUpdate + recycle/visible list
+    RenderPhase_CullBufferUpdate,   // ClipBufferUpdate bodies only, from any caller
+
+    // Inner: inside UpdateBufferChunk, the last fork. Projection is 12 mul-adds per vertex; the scatter
+    // is up to 16 segments x up to 384 scanlines per chunk. Whichever dominates decides the fix.
+    RenderPhase_OcclProj,           // the vertex projection loop
+    RenderPhase_OcclScatter,        // the segment scanline scatter loops (holes and non-holes)
     RenderPhase_Count,
 };
 
 const char* RenderProfilerPhaseName(RenderProfilePhase phase);
 
+// DIAG: times one ClipBufferUpdate body.
+class RenderProfileClipBufferScope {
+    public:
+    RenderProfileClipBufferScope();
+    ~RenderProfileClipBufferScope();
+
+    private:
+    uint64_t m_start;
+};
+
+// DIAG: times the two halves of UpdateBufferChunk, so projection can be separated from the scanline scatter.
+class RenderProfileOcclusionSubScope {
+    public:
+    explicit RenderProfileOcclusionSubScope(uint64_t& accumulator);
+    ~RenderProfileOcclusionSubScope();
+
+    private:
+    uint64_t& m_accumulator;
+    uint64_t m_start;
+};
+
+// Accumulators the sub-scope writes into, owned by the profiler.
+uint64_t& RenderProfilerOcclProjTicks();
+uint64_t& RenderProfilerOcclScatterTicks();
+
 // Counts CM2SceneRender::DrawBatch invocations, so per-batch overhead can be judged: a phase that
 // costs 3ms split over 20 batches is a different problem from the same 3ms over 2000.
 void RenderProfilerCountM2Batch();
+
+// DIAG: opaque draw calls in the current pass, before and after the adjacent-run merge, so the win is
+// measured directly rather than predicted.
+void RenderProfilerCountOpaqueDrawCalls(uint32_t before, uint32_t after);
 
 // Accumulates into the current frame, whose buckets were cleared by BeginFrame.
 class RenderProfileScope {

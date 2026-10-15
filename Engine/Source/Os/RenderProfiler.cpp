@@ -37,6 +37,18 @@ const char* s_phaseNames[RenderPhase_Count] = {
     "portals",
     "entities",
     "liquid",
+    "cullTblChunks",
+    "cullTblMapObj",
+    "cullTblLiquid",
+    "cullTblEntitys",
+    "cullTblDoodads",
+    "cullTblOccl",
+    "occlHoledGuarded",
+    "occlHoledAll",
+    "occlOccluders",
+    "clipBufferUpdate",
+    "occlProj",
+    "occlScatter",
 };
 
 // Per-frame accumulators, in QPC ticks.
@@ -54,6 +66,12 @@ uint32_t s_windowStartMs;
 // M2 batches submitted this frame / this window. Not a phase: a count, so the per-batch cost is sane.
 uint32_t s_frameBatches;
 uint32_t s_windowBatches;
+uint32_t s_frameOpaqueBefore;
+uint32_t s_frameOpaqueAfter;
+uint32_t s_windowOpaqueBefore;
+uint32_t s_windowOpaqueAfter;
+uint32_t s_fintOutOfRange;
+uint32_t s_windowFintOutOfRange;
 
 int32_t s_enabled = 1;
 
@@ -85,6 +103,57 @@ const char* RenderProfilerPhaseName(RenderProfilePhase phase) {
 void RenderProfilerCountM2Batch() {
     if (s_enabled && s_inFrame) {
         s_frameBatches++;
+    }
+}
+
+void RenderProfilerCountFintOutOfRange() {
+    s_fintOutOfRange++;
+}
+
+void RenderProfilerCountOpaqueDrawCalls(uint32_t before, uint32_t after) {
+    if (s_enabled && s_inFrame) {
+        s_frameOpaqueBefore += before;
+        s_frameOpaqueAfter += after;
+    }
+}
+
+RenderProfileClipBufferScope::RenderProfileClipBufferScope() {
+    // Deliberately NOT gated on s_inFrame: UpdateOcclusion runs inside the frame, but this scope also
+    // guards against a zeroed timestamp when profiling is off.
+    this->m_start = (s_enabled && s_inFrame) ? OsGetAsyncTimeClocks() : 0;
+}
+
+RenderProfileClipBufferScope::~RenderProfileClipBufferScope() {
+    if (!this->m_start || !s_inFrame) {
+        return;
+    }
+
+    s_phaseTicks[RenderPhase_CullBufferUpdate] += OsGetAsyncTimeClocks() - this->m_start;
+    s_phaseCalls[RenderPhase_CullBufferUpdate]++;
+}
+
+uint64_t& RenderProfilerOcclProjTicks() {
+    return s_phaseTicks[RenderPhase_OcclProj];
+}
+
+uint64_t& RenderProfilerOcclScatterTicks() {
+    return s_phaseTicks[RenderPhase_OcclScatter];
+}
+
+RenderProfileOcclusionSubScope::RenderProfileOcclusionSubScope(uint64_t& accumulator) : m_accumulator(accumulator) {
+    this->m_start = (s_enabled && s_inFrame) ? OsGetAsyncTimeClocks() : 0;
+}
+
+RenderProfileOcclusionSubScope::~RenderProfileOcclusionSubScope() {
+    if (!this->m_start || !s_inFrame) {
+        return;
+    }
+
+    this->m_accumulator += OsGetAsyncTimeClocks() - this->m_start;
+
+    // Calls are counted on the proj scope only, since both halves run once per UpdateBufferChunk call.
+    if (&this->m_accumulator == &s_phaseTicks[RenderPhase_OcclProj]) {
+        s_phaseCalls[RenderPhase_OcclProj]++;
     }
 }
 
@@ -122,6 +191,8 @@ void RenderProfilerBeginFrame() {
     memset(s_phaseTicks, 0, sizeof(s_phaseTicks));
     memset(s_phaseCalls, 0, sizeof(s_phaseCalls));
     s_frameBatches = 0;
+    s_frameOpaqueBefore = 0;
+    s_frameOpaqueAfter = 0;
 
     // The frame phase is measured here and in EndFrame rather than by a scope object: a scope would
     // have to outlive EndFrame(), which fights the RAII order at the call site.
@@ -141,6 +212,10 @@ void RenderProfilerEndFrame() {
 
     s_windowFrames++;
     s_windowBatches += s_frameBatches;
+    s_windowOpaqueBefore += s_frameOpaqueBefore;
+    s_windowOpaqueAfter += s_frameOpaqueAfter;
+    s_windowFintOutOfRange += s_fintOutOfRange;
+    s_fintOutOfRange = 0;
 
     for (int32_t i = 0; i < RenderPhase_Count; i++) {
         s_windowTicks[i] += s_phaseTicks[i];
@@ -180,12 +255,20 @@ void RenderProfilerEndFrame() {
 
     SLogWrite(log, "-- %u frames over %ums: wall %.3fms/frame (%.1f fps), measured %.3fms, unmeasured %.3fms (%.1f%%)", s_windowFrames, windowMs, wallMs, wallFps, avgFrameMs, unmeasuredMs, wallMs > 0.0 ? 100.0 * unmeasuredMs / wallMs : 0.0);
 
+    if (s_windowFintOutOfRange) {
+        SLogWrite(log, "   fint_ out of int32 range: %u/%u calls (fast path fell back to lrintf)", s_windowFintOutOfRange, s_windowFrames);
+    }
+
     if (s_windowBatches) {
         double batchesPerFrame = static_cast<double>(s_windowBatches) / static_cast<double>(s_windowFrames);
         double setupMs = static_cast<double>(s_windowTicks[RenderPhase_M2Setup]) / ticksPerMs;
         double perBatchUs = s_windowBatches ? 1000.0 * setupMs / static_cast<double>(s_windowBatches) : 0.0;
+        if (s_windowOpaqueBefore) {
+            double before = static_cast<double>(s_windowOpaqueBefore) / static_cast<double>(s_windowFrames);
+            double after = static_cast<double>(s_windowOpaqueAfter) / static_cast<double>(s_windowFrames);
 
-        SLogWrite(log, "   m2 batches: %.1f/frame, setup %.3fus per batch (%.3fms/frame)", batchesPerFrame, perBatchUs, s_windowFrames ? setupMs / static_cast<double>(s_windowFrames) : 0.0);
+            SLogWrite(log, "   opaque draws: %.1f -> %.1f per frame (%.0f%% fewer)", before, after, before > 0.0 ? 100.0 * (before - after) / before : 0.0);
+        }
     }
     SLogWrite(log, "  phase          calls/frame   total ms   per-frame   in-frame %");
 
@@ -209,6 +292,9 @@ void RenderProfilerEndFrame() {
     memset(s_windowTicks, 0, sizeof(s_windowTicks));
     memset(s_windowCalls, 0, sizeof(s_windowCalls));
     s_windowBatches = 0;
+    s_windowOpaqueBefore = 0;
+    s_windowOpaqueAfter = 0;
+    s_windowFintOutOfRange = 0;
     s_windowFrames = 0;
     s_windowStartMs = now;
 }

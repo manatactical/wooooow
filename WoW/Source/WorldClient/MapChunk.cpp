@@ -11,6 +11,7 @@
 #include "Engine/Source/Gx/Gx.h"
 #include "Engine/Source/Gx/Types.h"
 #include "Engine/Source/Gxu/GxuLight.h"
+#include "Engine/Source/Os/RenderProfiler.h"
 #include "Engine/Source/Services/SysMessage.h"
 #include "Engine/Source/Storm/H/storm.h"
 #include "Engine/Source/Storm/H/stpl.h"
@@ -1058,6 +1059,8 @@ void CMapChunk::UpdateLights() {
 // VERIFY: c9630247 manual
 // OFFSET: 0x007CFB10
 void CMapChunk::ClipBufferUpdate() {
+    RenderProfileClipBufferScope clipScope;
+
     uint32_t indices[9];
     uint32_t base = 0;
 

@@ -2,6 +2,10 @@
 #include <malloc.h>
 #include <cmath>
 #include <cstring>
+
+#if defined(WOWDECOMP_ARCH_64)
+#include <xmmintrin.h>
+#endif
 #include "Engine/Source/Tempest/C44Matrix.h"
 #include "Engine/Source/Tempest/CAaBox.h"
 #include "Engine/Source/Tempest/CAaSphere.h"
@@ -11,6 +15,7 @@
 #include "WoW/Source/WorldClient/CWorldMath.h"
 #include "WoW/Source/WorldClient/Map.h"
 #include "WoW/Source/WorldClient/Types.h"
+#include "Engine/Source/Os/RenderProfiler.h"
 #include "WoW/Source/WorldClient/World.h"
 #include "WoW/Source/WorldClient/WorldView.h"
 #include "WoW/Source/WorldClient/MapChunk.h"
@@ -326,6 +331,23 @@ static WorldOccluderData s_worldOccluders[5] = {
 void CWorldOccluder::Initialize() {
 }
 
+// DIAG/PERF: CMath::fint_ is `static_cast<int32_t>(lrintf(f))` (CMath.h:73), and MSVC only folds lrintf
+// into a cvtss2si instruction under /fp:fast -- which this project sets for Win32 only (CMakeLists.txt:30,
+// deliberately, to match the VS2005 original). On x64 the build runs default /fp:precise, so every fint_
+// call site in the client is an actual CRT call.
+//
+// UpdateBufferChunk makes two per segment and ~580 calls per frame, so on x64 that is thousands of CRT
+// calls a frame for what the Win32 build does in one instruction. DELIBERATE DEVIATION from the original
+// source form: on x64 this emits the same cvtss2si the Win32 build gets. Rounding is unchanged
+// (cvtss2si honours MXCSR, which is round-to-nearest-even by default), and Win32 keeps the original call.
+static inline int32_t ProjectedToScanline(float x) {
+#if defined(WOWDECOMP_ARCH_64)
+    return _mm_cvtss_si32(_mm_set_ss(x * 64.0f - 0.5f)) + 192;
+#else
+    return CMath::fint_(x * 64.0f - 0.5f) + 192;
+#endif
+}
+
 // VERIFY: 4db2afc6 manual
 // OFFSET: 0x0078F6A0
 void CWorldOcclusion::UpdateBufferChunk(const C3Vector* verts, const float* heights, const uint32_t* indices, int32_t count, const C3Vector* offset, int32_t holes) {
@@ -335,47 +357,56 @@ void CWorldOcclusion::UpdateBufferChunk(const C3Vector* verts, const float* heig
 
     C3Vector* projected = s_clipBufferVerts;
 
-    for (int32_t i = 0; i < count; i++) {
-        projected->x = verts[*indices].x + offset->x;
-        projected->y = verts[*indices].y + offset->y;
-        projected->z = heights[*indices] + offset->z;
-        *projected = *projected * CWorldScene::s_clipBufferMatrix;
+    {
+        RenderProfileOcclusionSubScope projScope(RenderProfilerOcclProjTicks());
 
-        float inv = 1.0f / projected->z;
-        projected++;
-        indices++;
-        projected[-1].x = projected[-1].x * inv;
-        projected[-1].y = inv * projected[-1].y;
+        for (int32_t i = 0; i < count; i++) {
+            projected->x = verts[*indices].x + offset->x;
+            projected->y = verts[*indices].y + offset->y;
+            projected->z = heights[*indices] + offset->z;
+            *projected = *projected * CWorldScene::s_clipBufferMatrix;
+
+            float inv = 1.0f / projected->z;
+            projected++;
+            indices++;
+            projected[-1].x = projected[-1].x * inv;
+            projected[-1].y = inv * projected[-1].y;
+        }
     }
 
-    if (holes) {
-        for (int32_t i = 0; i < count - 1; i++) {
-            int32_t x0 = CMath::fint_(s_clipBufferVerts[i].x * 64.0f - 0.5f) + 192;
-            int32_t x1 = CMath::fint_(s_clipBufferVerts[i + 1].x * 64.0f - 0.5f) + 192;
+    {
+        RenderProfileOcclusionSubScope scatterScope(RenderProfilerOcclScatterTicks());
 
-            if (x1 < x0) {
-                int32_t swap = x0;
-                x0 = x1;
-                x1 = swap;
-            }
+        if (holes) {
+            for (int32_t i = 0; i < count - 1; i++) {
+                // DELIBERATE DEVIATION: avoids two lrintf CRT calls per segment on x64. See
+                // ProjectedToScanline above.
+                int32_t x0 = ProjectedToScanline(s_clipBufferVerts[i].x);
+                int32_t x1 = ProjectedToScanline(s_clipBufferVerts[i + 1].x);
 
-            if (x0 < 0) {
-                x0 = 0;
-            }
+                if (x1 < x0) {
+                    int32_t swap = x0;
+                    x0 = x1;
+                    x1 = swap;
+                }
 
-            if (x1 >= 384) {
-                x1 = 383;
-            }
+                if (x0 < 0) {
+                    x0 = 0;
+                }
 
-            for (; x0 <= x1; x0++) {
-                if (!(CWorldScene::s_clipBufferMask[x0] & 1)) {
-                    CWorldScene::s_clipBuffer[x0] = -1000001.0f;
+                if (x1 >= 384) {
+                    x1 = 383;
+                }
+
+                for (; x0 <= x1; x0++) {
+                    if (!(CWorldScene::s_clipBufferMask[x0] & 1)) {
+                        CWorldScene::s_clipBuffer[x0] = -1000001.0f;
+                    }
                 }
             }
-        }
 
-        return;
-    }
+            return;
+        }
 
     for (int32_t i = 0; i < count - 1; i++) {
         const C3Vector& p0 = s_clipBufferVerts[i];
@@ -386,8 +417,9 @@ void CWorldOcclusion::UpdateBufferChunk(const C3Vector* verts, const float* heig
         }
 
         float height = p1.y <= p0.y ? p1.y : p0.y;
-        int32_t x0 = CMath::fint_(p0.x * 64.0f - 0.5f) + 192;
-        int32_t x1 = CMath::fint_(p1.x * 64.0f - 0.5f) + 192;
+        // DELIBERATE DEVIATION: see ProjectedToScanline above. Avoids two lrintf CRT calls per segment.
+        int32_t x0 = ProjectedToScanline(p0.x);
+        int32_t x1 = ProjectedToScanline(p1.x);
 
         if (x1 < x0) {
             int32_t swap = x0;
@@ -407,6 +439,7 @@ void CWorldOcclusion::UpdateBufferChunk(const C3Vector* verts, const float* heig
             if (height > CWorldScene::s_clipBuffer[x0]) {
                 CWorldScene::s_clipBuffer[x0] = height;
             }
+        }
         }
     }
 }
@@ -604,6 +637,8 @@ void CWorldScene::AddWorldOccluders() {
 // VERIFY: be6bb79d auto
 // OFFSET: 0x007CC880
 void CWorldOccluder::ClipBufferUpdate() {
+    RenderProfileClipBufferScope clipScope;
+
     CWorldOcclusion::UpdateBuffer(this->m_points, 2, 1);
 }
 

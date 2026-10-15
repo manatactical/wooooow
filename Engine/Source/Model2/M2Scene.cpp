@@ -7,6 +7,7 @@
 #include "Engine/Source/Model2/M2Scene.h"
 #include "Engine/Source/Base/ObjectAlloc.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
+#include "Engine/Source/Os/RenderProfiler.h"
 #include "Engine/Source/Model2/M2Cache.h"
 #include "Engine/Source/Model2/M2Light.h"
 #include "Engine/Source/Model2/M2Model.h"
@@ -2193,6 +2194,50 @@ int32_t CM2Scene::Animate(const C3Vector& cameraPos) {
     M2HeapSort(&CM2Scene::SortOpaque, this->m_passElements[0].m_data, this->m_passElements[0].m_count, this);
     M2HeapSort(&CM2Scene::SortTransparent, this->m_passElements[1].m_data, this->m_passElements[1].m_count, this);
     M2HeapSort(&CM2Scene::SortTransparent, this->m_passElements[2].m_data, this->m_passElements[2].m_count, this);
+
+    // MEASUREMENT ONLY, changes nothing that renders. Counts how many opaque draw calls pass 0 would need
+    // if adjacent elements that a merge could legally combine were collapsed into one instanced run.
+    //
+    // This key is deliberately strict, because a real merge has to be:
+    //  - same shared model, batch, skinSection and boneCombo (DrawBatchDoodad uploads one section's bones)
+    //  - same effect and shader permutes (shaders are set once per run)
+    //  - same alpha, clip-plane flag and shadow value (SetupMaterial reads these once, from the leader)
+    //  - lighting equal by CONTENT, not pointer: m_currentLighting is usually &model->m_lighting, an
+    //    embedded per-model object, so pointer compares never match across instances.
+    //    LightingColorsMatch is the engine's own content comparison (CM2SceneRender.cpp:196).
+    //  - IsBatchDoodadCompatible on the batch: this is the engine's only gate before the instanced
+    //    uploader. Promoting an element to type 2 without it bypasses per-element bone/shader upload.
+    //  - m_fFlags & 0x2000 clear: the type-2 draw path skips that check (CM2SceneRender.cpp:981), so a
+    //    promoted element would draw geometry the engine currently culls.
+    //
+    // Pass 0 only: passes 1/2 are depth-sorted transparency, where batching breaks draw order.
+    {
+        TSGrowableArray<uint32_t>& list = this->m_passElements[0];
+        uint32_t before = list.m_count;
+        uint32_t runs = 0;
+
+        for (uint32_t i = 0; i < list.m_count; ) {
+            M2Element* element = &this->m_elements.m_data[list.m_data[i]];
+            uint32_t j = i + 1;
+
+            int32_t groupable = element->m_type == 0 && !(element->m_model->m_fFlags & 0x2000) && element->m_model->IsBatchDoodadCompatible(element->m_batch);
+
+            if (groupable) {
+                for (; j < list.m_count; j++) {
+                    M2Element* other = &this->m_elements.m_data[list.m_data[j]];
+
+                    if (other->m_type != 0 || other->m_model->m_shared != element->m_model->m_shared || other->m_batch != element->m_batch || other->m_skinSection != element->m_skinSection || other->m_skinSection->m_boneComboIndex != element->m_skinSection->m_boneComboIndex || other->m_effect != element->m_effect || other->m_vertexPermute != element->m_vertexPermute || other->m_pixelPermute != element->m_pixelPermute || other->m_alpha != element->m_alpha || other->m_shadowValue != element->m_shadowValue || other->m_flags != element->m_flags || (other->m_model->m_fFlags & 0x2000) || !other->m_model->IsBatchDoodadCompatible(other->m_batch) || !CM2SceneRender::LightingColorsMatch(other->m_model->m_currentLighting, element->m_model->m_currentLighting)) {
+                        break;
+                    }
+                }
+            }
+
+            runs++;
+            i = j > i ? j : i + 1;
+        }
+
+        RenderProfilerCountOpaqueDrawCalls(before, runs);
+    }
 
     if ((this->m_cache->m_flags & 0x80) && additiveCount > 1) {
         this->SortAdditiveParticleElements(1);

@@ -1,0 +1,214 @@
+// Not in the original binary. See RenderProfiler.h. Diagnostic only, safe to delete.
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include "Engine/Source/Os/RenderProfiler.h"
+#include "Engine/Source/Os/System.h"
+#include "Engine/Source/Os/TimeManager.h"
+#include "Engine/Source/Storm/H/storm.h"
+
+namespace {
+
+const char* s_phaseNames[RenderPhase_Count] = {
+    "frame",
+    "worldRender",
+    "uiLayers",
+    "gxuFont",
+    "present",
+    "worldScene",
+    "m2Draw",
+    "m2Setup",
+    "drawLists",
+    "spellVisuals",
+    "particulate",
+    "nameplates",
+    "ffxFinish",
+    "updatePools",
+    "occluders",
+    "viewerMapObj",
+    "cullSort",
+    "cullPortal",
+    "cullMapObj",
+    "sortedModels",
+    "m2Animate",
+    "chunks",
+    "mapObjGroups",
+    "horizon",
+    "portals",
+    "entities",
+    "liquid",
+};
+
+// Per-frame accumulators, in QPC ticks.
+uint64_t s_phaseTicks[RenderPhase_Count];
+uint32_t s_phaseCalls[RenderPhase_Count];
+bool s_inFrame;
+uint64_t s_frameStart;
+
+// Rolling window, so the report is not dominated by a single hitchy frame.
+uint64_t s_windowTicks[RenderPhase_Count];
+uint32_t s_windowCalls[RenderPhase_Count];
+uint32_t s_windowFrames;
+uint32_t s_windowStartMs;
+
+// M2 batches submitted this frame / this window. Not a phase: a count, so the per-batch cost is sane.
+uint32_t s_frameBatches;
+uint32_t s_windowBatches;
+
+int32_t s_enabled = 1;
+
+// QPC ticks per millisecond, resolved once. OsGetAsyncClocksPerSecond is cheap but this runs in
+// the inner scope destructor, so cache it.
+double s_ticksPerMs;
+
+double TicksPerMs() {
+    if (s_ticksPerMs == 0.0) {
+        int64_t perSecond = OsGetAsyncClocksPerSecond();
+
+        // A zero or negative frequency would divide by zero below; fall back to "ticks are ms".
+        s_ticksPerMs = perSecond > 0 ? static_cast<double>(perSecond) * 0.001 : 1.0;
+    }
+
+    return s_ticksPerMs;
+}
+
+}  // namespace
+
+const char* RenderProfilerPhaseName(RenderProfilePhase phase) {
+    if (phase < 0 || phase >= RenderPhase_Count) {
+        return "?";
+    }
+
+    return s_phaseNames[phase];
+}
+
+void RenderProfilerCountM2Batch() {
+    if (s_enabled && s_inFrame) {
+        s_frameBatches++;
+    }
+}
+
+RenderProfileScope::RenderProfileScope(RenderProfilePhase phase) {
+    this->m_phase = phase;
+    this->m_start = 0;
+
+    if (!s_enabled || !s_inFrame) {
+        return;
+    }
+
+    this->m_start = OsGetAsyncTimeClocks();
+}
+
+RenderProfileScope::~RenderProfileScope() {
+    if (!this->m_start || !s_inFrame) {
+        return;
+    }
+
+    uint64_t elapsed = OsGetAsyncTimeClocks() - this->m_start;
+
+    s_phaseTicks[this->m_phase] += elapsed;
+    s_phaseCalls[this->m_phase]++;
+}
+
+void RenderProfilerSetEnabled(int32_t enabled) {
+    s_enabled = enabled != 0;
+}
+
+int32_t RenderProfilerEnabled() {
+    return s_enabled;
+}
+
+void RenderProfilerBeginFrame() {
+    memset(s_phaseTicks, 0, sizeof(s_phaseTicks));
+    memset(s_phaseCalls, 0, sizeof(s_phaseCalls));
+    s_frameBatches = 0;
+
+    // The frame phase is measured here and in EndFrame rather than by a scope object: a scope would
+    // have to outlive EndFrame(), which fights the RAII order at the call site.
+    s_frameStart = OsGetAsyncTimeClocks();
+    s_inFrame = true;
+}
+
+void RenderProfilerEndFrame() {
+    s_inFrame = false;
+
+    if (!s_enabled) {
+        return;
+    }
+
+    s_phaseTicks[RenderPhase_Frame] = OsGetAsyncTimeClocks() - s_frameStart;
+    s_phaseCalls[RenderPhase_Frame] = 1;
+
+    s_windowFrames++;
+    s_windowBatches += s_frameBatches;
+
+    for (int32_t i = 0; i < RenderPhase_Count; i++) {
+        s_windowTicks[i] += s_phaseTicks[i];
+        s_windowCalls[i] += s_phaseCalls[i];
+    }
+
+    uint32_t now = OsGetAsyncTimeMs();
+
+    if (!s_windowStartMs) {
+        s_windowStartMs = now;
+        return;
+    }
+
+    if (s_windowFrames < 240 && now - s_windowStartMs < 2000) {
+        return;
+    }
+
+    double ticksPerMs = TicksPerMs();
+    HSLOG log;
+
+    if (!SLogCreate("Logs\\render_profile.log", 4, &log)) {
+        s_windowFrames = 0;
+        s_windowStartMs = now;
+        return;
+    }
+
+    uint64_t frameTicks = s_windowTicks[RenderPhase_Frame];
+    double frameMsTotal = static_cast<double>(frameTicks) / ticksPerMs;
+    double avgFrameMs = s_windowFrames ? frameMsTotal / s_windowFrames : 0.0;
+
+    // Wall clock, not CPU-derived: the old line divided 1000 by CPU time and reported 215fps when
+    // the client itself said 140. Anything outside the profiled pass shows up as the gap here.
+    uint32_t windowMs = now - s_windowStartMs;
+    double wallFps = windowMs ? 1000.0 * static_cast<double>(s_windowFrames) / static_cast<double>(windowMs) : 0.0;
+    double wallMs = s_windowFrames ? static_cast<double>(windowMs) / static_cast<double>(s_windowFrames) : 0.0;
+    double unmeasuredMs = wallMs - avgFrameMs;
+
+    SLogWrite(log, "-- %u frames over %ums: wall %.3fms/frame (%.1f fps), measured %.3fms, unmeasured %.3fms (%.1f%%)", s_windowFrames, windowMs, wallMs, wallFps, avgFrameMs, unmeasuredMs, wallMs > 0.0 ? 100.0 * unmeasuredMs / wallMs : 0.0);
+
+    if (s_windowBatches) {
+        double batchesPerFrame = static_cast<double>(s_windowBatches) / static_cast<double>(s_windowFrames);
+        double setupMs = static_cast<double>(s_windowTicks[RenderPhase_M2Setup]) / ticksPerMs;
+        double perBatchUs = s_windowBatches ? 1000.0 * setupMs / static_cast<double>(s_windowBatches) : 0.0;
+
+        SLogWrite(log, "   m2 batches: %.1f/frame, setup %.3fus per batch (%.3fms/frame)", batchesPerFrame, perBatchUs, s_windowFrames ? setupMs / static_cast<double>(s_windowFrames) : 0.0);
+    }
+    SLogWrite(log, "  phase          calls/frame   total ms   per-frame   in-frame %");
+
+    // Phases are nested (frame wraps everything), so each is reported as a share of the frame
+    // bucket, which is the only honest denominator available.
+    for (int32_t i = 1; i < RenderPhase_Count; i++) {
+        if (!s_windowTicks[i]) {
+            continue;
+        }
+
+        double totalMs = static_cast<double>(s_windowTicks[i]) / ticksPerMs;
+        double share = frameTicks ? 100.0 * static_cast<double>(s_windowTicks[i]) / static_cast<double>(frameTicks) : 0.0;
+
+        SLogWrite(log, "  %-14s %10.2f %10.3f %10.4f %9.1f%%", s_phaseNames[i], static_cast<double>(s_windowCalls[i]) / static_cast<double>(s_windowFrames), totalMs, totalMs / static_cast<double>(s_windowFrames), share);
+    }
+
+    SLogWrite(log, "  %-14s %10.2f %10.3f %10.4f %9.1f%% (frame = measured total, not wall clock)", s_phaseNames[RenderPhase_Frame], static_cast<double>(s_windowCalls[RenderPhase_Frame]) / static_cast<double>(s_windowFrames), frameMsTotal, avgFrameMs, 100.0);
+
+    SLogClose(log);
+
+    memset(s_windowTicks, 0, sizeof(s_windowTicks));
+    memset(s_windowCalls, 0, sizeof(s_windowCalls));
+    s_windowBatches = 0;
+    s_windowFrames = 0;
+    s_windowStartMs = now;
+}

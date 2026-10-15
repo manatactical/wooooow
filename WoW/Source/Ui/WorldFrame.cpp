@@ -19,6 +19,7 @@
 #include "Engine/Source/Gx/Gx.h"
 #include "Engine/Source/Gxu/Gxu.h"
 #include "Engine/Source/Model2/M2Scene.h"
+#include "Engine/Source/Os/RenderProfiler.h"
 #include "Engine/Source/Os/Time.h"
 #include "Engine/Source/Os/TimeManager.h"
 #include "Engine/Source/Services/Camera.h"
@@ -1657,6 +1658,10 @@ void CGWorldFrame::UpdateObject(CGObject_C* object, uint32_t flags) {
 // VERIFY: 2ea40d3b manual
 // OFFSET: 0x004F8EA0
 void CGWorldFrame::OnWorldRender() {
+    // DIAG: a phase of the frame, not the frame. OnPaint owns the frame boundary now, because this
+    // is dispatched from the layer loop and present happens after it returns.
+    RenderProfileScope worldRenderScope(RenderPhase_WorldRender);
+
     CRect window = { 0.0f, 0.0f, 0.0f, 0.0f };
     g_theGxDevicePtr->CapsWindowSize(window);
 
@@ -1722,7 +1727,12 @@ void CGWorldFrame::OnWorldRender() {
     }
 
     CShaderEffect::UpdateProjMatrix();
-    CWorld::Render(this->m_camera->m_position, this->m_elapsedSec);
+
+    {
+        RenderProfileScope scope(RenderPhase_WorldScene);
+        CWorld::Render(this->m_camera->m_position, this->m_elapsedSec);
+    }
+
     CMap::RenderFootprints();
     ClntObjMgrEnumVisibleObjects(UnitPostAnimateProc, this);
     CGUnit_C::NamePlateSetResortAll(false);
@@ -1730,10 +1740,12 @@ void CGWorldFrame::OnWorldRender() {
     CGUnit_C::NamePlateUpdateColor(false);
 
     if (this->m_namePlateFlags & 0x1) {
+        RenderProfileScope scope(RenderPhase_Nameplates);
         SmartScreenRectClearGrid(0);
         CGUnit_C::UnitNameplatesReposition(this);
         this->m_namePlateFlags &= ~0x1;
     }
+
 
     CM2Scene* scene = World::s_m2Scene;
 
@@ -1743,42 +1755,69 @@ void CGWorldFrame::OnWorldRender() {
 
     scene->SetFloat18(-CWorld::s_unk_CD7758);
     scene->m_passMask = CWorld::m_M2PassMask;
-    scene->Draw(M2PASS_0);
+
+    {
+        RenderProfileScope scope(RenderPhase_M2Draw);
+        scene->Draw(M2PASS_0);
+    }
+
 
     if (s_spellShadowStyle < 2) {
         DrawSpellCursorShadow(0x200122);
     }
 
-    GxuSortDrawList(GxuCat_0, GxuSort_VtxStream, *World::GetCamPos());
-    GxuFlushDrawList(GxuCat_0, *World::GetCamPos());
-    CWorldScene::RenderDetailDoodads();
-
-    if (World::SceneCamLiquidStatus(nullptr)) {
-        CWorldScene::RenderBarriers(this->m_elapsedSec);
-        scene->Draw(M2PASS_1);
-        CWorldScene::RenderWeather();
-        CWorldScene::RenderLiquidPass();
-        scene->Draw(M2PASS_2);
-    } else {
-        scene->Draw(M2PASS_2);
-        CWorldScene::RenderLiquidPass();
-        CWorldScene::RenderWeather();
-        CWorldScene::RenderBarriers(this->m_elapsedSec);
-        scene->Draw(M2PASS_1);
+    {
+        RenderProfileScope scope(RenderPhase_DrawLists);
+        GxuSortDrawList(GxuCat_0, GxuSort_VtxStream, *World::GetCamPos());
+        GxuFlushDrawList(GxuCat_0, *World::GetCamPos());
+        CWorldScene::RenderDetailDoodads();
     }
+
+
+    {
+        RenderProfileScope scope(RenderPhase_M2Draw);
+
+        if (World::SceneCamLiquidStatus(nullptr)) {
+            CWorldScene::RenderBarriers(this->m_elapsedSec);
+            scene->Draw(M2PASS_1);
+            CWorldScene::RenderWeather();
+            CWorldScene::RenderLiquidPass();
+            scene->Draw(M2PASS_2);
+        } else {
+            scene->Draw(M2PASS_2);
+            CWorldScene::RenderLiquidPass();
+            CWorldScene::RenderWeather();
+            CWorldScene::RenderBarriers(this->m_elapsedSec);
+            scene->Draw(M2PASS_1);
+        }
+    }
+
 
     if (s_spellShadowStyle < 2) {
         DrawSpellCursorShadow(0x20000);
     }
 
-    SpellVisualsTick();
-    SpellVisualsRender();
-    CGUnit_C::RenderMissileTrajectoryTargetingTexture();
-    this->ClearTrackedObjects();
-    CWorldScene::RenderParticulate();
-    GxuSortDrawList(GxuCat_1, GxuSort_B2F, *World::GetCamPos());
-    GxuFlushDrawList(GxuCat_1, *World::GetCamPos());
-    DayNight::RenderGlares();
+    {
+        RenderProfileScope scope(RenderPhase_SpellVisuals);
+        SpellVisualsTick();
+        SpellVisualsRender();
+        CGUnit_C::RenderMissileTrajectoryTargetingTexture();
+        this->ClearTrackedObjects();
+    }
+
+    {
+        RenderProfileScope scope(RenderPhase_Particulate);
+        CWorldScene::RenderParticulate();
+    }
+
+    {
+        RenderProfileScope scope(RenderPhase_DrawLists);
+        GxuSortDrawList(GxuCat_1, GxuSort_B2F, *World::GetCamPos());
+        GxuFlushDrawList(GxuCat_1, *World::GetCamPos());
+        DayNight::RenderGlares();
+    }
+
+    PlayerNameUpdateLate();
     PlayerNameUpdateLate();
 
     if (CWorld::enables & 0x20000000) {
@@ -1789,8 +1828,12 @@ void CGWorldFrame::OnWorldRender() {
     SmartScreenRectClearGrid(1);
     CGChatBubbleFrame::OnWorldRender(this);
     GxXformSetViewport(minX, maxX, minY, maxY, minZ, maxZ);
-    FFX::Finish();
-    CVehiclePassenger_C::PostRenderUpdateAll();
+
+    {
+        RenderProfileScope scope(RenderPhase_FfxFinish);
+        FFX::Finish();
+        CVehiclePassenger_C::PostRenderUpdateAll();
+    }
 }
 
 // VERIFY: 79b17fb9 manual

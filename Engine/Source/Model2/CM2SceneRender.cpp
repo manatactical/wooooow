@@ -1,6 +1,7 @@
 #include <cmath>
 #include <cstdint>
 #include "Engine/Source/Model2/CM2SceneRender.h"
+#include "Engine/Source/Os/RenderProfiler.h"
 #include "Engine/Source/Gx/CGxBuf.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/Gx.h"
@@ -414,6 +415,10 @@ void CM2SceneRender::SetupMaterial() {
 // VERIFY: aeedaf63 manual
 // OFFSET: 0x008203B0
 void CM2SceneRender::DrawBatch() {
+    // DIAG: the DebugLog below is a vsnprintf + OutputDebugStringA on EVERY batch. If a debugger is
+    // attached that is a per-batch syscall, and it is the first thing to try removing if m2Draw is hot.
+    RenderProfilerCountM2Batch();
+
     DebugLog("Batch: model=%s index=%d", this->m_curModel->m_shared->m_fileNameWithoutPath, this->m_curElement->m_index);
 
     M2Element* element = this->m_curElement;
@@ -422,9 +427,12 @@ void CM2SceneRender::DrawBatch() {
     this->m_curMaterial = &this->m_data->m_materials[this->m_curBatch->m_materialIndex];
     element->m_effect->SetCurrent();
 
-    this->SetupLighting();
-    this->SetupMaterial();
-    this->SetupTextures();
+    {
+        RenderProfileScope setupScope(RenderPhase_M2Setup);
+        this->SetupLighting();
+        this->SetupMaterial();
+        this->SetupTextures();
+    }
 
     if (CShaderEffect::s_enableShaders && (this->m_curType != this->m_prevType || this->m_curModel != this->m_prevModel || this->m_curSkinSection->m_boneComboIndex != this->m_prevSkinSection->m_boneComboIndex)) {
         float* constants = g_theGxDevicePtr->ShaderConstantsLock(GxSh_Vertex) + 31 * 4;

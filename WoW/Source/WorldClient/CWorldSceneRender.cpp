@@ -26,6 +26,7 @@
 #include "WoW/Source/WorldClient/ShadowQuery.h"
 #include "WoW/Source/WorldClient/SortTable.h"
 #include "Engine/Source/Gx/CGxMatrixStack.h"
+#include "Engine/Source/Os/RenderProfiler.h"
 #include "Engine/Source/ShaderEffect/ShadowCache.h"
 #include "Engine/Source/Tempest/C44Matrix.h"
 
@@ -69,6 +70,10 @@ void CWorldScene::RenderCollisionDebug() {
 // VERIFY: cd492c82 manual
 // OFFSET: 0x0079A870
 void CWorldScene::Render(const C3Vector& cameraPos, float time) {
+    // DIAG: sub-phases of the worldScene phase, which the caller times. The frame itself is measured
+    // in CGWorldFrame::OnWorldRender, so there is no frame scope and no BeginFrame/EndFrame here.
+
+
     if (!CWorldScene::s_viewerMapObjDef) {
         CWorldScene::ComputeExteriorSortDistances();
     }
@@ -89,17 +94,25 @@ void CWorldScene::Render(const C3Vector& cameraPos, float time) {
     CWorldScene::s_fogFovPadding = CWorld::farFog / cosf(camera->FOV() * 0.5f) - CWorld::farFog;
 
     World::UpdateObjectFadeouts();
-    CMapRenderChunk::UpdatePools();
-    CMapObj::UpdatePools();
-    CDetailDoodad::UpdatePools();
+
+    {
+        RenderProfileScope scope(RenderPhase_UpdatePools);
+        CMapRenderChunk::UpdatePools();
+        CMapObj::UpdatePools();
+        CDetailDoodad::UpdatePools();
+    }
+
     memset(CWorldScene::s_clipBufferMask, 0, sizeof(CWorldScene::s_clipBufferMask));
 
     for (uint32_t i = 0; i < sizeof(CWorldScene::s_clipBuffer) / sizeof(CWorldScene::s_clipBuffer[0]); i++) {
         CWorldScene::s_clipBuffer[i] = -1000000.0f;
     }
 
-    CWorldOcclusion::ClearVolumes();
-    CWorldScene::AddWorldOccluders();
+    {
+        RenderProfileScope scope(RenderPhase_Occluders);
+        CWorldOcclusion::ClearVolumes();
+        CWorldScene::AddWorldOccluders();
+    }
 
     if (CWorldScene::s_viewerMapObjDef) {
         CWorldScene::s_cullPassStamp++;
@@ -130,11 +143,17 @@ void CWorldScene::Render(const C3Vector& cameraPos, float time) {
             CWorldScene::sortTable.Clear();
         } else {
             CWorldScene::s_occlusionNearDepth = CWorldScene::frustumPortalView.m_maxViewDepth + 33.333332f;
-            CWorldScene::CullSortTable(&CWorldScene::frustumPortalView.m_rect);
+            {
+                RenderProfileScope scope(RenderPhase_CullSort);
+                CWorldScene::CullSortTable(&CWorldScene::frustumPortalView.m_rect);
+            }
         }
 
         CRect fullRect = { 0.0f, 0.0f, 1.0f, 1.0f };
-        CWorldScene::CullThroughPortal(&fullRect);
+        {
+            RenderProfileScope scope(RenderPhase_CullPortal);
+            CWorldScene::CullThroughPortal(&fullRect);
+        }
     } else {
         CWorldScene::s_cullPassStamp++;
         CRect fullRect = { 0.0f, 0.0f, 1.0f, 1.0f };
@@ -145,11 +164,21 @@ void CWorldScene::Render(const C3Vector& cameraPos, float time) {
         CWorldScene::frustumPortalView.m_maxViewDepth = 0.0f;
         CWorldScene::s_occlusionNearDepth = -10000.0f;
         CWorldScene::frustumPortalView.m_vertCount = 0;
-        CWorldScene::CullSortTable(&CWorldScene::frustumPortalView.m_rect);
+        {
+            RenderProfileScope scope(RenderPhase_CullSort);
+            CWorldScene::CullSortTable(&CWorldScene::frustumPortalView.m_rect);
+        }
     }
 
-    CWorldScene::CullMapObjDefGroup();
-    CWorldScene::UpdateSortedModels();
+    {
+        RenderProfileScope scope(RenderPhase_CullMapObj);
+        CWorldScene::CullMapObjDefGroup();
+    }
+
+    {
+        RenderProfileScope scope(RenderPhase_SortedModels);
+        CWorldScene::UpdateSortedModels();
+    }
     CWorldScene::sortTable.m_pendingExteriorGroupList.UnlinkAll();
 
     DayNight::DNInfo* info = DayNight::GetInfo();
@@ -184,6 +213,8 @@ void CWorldScene::Render(const C3Vector& cameraPos, float time) {
     CM2Scene* scene = World::s_m2Scene;
 
     if (scene) {
+        RenderProfileScope scope(RenderPhase_M2Animate);
+
         scene->m_flags |= 0x1;
         scene->AdvanceTime(static_cast<uint32_t>(CMath::fint_(time * 1000.0f)));
         scene->Animate(cameraPos);
@@ -194,11 +225,24 @@ void CWorldScene::Render(const C3Vector& cameraPos, float time) {
     CShadowQuery::Update();
     CShaderEffect::UpdateProjMatrix();
     CWorldScene::ApplyFogState();
-    CWorldScene::RenderChunks();
-    CWorldScene::RenderMapObjDefGroups();
-    CWorldScene::RenderHorizon();
+    {
+        RenderProfileScope scope(RenderPhase_Chunks);
+        CWorldScene::RenderChunks();
+    }
+
+    {
+        RenderProfileScope scope(RenderPhase_MapObjGroups);
+        CWorldScene::RenderMapObjDefGroups();
+    }
+
+    {
+        RenderProfileScope scope(RenderPhase_Horizon);
+        CWorldScene::RenderHorizon();
+    }
 
     if (CWorldScene::s_unk_ADF570.m_maxViewDepth >= 0.0f) {
+        RenderProfileScope scope(RenderPhase_Portals);
+
         if (CWorldScene::s_exteriorPortalViews.Count()) {
             CWorldScene::CreateInversePortalList();
             CWorldScene::RenderPortalList(&CWorldScene::s_exteriorPortalViews, 1);
@@ -218,12 +262,19 @@ void CWorldScene::Render(const C3Vector& cameraPos, float time) {
         }
     }
 
-    CWorldScene::RenderEntitys();
-    Liquid::UpdateProceduralTextures();
-    CWorldScene::PrepareLiquidInstances();
+    {
+        RenderProfileScope scope(RenderPhase_Entities);
+        CWorldScene::RenderEntitys();
+    }
 
-    if ((CWorld::enables & 0x1000000) && CWorldScene::s_liquidRenderer) {
-        CWorldScene::s_liquidRenderer->Flush(CWorldScene::s_activeWorldView, 0);
+    {
+        RenderProfileScope scope(RenderPhase_Liquid);
+        Liquid::UpdateProceduralTextures();
+        CWorldScene::PrepareLiquidInstances();
+
+        if ((CWorld::enables & 0x1000000) && CWorldScene::s_liquidRenderer) {
+            CWorldScene::s_liquidRenderer->Flush(CWorldScene::s_activeWorldView, 0);
+        }
     }
 
     CAaBox weatherBounds;

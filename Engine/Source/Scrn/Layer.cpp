@@ -10,6 +10,7 @@
 #include "Engine/Source/Images/tga.h"
 #include "Engine/Source/Base/Handle.h"
 #include "Engine/Source/Os/OsFile.h"
+#include "Engine/Source/Os/RenderProfiler.h"
 #include "Engine/Source/Os/System.h"
 #include "Engine/Source/Os/Time.h"
 #include "Engine/Source/Os/TimeManager.h"
@@ -154,6 +155,10 @@ static int32_t CaptureScreen() {
 // VERIFY: 52c6418c manual
 // OFFSET: 0x004A8720
 static int32_t OnPaint(const void* data, void* param) {
+    // DIAG: the true frame boundary. OnWorldRender is dispatched from the layer loop below, and
+    // present happens after it, so the frame must start here or present is never measured.
+    RenderProfilerBeginFrame();
+
     if (GxHasContext() && GxIsWindowVisible()) {
         HSRGN rgn;
         SRgnCreate(&rgn, 0);
@@ -204,17 +209,28 @@ static int32_t OnPaint(const void* data, void* param) {
                     GxXformSetProjection(proj);
                 }
 
-                layer->m_paintFunc(layer->m_param, &layer->m_rect, &layer->m_visible, s_elapsedSec);
+                {
+                    RenderProfileScope layerScope(RenderPhase_UiLayers);
+                    layer->m_paintFunc(layer->m_param, &layer->m_rect, &layer->m_visible, s_elapsedSec);
+                }
             }
         }
 
         GxXformSetViewport(minX, maxX, minY, maxY, minZ, maxZ);
-        GxuFontUpdate();
+        {
+            RenderProfileScope fontScope(RenderPhase_GxuFont);
+            GxuFontUpdate();
+        }
 
         if (!s_noPresent) {
             if (s_screenshotCallback) {
                 g_theGxDevicePtr->DeviceTakeScreenShot();
-                GxScenePresent();
+
+                {
+                    RenderProfileScope presentScope(RenderPhase_Present);
+                    GxScenePresent();
+                }
+
                 s_screenshotCallback(CaptureScreen());
                 g_theGxDevicePtr->DeviceClearScreenShot();
                 s_elapsedSec = 0.0f;
@@ -223,7 +239,10 @@ static int32_t OnPaint(const void* data, void* param) {
                 return 1;
             }
 
-            GxScenePresent();
+            {
+                RenderProfileScope presentScope(RenderPhase_Present);
+                GxScenePresent();
+            }
         }
 
         s_elapsedSec = 0.0f;
@@ -245,6 +264,8 @@ static int32_t OnPaint(const void* data, void* param) {
             }
         }
     }
+
+    RenderProfilerEndFrame();
 
     return 1;
 }

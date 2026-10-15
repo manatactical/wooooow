@@ -25,6 +25,10 @@ enum RenderProfilePhase {
     RenderPhase_WorldScene,     // CWorld::Render -> CWorldScene::Render, everything below it
     RenderPhase_M2Draw,         // the scene->Draw(M2PASS_*) passes
     RenderPhase_M2Setup,        // inner: the redundant per-batch state setup inside DrawBatch
+    RenderPhase_M2Log,          // inner: the per-batch DebugLog, which sits above the setup scope
+    RenderPhase_M2BoneUpload,   // inner: shader-constant lock + bone-matrix copy + unlock
+    RenderPhase_M2SetState,     // inner: SetIndices + SetBatchVertices + SetShaders
+    RenderPhase_M2DrawCall,     // inner: the g_theGxDevicePtr->Draw itself, all three branches
     RenderPhase_DrawLists,      // Gxu sort+flush, detail doodads
     RenderPhase_SpellVisuals,
     RenderPhase_Particulate,
@@ -34,7 +38,7 @@ enum RenderProfilePhase {
     // Inner: phases of CWorldScene::Render, shared of RenderPhase_WorldScene.
     RenderPhase_UpdatePools,
     RenderPhase_Occluders,
-    RenderPhase_ViewerMapObj,
+    RenderPhase_ViewerMapObj,   // s_viewerMapObjDef->RenderWithCallback, i.e. the interior you stand in
     RenderPhase_CullSort,
     RenderPhase_CullPortal,
     RenderPhase_CullMapObj,
@@ -46,6 +50,12 @@ enum RenderProfilePhase {
     RenderPhase_Portals,
     RenderPhase_Entities,
     RenderPhase_Liquid,
+
+    // Inner: the parts of CWorldScene::Render that sit outside the named phases above. Without these the
+    // draw-group report lumps them all into worldScene and the biggest bucket has no name.
+    RenderPhase_GxuScene,        // CWorldScene::s_unk_B2EB68.Render()
+    RenderPhase_ShadowQuery,     // CShadowQuery::Update, the shadow-map pass
+    RenderPhase_CollisionDebug,
 
     // Inner: the six per-bucket culls inside CullSortTable's 64-iteration loop.
     RenderPhase_CullTblChunks,
@@ -104,15 +114,25 @@ void RenderProfilerCountM2Batch();
 // measured directly rather than predicted.
 void RenderProfilerCountOpaqueDrawCalls(uint32_t before, uint32_t after);
 
+// DIAG: attributes each Gx draw submission to the innermost open scope. The Gx device is the single
+// funnel every draw passes through, so tagging there splits the draw-call population by render group
+// without editing every call site. Returns RenderPhase_Frame when no scope is open.
+int32_t RenderProfilerCurrentPhase();
+void RenderProfilerCountDraw(int32_t phase);
+
 // Accumulates into the current frame, whose buckets were cleared by BeginFrame.
 class RenderProfileScope {
     public:
-    explicit RenderProfileScope(RenderProfilePhase phase);
-    ~RenderProfileScope();
+        explicit RenderProfileScope(RenderProfilePhase phase);
+        ~RenderProfileScope();
 
     private:
-    RenderProfilePhase m_phase;
-    uint64_t m_start;
+        RenderProfilePhase m_phase;
+        uint64_t m_start;
+
+        // To keep "innermost open scope" cheap and correct under nesting, each scope remembers the
+        // phase its parent had, and restores it when it exits.
+        int32_t m_savedPhase;
 };
 
 // Wraps the whole world render pass. EndFrame() may write the log, so it is rate limited.

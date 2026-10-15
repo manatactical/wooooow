@@ -12,6 +12,8 @@
 #include "Engine/Source/Os/TimeManager.h"
 #include "Engine/Source/Storm/H/storm.h"
 #include "ThirdParty/nvapi/nvapi.h"
+// Not in the original binary: DIAG only, see RenderProfiler.h. Attributes draw calls to a render group.
+#include "Engine/Source/Os/RenderProfiler.h"
 
 typedef IDirect3D9* (WINAPI* Direct3DCreate9Proc)(UINT sdkVersion);
 
@@ -3285,6 +3287,9 @@ void CGxDeviceD3d::Draw(CGxBatch* batch, int32_t count) {
     if (!this->m_context || this->m_intF5C) {
         return;
     }
+
+    // Not in the original binary. DIAG only: attribute this submission to the innermost open phase.
+    RenderProfilerCountDraw(RenderProfilerCurrentPhase());
 
     this->IStateSync();
 

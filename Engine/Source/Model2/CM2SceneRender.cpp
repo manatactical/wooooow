@@ -419,13 +419,20 @@ void CM2SceneRender::DrawBatch() {
     // attached that is a per-batch syscall, and it is the first thing to try removing if m2Draw is hot.
     RenderProfilerCountM2Batch();
 
-    DebugLog("Batch: model=%s index=%d", this->m_curModel->m_shared->m_fileNameWithoutPath, this->m_curElement->m_index);
+    {
+        RenderProfileScope logScope(RenderPhase_M2Log);
+        DebugLog("Batch: model=%s index=%d", this->m_curModel->m_shared->m_fileNameWithoutPath, this->m_curElement->m_index);
+    }
 
     M2Element* element = this->m_curElement;
     this->m_curBatch = element->m_batch;
     this->m_curSkinSection = element->m_skinSection;
     this->m_curMaterial = &this->m_data->m_materials[this->m_curBatch->m_materialIndex];
-    element->m_effect->SetCurrent();
+
+    {
+        RenderProfileScope effectScope(RenderPhase_M2SetState);
+        element->m_effect->SetCurrent();
+    }
 
     {
         RenderProfileScope setupScope(RenderPhase_M2Setup);
@@ -435,6 +442,7 @@ void CM2SceneRender::DrawBatch() {
     }
 
     if (CShaderEffect::s_enableShaders && (this->m_curType != this->m_prevType || this->m_curModel != this->m_prevModel || this->m_curSkinSection->m_boneComboIndex != this->m_prevSkinSection->m_boneComboIndex)) {
+        RenderProfileScope boneScope(RenderPhase_M2BoneUpload);
         float* constants = g_theGxDevicePtr->ShaderConstantsLock(GxSh_Vertex) + 31 * 4;
 
         for (uint32_t i = 0; i < this->m_curSkinSection->m_boneCount; i++) {
@@ -459,24 +467,32 @@ void CM2SceneRender::DrawBatch() {
 
     if (this->m_curElement->m_flags & 4) {
         if (this->m_curType != this->m_prevType || this->m_curModel != this->m_prevModel) {
+            RenderProfileScope stateScope(RenderPhase_M2SetState);
             this->m_curModel->SetIndices();
         }
     } else if (this->m_curType != this->m_prevType || this->m_curShared != this->m_prevShared || (this->m_prevElement->m_flags & 4)) {
+        RenderProfileScope stateScope(RenderPhase_M2SetState);
         this->m_curShared->SetIndices();
     }
 
     int32_t sharedVertices = this->m_curModel->m_shared->m_data->m_bones.m_count == 1 && (this->m_cache->m_flags & 0x40);
-    this->SetBatchVertices(sharedVertices);
-    CShaderEffect::SetShaders(this->m_curElement->m_vertexPermute, this->m_curElement->m_pixelPermute);
+
+    {
+        RenderProfileScope stateScope(RenderPhase_M2SetState);
+        this->SetBatchVertices(sharedVertices);
+        CShaderEffect::SetShaders(this->m_curElement->m_vertexPermute, this->m_curElement->m_pixelPermute);
+    }
 
     CGxBatch batch;
     batch.m_primType = GxPrim_Triangles;
     batch.m_start = this->m_curSkinSection->m_indexStart;
     batch.m_count = this->m_curSkinSection->m_indexCount;
 
+    // DIAG: the Draw itself is timed separately, so m2Draw minus these sub-scopes is the submission cost.
     if (CShaderEffect::s_enableShaders) {
         batch.m_minIndex = this->m_curSkinSection->m_vertexStart;
         batch.m_maxIndex = this->m_curSkinSection->m_vertexCount + this->m_curSkinSection->m_vertexStart - 1;
+        RenderProfileScope drawScope(RenderPhase_M2DrawCall);
         g_theGxDevicePtr->Draw(&batch, 1);
     } else if (sharedVertices) {
         CGxMatrixStack& world = g_theGxDevicePtr->m_xforms[GxXform_World];
@@ -486,6 +502,7 @@ void CM2SceneRender::DrawBatch() {
 
         batch.m_minIndex = this->m_curSkinSection->m_vertexStart;
         batch.m_maxIndex = this->m_curSkinSection->m_vertexCount + this->m_curSkinSection->m_vertexStart - 1;
+        RenderProfileScope drawScope(RenderPhase_M2DrawCall);
         g_theGxDevicePtr->Draw(&batch, 1);
 
         CGxMatrixStack& restore = g_theGxDevicePtr->m_xforms[GxXform_World];
@@ -495,6 +512,7 @@ void CM2SceneRender::DrawBatch() {
     } else {
         batch.m_minIndex = 0;
         batch.m_maxIndex = this->m_curSkinSection->m_vertexCount - 1;
+        RenderProfileScope drawScope(RenderPhase_M2DrawCall);
         g_theGxDevicePtr->Draw(&batch, 1);
     }
 }

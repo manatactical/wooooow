@@ -18,6 +18,10 @@ const char* s_phaseNames[RenderPhase_Count] = {
     "worldScene",
     "m2Draw",
     "m2Setup",
+    "m2Log",
+    "m2BoneUpload",
+    "m2SetState",
+    "m2DrawCall",
     "drawLists",
     "spellVisuals",
     "particulate",
@@ -37,6 +41,9 @@ const char* s_phaseNames[RenderPhase_Count] = {
     "portals",
     "entities",
     "liquid",
+    "gxuScene",
+    "shadowQuery",
+    "collisionDebug",
     "cullTblChunks",
     "cullTblMapObj",
     "cullTblLiquid",
@@ -56,6 +63,12 @@ uint64_t s_phaseTicks[RenderPhase_Count];
 uint32_t s_phaseCalls[RenderPhase_Count];
 bool s_inFrame;
 uint64_t s_frameStart;
+
+// DIAG: draw submissions per render group (indexed by phase), plus the innermost open scope so a draw
+// can be attributed to the group that issued it. s_depth guards the restore when scopes nest.
+int32_t s_currentPhase = RenderPhase_Frame;
+uint32_t s_frameDraws[RenderPhase_Count];
+uint32_t s_windowDraws[RenderPhase_Count];
 
 // Rolling window, so the report is not dominated by a single hitchy frame.
 uint64_t s_windowTicks[RenderPhase_Count];
@@ -110,6 +123,16 @@ void RenderProfilerCountFintOutOfRange() {
     s_fintOutOfRange++;
 }
 
+int32_t RenderProfilerCurrentPhase() {
+    return s_currentPhase;
+}
+
+void RenderProfilerCountDraw(int32_t phase) {
+    if (s_enabled && s_inFrame && phase >= 0 && phase < RenderPhase_Count) {
+        s_frameDraws[phase]++;
+    }
+}
+
 void RenderProfilerCountOpaqueDrawCalls(uint32_t before, uint32_t after) {
     if (s_enabled && s_inFrame) {
         s_frameOpaqueBefore += before;
@@ -160,15 +183,24 @@ RenderProfileOcclusionSubScope::~RenderProfileOcclusionSubScope() {
 RenderProfileScope::RenderProfileScope(RenderProfilePhase phase) {
     this->m_phase = phase;
     this->m_start = 0;
+    this->m_savedPhase = s_currentPhase;
 
     if (!s_enabled || !s_inFrame) {
         return;
     }
 
     this->m_start = OsGetAsyncTimeClocks();
+
+    s_currentPhase = phase;
 }
 
 RenderProfileScope::~RenderProfileScope() {
+    // Restore unconditionally: the push in the constructor happened iff m_start is set, and the
+    // constructor's early return leaves m_start == 0.
+    if (this->m_start) {
+        s_currentPhase = this->m_savedPhase;
+    }
+
     if (!this->m_start || !s_inFrame) {
         return;
     }
@@ -193,6 +225,10 @@ void RenderProfilerBeginFrame() {
     s_frameBatches = 0;
     s_frameOpaqueBefore = 0;
     s_frameOpaqueAfter = 0;
+
+    // Fresh frame: no scope is open yet, and the draw-group counters start clean.
+    s_currentPhase = RenderPhase_Frame;
+    memset(s_frameDraws, 0, sizeof(s_frameDraws));
 
     // The frame phase is measured here and in EndFrame rather than by a scope object: a scope would
     // have to outlive EndFrame(), which fights the RAII order at the call site.
@@ -220,6 +256,7 @@ void RenderProfilerEndFrame() {
     for (int32_t i = 0; i < RenderPhase_Count; i++) {
         s_windowTicks[i] += s_phaseTicks[i];
         s_windowCalls[i] += s_phaseCalls[i];
+        s_windowDraws[i] += s_frameDraws[i];
     }
 
     uint32_t now = OsGetAsyncTimeMs();
@@ -287,10 +324,35 @@ void RenderProfilerEndFrame() {
 
     SLogWrite(log, "  %-14s %10.2f %10.3f %10.4f %9.1f%% (frame = measured total, not wall clock)", s_phaseNames[RenderPhase_Frame], static_cast<double>(s_windowCalls[RenderPhase_Frame]) / static_cast<double>(s_windowFrames), frameMsTotal, avgFrameMs, 100.0);
 
+    // DIAG: which render group issues the draw calls. Sums to the Gx batch submissions per frame, so it
+    // can be checked directly against the DXVK HUD's draw-call count.
+    uint64_t totalDraws = 0;
+
+    for (int32_t i = 0; i < RenderPhase_Count; i++) {
+        totalDraws += s_windowDraws[i];
+    }
+
+    if (totalDraws) {
+        SLogWrite(log, "  Gx draws/frame: %.1f total", static_cast<double>(totalDraws) / static_cast<double>(s_windowFrames));
+
+        for (int32_t i = 0; i < RenderPhase_Count; i++) {
+            if (!s_windowDraws[i]) {
+                continue;
+            }
+
+            double draws = static_cast<double>(s_windowDraws[i]) / static_cast<double>(s_windowFrames);
+
+            // Index 0 is RenderPhase_Frame, i.e. a draw issued outside any phase scope.
+            const char* name = i ? s_phaseNames[i] : "(no scope)";
+            SLogWrite(log, "    %-14s %8.1f/frame %6.1f%%", name, draws, 100.0 * static_cast<double>(s_windowDraws[i]) / static_cast<double>(totalDraws));
+        }
+    }
+
     SLogClose(log);
 
     memset(s_windowTicks, 0, sizeof(s_windowTicks));
     memset(s_windowCalls, 0, sizeof(s_windowCalls));
+    memset(s_windowDraws, 0, sizeof(s_windowDraws));
     s_windowBatches = 0;
     s_windowOpaqueBefore = 0;
     s_windowOpaqueAfter = 0;

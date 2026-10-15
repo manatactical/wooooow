@@ -521,6 +521,14 @@ bool TimerResolutionCallback(CVar* var, const char* oldValue, const char* value,
     return OsApplyTimerResolution(SStrToInt(value) != 0) == 0;
 }
 
+// Not in the original binary; backs the debugLog CVar. DebugLog is otherwise off unless a debugger is
+// attached, because per-batch callers made it cost 44% of a frame while producing no visible output.
+bool DebugLogCallback(CVar* var, const char* oldValue, const char* value, void* arg) {
+    DebugLogSetEnabled(SStrToInt(value));
+
+    return true;
+}
+
 // VERIFY: 46b0bbdc auto
 // OFFSET: 0x00402320
 bool TextureCacheSizeCallback(CVar* var, const char* oldValue, const char* value, void* arg) {

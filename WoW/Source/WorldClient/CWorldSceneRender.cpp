@@ -118,6 +118,8 @@ void CWorldScene::Render(const C3Vector& cameraPos, float time) {
         CWorldScene::s_cullPassStamp++;
 
         if (CWorldScene::s_viewerMovedMapObjDef) {
+            // DIAG: this draws the interior you are standing in; it was previously unattributed.
+            RenderProfileScope scope(RenderPhase_ViewerMapObj);
             CWorldScene::s_viewerMovedMapObjDef->RenderWithCallback(&CWorldScene::s_viewerMovedMapObjGroups);
             CWorldScene::s_unk_ADF570.m_rect.minX = FLT_MAX;
             CWorldScene::s_unk_ADF570.m_rect.minY = FLT_MAX;
@@ -137,7 +139,10 @@ void CWorldScene::Render(const C3Vector& cameraPos, float time) {
             CWorldScene::s_portalViews.SetCount(0);
         }
 
-        CWorldScene::s_viewerMapObjDef->RenderWithCallback(&CWorldScene::s_viewerMapObjGroups);
+        {
+            RenderProfileScope scope(RenderPhase_ViewerMapObj);
+            CWorldScene::s_viewerMapObjDef->RenderWithCallback(&CWorldScene::s_viewerMapObjGroups);
+        }
 
         if (CWorldScene::frustumPortalView.m_maxViewDepth < 0.0f) {
             CWorldScene::sortTable.Clear();
@@ -201,7 +206,11 @@ void CWorldScene::Render(const C3Vector& cameraPos, float time) {
     }
 
     GxSceneClear(3, clearColor);
-    CWorldScene::s_unk_B2EB68.Render();
+
+    {
+        RenderProfileScope scope(RenderPhase_GxuScene);
+        CWorldScene::s_unk_B2EB68.Render();
+    }
 
     if (CWorldScene::camTargetEntity) {
         C3Vector position = C3Vector(CWorldScene::camTargetEntity->m_position.x, CWorldScene::camTargetEntity->m_position.y, CWorldScene::camTargetEntity->m_position.z + 2.0f);
@@ -222,7 +231,12 @@ void CWorldScene::Render(const C3Vector& cameraPos, float time) {
     }
 
     CGUnit_C::UpdateMissileTrajectoryTargeting();
-    CShadowQuery::Update();
+
+    {
+        RenderProfileScope scope(RenderPhase_ShadowQuery);
+        CShadowQuery::Update();
+    }
+
     CShaderEffect::UpdateProjMatrix();
     CWorldScene::ApplyFogState();
     {
@@ -295,6 +309,7 @@ void CWorldScene::Render(const C3Vector& cameraPos, float time) {
     CursorReleaseItemMips();
 
     if (CWorld::enables & 0x200000) {
+        RenderProfileScope scope(RenderPhase_CollisionDebug);
         CWorldScene::RenderCollisionDebug();
         CMap::debugVertexArray.SetCount(0);
         CMap::debugIndexArray.m_count = 0;

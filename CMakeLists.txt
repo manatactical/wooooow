@@ -37,7 +37,12 @@ endif ()
 
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+# Every executable goes next to the game data in bin/Win, for x64 and Win32 alike.
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin/Win)
+# Multi-config generators append a config subdirectory unless each config is set too.
+foreach (config DEBUG RELEASE MINSIZEREL RELWITHDEBINFO)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${config} ${CMAKE_SOURCE_DIR}/bin/Win)
+endforeach ()
 
 add_compile_definitions(
     WIN32
@@ -47,9 +52,10 @@ add_compile_definitions(
     _CRT_SECURE_NO_WARNINGS
 )
 
-# Off by default: the client checks MPQ file MD5s (signaturefile) and GlueXML/FrameXML/AddOn .toc.sig files like the
-# original. ON accepts unsigned or modified game data and interface files.
-option(WOWDECOMP_DISABLE_SIGNATURE_CHECKS "Skip MPQ file signature and .toc signature checks" OFF)
+# On by default: the client checks MPQ file MD5s (signaturefile) and GlueXML/FrameXML/AddOn .toc.sig files like the
+# original. ON accepts unsigned or modified game data and interface files. It is needed to load Data\custom.MPQ,
+# whose Interface\FrameXML and Interface\GlueXML files do not match Blizzard's FrameXML.toc/GlueXML.toc signatures.
+option(WOWDECOMP_DISABLE_SIGNATURE_CHECKS "Skip MPQ file signature and .toc signature checks" ON)
 if (WOWDECOMP_DISABLE_SIGNATURE_CHECKS)
     add_compile_definitions(DISABLE_SIGNATURE_CHECKS=1)
 endif ()

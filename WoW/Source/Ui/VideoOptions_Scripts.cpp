@@ -529,6 +529,78 @@ static int32_t Script_SetMultisampleFormat(lua_State* L) {
     return 0;
 }
 
+// VERIFY: (new) manual
+// SSAO controls for the video options tab. The effect itself lives in Engine/Source/FFX/Ssao.cpp, which owns
+// the settings; these only read and write them, the same way the other functions here drive their CVars.
+
+// Usage: GetSSAO() -> enabled, radius, intensity, debug
+static int32_t Script_GetSSAO(lua_State* L) {
+    CVar* ssao = CVar::Lookup("ambientOcclusion");
+    CVar* radius = CVar::Lookup("ambientOcclusionRadius");
+    CVar* intensity = CVar::Lookup("ambientOcclusionIntensity");
+    CVar* debug = CVar::Lookup("ambientOcclusionDebug");
+
+    lua_pushnumber(L, ssao ? ssao->m_intValue : 0);
+    lua_pushnumber(L, radius ? radius->m_floatValue : 0.0f);
+    lua_pushnumber(L, intensity ? intensity->m_floatValue : 1.0f);
+    lua_pushnumber(L, debug ? debug->m_intValue : 0);
+    return 4;
+}
+
+// Usage: SetSSAO("enabled", value)  -- one setting at a time, so the tab can drive them independently.
+static int32_t Script_SetSSAO(lua_State* L) {
+    if (!lua_isstring(L, 1) || !lua_isnumber(L, 2)) {
+        luaL_error(L, "Usage: SetSSAO(\"enabled\"|\"radius\"|\"intensity\"|\"debug\", value)");
+        return 0;
+    }
+
+    const char* setting = lua_tolstring(L, 1, nullptr);
+    double value = lua_tonumber(L, 2);
+
+    const char* name = nullptr;
+
+    if (!SStrCmpI(setting, "enabled", STORM_MAX_STR)) {
+        name = "ambientOcclusion";
+    } else if (!SStrCmpI(setting, "radius", STORM_MAX_STR)) {
+        name = "ambientOcclusionRadius";
+    } else if (!SStrCmpI(setting, "intensity", STORM_MAX_STR)) {
+        name = "ambientOcclusionIntensity";
+    } else if (!SStrCmpI(setting, "debug", STORM_MAX_STR)) {
+        name = "ambientOcclusionDebug";
+    } else {
+        luaL_error(L, "SetSSAO: unknown setting '%s'", setting);
+        return 0;
+    }
+
+    CVar* var = CVar::Lookup(name);
+
+    if (!var) {
+        luaL_error(L, "SetSSAO: '%s' is not registered", name);
+        return 0;
+    }
+
+    char text[32];
+    SStrPrintf(text, sizeof(text), "%g", value);
+    var->Set(text, true, false, false, true);
+    return 0;
+}
+
+// Usage: SsaoAvailable() -> whether the effect can run at all: the CVars exist and multisampling is off, the
+// one device requirement SSAO has. The tab can grey itself out with this instead of offering a control that
+// silently does nothing.
+static int32_t Script_SsaoAvailable(lua_State* L) {
+    CVar* ssao = CVar::Lookup("ambientOcclusion");
+    CVar* multisample = CVar::Lookup("gxMultisample");
+
+    if (!ssao) {
+        lua_pushnumber(L, 0);
+        return 1;
+    }
+
+    lua_pushnumber(L, (multisample && multisample->m_intValue > 1) ? 0.0 : 1.0);
+    return 1;
+}
+
 // STATIC: 0x00ACD320
 static FrameScript_Method s_scriptFunctions[] = {
     { "GetScreenResolutions", &Script_GetScreenResolutions },
@@ -546,6 +618,9 @@ static FrameScript_Method s_scriptFunctions[] = {
     { "SetTerrainMip", &Script_SetTerrainMip },
     { "IsStereoVideoAvailable", &Script_IsStereoVideoAvailable },
     { "IsPlayerResolutionAvailable", &Script_IsPlayerResolutionAvailable },
+    { "GetSSAO", &Script_GetSSAO },
+    { "SetSSAO", &Script_SetSSAO },
+    { "SsaoAvailable", &Script_SsaoAvailable },
 };
 
 // VERIFY: 9fc618b7 auto

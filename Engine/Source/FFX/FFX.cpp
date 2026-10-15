@@ -366,6 +366,10 @@ void FFX::SetupIB(int32_t cols, int32_t rows) {
 // VERIFY: c85eddce auto
 // OFFSET: 0x008C1010
 void FFX::Finish() {
+    // The frame is on the backbuffer here, so the occlusion pass has something to read and somewhere to
+    // put its result. It runs first so it composes with whichever effect executes below.
+    FFX::SsaoEnd();
+
     if (!FFX::s_cvarFFX->m_intValue || !FFX::s_effect || !FFX::s_effect->Valid()) {
         return;
     }
@@ -485,6 +489,8 @@ void FFX::Init() {
     FFX::s_cvarFFXRectangle = CVar::Register("ffxRectangle", "use rectangle texture for full screen effects", 1, "1", FFX::CVarCallback, 1, false, nullptr, false);
     FFX::s_cvarMultisample = CVar::Lookup("gxMultisample");
 
+    FFX::SsaoSetup();
+
     ResetTex(FFX::s_full[0]);
     ResetTex(FFX::s_full[1]);
     ResetTex(FFX::s_half[0]);
@@ -562,6 +568,10 @@ void FFX::AllocTex() {
 // VERIFY: 7a420d16 auto
 // OFFSET: 0x008C1770
 void FFX::Start() {
+    // Arms the depth override first, and deliberately before the early-out below: the occlusion pass does
+    // not depend on the engine's own effect, and only needs its depth bound for the world draw.
+    FFX::SsaoBegin();
+
     if (!FFX::s_cvarFFX->m_intValue || !FFX::s_effect || !FFX::s_effect->Valid()) {
         return;
     }

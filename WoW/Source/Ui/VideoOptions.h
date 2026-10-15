@@ -10,4 +10,9 @@ class CGVideoOptions {
     static void UnregisterScriptFunctions();
 };
 
+// CVars the Advanced video panel expects but this client never registered. See VideoOptions_CVar.cpp.
+namespace VideoOptions {
+void RegisterClientCVars();
+}
+
 #endif

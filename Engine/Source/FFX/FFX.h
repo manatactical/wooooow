@@ -90,6 +90,11 @@ namespace FFX {
 
     void AllocTex();
     void CreateTex(Tex& tex, const C2iVector& size, bool bit8, bool renderTarget);
+    bool SsaoActive();
+    // Unbuffered step trace, appended to Logs\ssao-trace.log with OsWriteFile. gx.log is written through
+    // SLogWrite, which buffers and loses everything if the process dies, so anything that has to survive a
+    // crash goes here instead.
+    void SsaoTrace(const char* format, ...);
     bool CVarCallback(CVar* var, const char* oldValue, const char* value, void* arg);
     void Destroy();
     void Finish();
@@ -103,6 +108,11 @@ namespace FFX {
     void SetupIB();
     void SetupIB(int32_t cols, int32_t rows);
     void SetupReset();
+    // Screen-space ambient occlusion. Begin() runs at the end of Start() and arms the depth override for
+    // the world draw; End() runs at the start of Finish(), with the finished frame on the backbuffer.
+    void SsaoBegin();
+    void SsaoEnd();
+    void SsaoSetup();
     void SetupVB_PCT(uint32_t count, const C3Vector* pos, const C2Vector* tex, const float* shade);
     void SetupVB_PCT4(const C3Vector* pos, CImVector color, const C2Vector* tex, const C2Vector* offsets, const C2Vector& scale);
     void Start();

@@ -6,6 +6,8 @@
 #include <cstring>
 #include <windows.h>
 #include <shellapi.h>
+#include <mmsystem.h>
+#include <timeapi.h>
 #include "Engine/Source/Os/OsFile.h"
 #include "Engine/Source/Os/Processor.h"
 #include "Engine/Source/Os/System.h"
@@ -235,6 +237,36 @@ uint32_t OsGetNumberOfProcessors() {
 }
 
 // VERIFY: a8550295 auto
+// Not in the original binary; backs the osSetTimerResolution CVar. The default Windows tick is
+// ~15.6ms, so the frame limiter's Sleep(5) really slept ~15.6ms and the cap was never hit.
+// timeBeginPeriod is reference counted, so only call it on an actual state transition.
+static int32_t s_timerResolution;
+
+int32_t OsApplyTimerResolution(int32_t enable) {
+    enable = enable != 0;
+
+    if (enable == s_timerResolution) {
+        return 0;
+    }
+
+    int32_t result = enable ? timeBeginPeriod(1) : timeEndPeriod(1);
+
+    s_timerResolution = enable;
+
+    HSLOG log;
+
+    if (SLogCreate("Logs\\frame_limiter.log", 4, &log)) {
+        SLogWrite(log, "OsApplyTimerResolution(%d): %s -> %d", enable, enable ? "1ms" : "system default", result);
+        SLogClose(log);
+    }
+
+    return result;
+}
+
+int32_t OsTimerResolutionEnabled() {
+    return s_timerResolution;
+}
+
 // OFFSET: 0x0086B290
 int32_t OsSleepInBackground() {
     return s_sleepInBackground;

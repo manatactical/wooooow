@@ -13,6 +13,7 @@ if(WIN32)
     target_link_libraries(Os
         PUBLIC
             imm32
+            winmm
             wininet
             ws2_32
             dinput8

@@ -1720,6 +1720,7 @@ bool InitializeGlobal() {
     OpenArchives();
 
     CVar* affinity = CVar::Register("processAffinityMask", "Sets which core(s) WoW may execute on - changes require restart to take effect", 2, "0", ProcessAffinityMaskCallback, CATEGORY_DEBUG, false, nullptr, false);
+    CVar* timerResolution = CVar::Register("osSetTimerResolution", "Request 1ms Windows timer resolution while the game runs", 2, "1", TimerResolutionCallback, CATEGORY_DEBUG, false, nullptr, false);
     CVar* videoOptionsVersion = CVar::Lookup("videoOptionsVersion");
 
     if (!videoOptionsVersion || videoOptionsVersion->m_intValue < 3) {

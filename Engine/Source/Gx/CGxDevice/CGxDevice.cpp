@@ -14,6 +14,7 @@
 #include "Engine/Source/Os/Input.h"
 #include "Engine/Source/Os/OsFile.h"
 #include "Engine/Source/Os/Processor.h"
+#include "Engine/Source/Os/System.h"
 #include "Engine/Source/Os/TimeManager.h"
 
 // STATIC: 0x00A2DAF8
@@ -1841,6 +1842,10 @@ void CGxDevice::PrimDrawElements() {
 // VERIFY: e7eb4342 auto
 // OFFSET: 0x006836D0
 void CGxDevice::WaitForFPSCap() {
+    // DIAG: must run before the uncapped early return below, otherwise a config with maxFPS 0,
+    // maxFPSBk 0 skips it entirely. Rate limited internally to one dump per 2s.
+    OsLogThreadSnapshot();
+
     uint32_t maxFps = GxGetMaxFPS() ? GxGetMaxFPS() : 0xFFFFFFFF;
     uint32_t maxFpsBk = GxGetMaxFPSBk() ? GxGetMaxFPSBk() : 0xFFFFFFFF;
 
@@ -1855,14 +1860,48 @@ void CGxDevice::WaitForFPSCap() {
     }
 
     uint32_t frameMs = 1000 / maxFps;
-    uint32_t now = OsGetAsyncTimeMs();
+    int32_t now = static_cast<int32_t>(OsGetAsyncTimeMs());
 
-    if (s_nextFrameTime - now < 1000) {
-        OsSleep(s_nextFrameTime - now);
-        now = OsGetAsyncTimeMs();
+
+    // Signed deadline, so a frame that ran long reads as "behind" instead of wrapping to a huge
+    // unsigned value. The original used the unsigned form, which is not wrap-safe once the timer
+    // passes 2^31. A skipped sleep is harmless here - we are already late.
+    int32_t waitMs = s_nextFrameTime - now;
+
+    if (waitMs < 1000) {
+        if (waitMs > 0) {
+            OsSleep(static_cast<uint32_t>(waitMs));
+        }
+
+        now = static_cast<int32_t>(OsGetAsyncTimeMs());
     }
 
-    s_nextFrameTime = now + frameMs;
+    s_nextFrameTime = now + static_cast<int32_t>(frameMs);
+
+    // DIAG: proves the limiter sleeps instead of spinning. One line per 2 seconds.
+    static int32_t s_diagLastMs;
+    static uint32_t s_diagFrames;
+    static uint32_t s_diagSleeps;
+
+    s_diagFrames++;
+
+    if (waitMs > 0) {
+        s_diagSleeps++;
+    }
+
+    if (now - s_diagLastMs >= 2000) {
+        if (!s_diagLastMs) {
+            LogOpen();
+            Log("FPSCap: run start, maxFps=%u frameMs=%u nextFrameTime=%d now=%d", maxFps, frameMs, s_nextFrameTime, now);
+        } else {
+            LogOpen();
+            Log("FPSCap: maxFps=%u frameMs=%u frames=%u slept=%u skipped=%u", maxFps, frameMs, s_diagFrames, s_diagSleeps, s_diagFrames - s_diagSleeps);
+        }
+
+        s_diagLastMs = now;
+        s_diagFrames = 0;
+        s_diagSleeps = 0;
+    }
 }
 
 // VERIFY: c1bc4801 manual

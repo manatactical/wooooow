@@ -516,6 +516,11 @@ bool ProcessAffinityMaskCallback(CVar* var, const char* oldValue, const char* va
     return true;
 }
 
+// Not in the original binary; backs the osSetTimerResolution CVar.
+bool TimerResolutionCallback(CVar* var, const char* oldValue, const char* value, void* arg) {
+    return OsApplyTimerResolution(SStrToInt(value) != 0) == 0;
+}
+
 // VERIFY: 46b0bbdc auto
 // OFFSET: 0x00402320
 bool TextureCacheSizeCallback(CVar* var, const char* oldValue, const char* value, void* arg) {

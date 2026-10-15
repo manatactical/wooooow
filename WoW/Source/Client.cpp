@@ -11,6 +11,8 @@
 #include "Engine/Source/BlizzardCore/Source/Packages/Streaming/Streaming.h"
 #include "Engine/Source/BlizzardCore/Source/Packages/Streaming/Tracker.h"
 #include "Engine/Source/BlizzardCore/Source/Packages/Util/SHA1.h"
+#include "Engine/Source/BlizzardCore/Source/Packages/Mopaq/SFileArchives.h"
+#include "Engine/Source/BlizzardCore/Source/System/Log/Log.h"
 #include "Engine/Source/BlizzardCore/Source/System/Time/Time.h"
 #include "Engine/Source/ConsoleBase/ConsoleCommand.h"
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
@@ -1364,6 +1366,10 @@ static void OpenArchives() {
     uint32_t slot = 0;
     s_archiveHandles.SetCount(64);
 
+    // Probe first: a bare 0 from OpenArchive cannot say whether the path or the archive was the problem.
+    char customPath[260];
+    SStrPrintf(customPath, sizeof(customPath), "%scustom.MPQ", s_dataDirectories[0]);
+
     for (uint32_t i = patches.m_files.Count(); i; i--) {
         if (SFile::OpenArchive(patches.m_files[i - 1], priority, 0xC00, &s_archiveHandles[slot])) {
             if (SStrStrI(patches.m_files[i - 1], "Start.MPQ")) {
@@ -1469,7 +1475,54 @@ static void OpenArchives() {
         }
     }
 
-    s_archiveHandles.SetCount(slot);
+    // Open custom.MPQ last: priority grows with open order, so this is what makes it outrank the locale
+    // patches and every base archive. s_firstBaseArchive comes after it, so the fixed handle offsets
+    // (s_archives[i], ListInterfaceArchive) stay where they were.
+    uint32_t customSlot = 0;
+    bool customOpened = false;
+
+    if (SFile::OpenArchive(customPath, priority, 0xC00, &s_archiveHandles[slot])) {
+        customOpened = true;
+        customSlot = slot;
+        priority++;
+    }
+
+    s_archiveHandles.SetCount(slot + (customOpened ? 1 : 0));
+
+    // Resolve the custom.MPQ files by hand: if the panel does not appear, the log says whether the name
+    // never resolves, resolves to a different archive, or resolves here - three different fixes.
+    {
+        static const char* probes[] = {
+            "Interface\\FrameXML\\VideoOptionsPanels.xml",
+            "Interface\\FrameXML\\VideoOptionsPanels.lua",
+            "Interface\\FrameXML\\GraphicsQualityLevels.lua",
+            "Interface\\FrameXML\\FrameXML.toc",
+        };
+
+        for (uint32_t p = 0; p < sizeof(probes) / sizeof(probes[0]); p++) {
+            System_SFile::ARCHIVEREC* owner = nullptr;
+
+            int32_t exists = Blizzard::Mopaq::SFileFileExists(nullptr, probes[p], 0, &owner);
+
+            char archiveName[260];
+            archiveName[0] = '\0';
+
+            if (owner) {
+                SStrCopy(archiveName, owner->m_name, sizeof(archiveName));
+
+                if (!archiveName[0]) {
+                    SStrCopy(archiveName, owner->m_directPath.c_str(), sizeof(archiveName));
+                }
+            }
+
+            Blizzard::Log::Printf(0, "Logs/custom_mpq.log", "custom probe: %s -> exists %d, owner '%s', priority %d\n", probes[p], exists, archiveName, owner ? owner->m_priority : -1);
+        }
+
+        Blizzard::Log::Printf(0, "Logs/custom_mpq.log", "custom.MPQ: %s, slot %u; opened last on purpose\n", customOpened ? "opened" : "NOT opened", customSlot);
+        Blizzard::Log::Printf(0, "Logs/custom_mpq.log", "custom probe: archives=%u firstBase=%u numPatches=%u\n", static_cast<uint32_t>(s_archiveHandles.Count()), s_firstBaseArchive, s_numPatchArchives);
+
+        Blizzard::Log::Flush(0);
+    }
 
     if (s_archiveHandles[s_firstBaseArchive + 16]) {
         s_expansionLevel = 2;

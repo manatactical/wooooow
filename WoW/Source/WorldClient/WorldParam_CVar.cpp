@@ -31,6 +31,10 @@ CVar* CWorldParam::cvar_mapShadows;
 // STATIC: 0x00CD8578
 CVar* CWorldParam::cvar_shadowLevel;
 
+// Not in the original binary. See ShadowTextureSizeCallback.
+CVar* CWorldParam::cvar_shadowTextureSize;
+CVar* CWorldParam::cvar_shadowMode;
+
 // STATIC: 0x00CD857C
 CVar* CWorldParam::cvar_texLodBias;
 
@@ -446,6 +450,76 @@ bool CWorldParam::EnvironmentDetailCallback(CVar* var, const char* oldValue, con
     return true;
 }
 
+// Not in the original binary. The 3.3.5a UI drives both shadow resolution and shadow method through
+// shadowTextureSize and shadowMode (see Interface\FrameXML\VideoOptionsPanels.lua SHADOW_LEVELS), but
+// neither was ever registered. Missing registration made GetCVar throw. shadowTextureSize is the live
+// knob: it stores the requested texel size and re-creates the shadow textures. shadowMode is a
+// read-only mirror of the mode extShadowQuality picked, so the panel can display it without the
+// ShadowQuality slider dropping us off the cascaded shadow maps (mode 5) that extShadowQuality selects.
+bool CWorldParam::ShadowTextureSizeCallback(CVar* var, const char* oldValue, const char* value, void* arg) {
+    int32_t size = SStrToInt(value);
+
+    // 0 is the "let the quality tier decide" value, so it bypasses the range check on purpose.
+    if (size != 0 && (size < static_cast<int32_t>(SHADOW_TEXTURE_SIZE_MIN) || size > static_cast<int32_t>(SHADOW_TEXTURE_SIZE_MAX))) {
+        char buffer[128];
+        sprintf(buffer, "Shadow texture size must be 0 (quality tier default) or %u-%u.", SHADOW_TEXTURE_SIZE_MIN, SHADOW_TEXTURE_SIZE_MAX);
+        ConsoleWrite(buffer, DEFAULT_COLOR);
+        return false;
+    }
+
+    CShadowCache::SetShadowTextureSize(static_cast<uint32_t>(size));
+
+    char buffer[128];
+    sprintf(buffer, "Shadow texture size set to %d.", size);
+    ConsoleWrite(buffer, DEFAULT_COLOR);
+
+    return true;
+}
+
+// Not in the original binary. Guards the mirror against its own write: SyncShadowModeCVar goes through
+// CVar::Set, which runs ShadowModeCallback, which would otherwise call back into SyncShadowModeCVar.
+static bool s_syncingShadowMode;
+
+// Not in the original binary. Refuses every real write and re-asserts the live mode instead, so the panel's
+// ShadowQuality slider cannot store a value that disagrees with the mode that actually took effect. This is
+// reject-by-callback rather than the CVar read-only flag on purpose: the flag makes the Lua SetCVar binding
+// raise "is read-only", and the panel calls SetCVar unconditionally. A false return is what discards the
+// value, because CVar::Set early-outs when the callback returns false. Our own write passes because
+// SyncShadowModeCVar raises the guard first; the registration call is harmless only because
+// cvar_shadowMode is still null at that point, so the sync it triggers does nothing.
+bool CWorldParam::ShadowModeCallback(CVar* var, const char* oldValue, const char* value, void* arg) {
+    if (s_syncingShadowMode) {
+        return true;
+    }
+
+    CWorldParam::SyncShadowModeCVar();
+
+    return false;
+}
+
+// Not in the original binary. Mirrors the live shadow mode into the shadowMode CVar so the panel's
+// ShadowQuality slider reports what is really in effect. Deliberately never sets the read-only flag, since
+// that would make the panel's own SetCVar call raise an error; ShadowModeCallback is what refuses writes.
+void CWorldParam::SyncShadowModeCVar() {
+    CVar* var = CWorldParam::cvar_shadowMode;
+
+    if (!var || s_syncingShadowMode) {
+        return;
+    }
+
+    s_syncingShadowMode = true;
+
+    // GetShadowMode() is not usable here: it answers SHADOW_LOWEST whenever texture recreation is pending,
+    // and SetShadowMode/SetShadowTextureSize set that flag immediately before this runs. Displaying the
+    // stored mode is the whole point of the mirror, so read it directly.
+    char modeValue[16];
+    SStrPrintf(modeValue, sizeof(modeValue), "%u", static_cast<uint32_t>(CShadowCache::GetShadowModeRaw()));
+
+    var->Set(modeValue, true, false, false, false);
+
+    s_syncingShadowMode = false;
+}
+
 // VERIFY: 782f4c26 manual
 // OFFSET: 0x0078DCB0
 bool CWorldParam::ExtShadowQualityCallback(CVar* var, const char* oldValue, const char* value, void* arg) {
@@ -457,6 +531,7 @@ bool CWorldParam::ExtShadowQualityCallback(CVar* var, const char* oldValue, cons
     }
 
     CShadowCache::SetShadowMode(static_cast<EShadowMode>(mode));
+    CWorldParam::SyncShadowModeCVar();
 
     return true;
 }
@@ -650,6 +725,20 @@ void CWorldParam::Initialize() {
     CWorldParam::cvar_environmentDetail = CVar::Register("environmentDetail", "Environment detail", 1, "1.0", CWorldParam::EnvironmentDetailCallback, CATEGORY_GRAPHICS, false, nullptr, false);
     CWorldParam::cvar_hwPCF = CVar::Register("hwPCF", "Hardware PCF Filtering", 1, "1", CWorldParam::HWPCFCallback, CATEGORY_GRAPHICS, false, nullptr, false);
     CWorldParam::cvar_extShadowQuality = CVar::Register("extShadowQuality", "Quality of exterior shadows (0-5)", 1, "0", CWorldParam::ExtShadowQualityCallback, CATEGORY_GRAPHICS, false, nullptr, false);
+
+    // Not in the original binary. shadowTextureSize is the game's own name for the shadow map texel
+    // count, matching Interface\FrameXML\VideoOptionsPanels.lua. Default 0 means "no explicit choice",
+    // which leaves Init()'s quality-tier sizing in charge; registering a real size here would apply it
+    // through the override before the tier logic ever runs and silently lose the 2048 default.
+    CWorldParam::cvar_shadowTextureSize = CVar::Register("shadowTextureSize", "Shadow map resolution in texels", 1, "0", CWorldParam::ShadowTextureSizeCallback, CATEGORY_GRAPHICS, false, nullptr, false);
+
+    // Not in the original binary. The panel reads this, nothing may usefully write it - ShadowModeCallback
+    // refuses writes, so it is read-only in effect without the CVar flag that would make Lua raise an error.
+    // Marked unk=true so LookupRegistered accepts it. The registration default (mode 0) is not what the panel
+    // should see, so it is seeded from the live shadow mode right here - by this point extShadowQuality has
+    // already run its callback, because the cvar file is loaded before CVar::Initialize reaches this point.
+    CWorldParam::cvar_shadowMode = CVar::Register("shadowMode", "Active shadow method (read-only; set extShadowQuality instead)", 1, "0", CWorldParam::ShadowModeCallback, CATEGORY_GRAPHICS, false, nullptr, true);
+    CWorldParam::SyncShadowModeCVar();
     CWorldParam::cvar_projectedTextures = CVar::Register("projectedTextures", "Projected Textures", 1, "0", CWorldParam::ProjectedTexturesCallback, CATEGORY_GRAPHICS, false, nullptr, false);
     CWorldParam::cvar_gxTextureCacheSize = CVar::Register("gxTextureCacheSize", "GX Texture Cache Size", 1, "0", CWorldParam::GxTextureCacheSizeCallback, CATEGORY_GRAPHICS, false, nullptr, false);
     CVar::Register("spellEffectLevel", "Video Option: Spell Effects", 1, "9", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);

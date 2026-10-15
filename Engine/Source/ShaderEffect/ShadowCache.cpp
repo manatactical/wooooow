@@ -5,6 +5,8 @@
 #include "Engine/Source/Base/Handle.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/CGxTexFlags.h"
+#include "Engine/Source/ConsoleBase/IConsole.h"
+#include "Engine/Source/ConsoleBase/IConsole.h"
 #include "Engine/Source/Gx/Gx.h"
 #include "Engine/Source/Os/RenderProfiler.h"
 #include "Engine/Source/Services/Texture.h"
@@ -255,6 +257,15 @@ int32_t CShadowCache::ValidateShadowMode(EShadowMode mode) {
     }
 }
 
+// Not in the original binary. Overrides the shadow map resolution chosen in Init(). Zero means the
+// quality tier decides, which keeps the original behaviour (2048 at this tier, 1024 below it). Lower
+// values blur the shadow edges but do not change how often shadows update or how many casters are drawn.
+// The bounds are declared in ShadowCache.h so the CVar callback clamps against the same numbers.
+const uint32_t SHADOW_TEXTURE_SIZE_MIN = 128;
+const uint32_t SHADOW_TEXTURE_SIZE_MAX = 4096;
+
+uint32_t CShadowCache::s_shadowSizeOverride;
+
 // VERIFY: c1d6590c auto
 // OFFSET: 0x00874210
 int32_t CShadowCache::SetShadowMode(EShadowMode mode) {
@@ -266,6 +277,31 @@ int32_t CShadowCache::SetShadowMode(EShadowMode mode) {
     CShadowCache::s_recreateTextures = 1;
 
     return 1;
+}
+
+// Not in the original binary. Sets the shadow map texel size and forces the textures to be recreated
+// with it. Sizes are clamped rather than rejected: a bad value should cost a log line, not a dead
+// shadow system. Zero means "no explicit choice" and hands the size back to the quality tier, which is
+// what Init() does when the override is clear.
+void CShadowCache::SetShadowTextureSize(uint32_t size) {
+    if (size != 0) {
+        if (size < SHADOW_TEXTURE_SIZE_MIN) {
+            size = SHADOW_TEXTURE_SIZE_MIN;
+        } else if (size > SHADOW_TEXTURE_SIZE_MAX) {
+            size = SHADOW_TEXTURE_SIZE_MAX;
+        }
+    }
+
+    if (CShadowCache::s_shadowSizeOverride == size) {
+        return;
+    }
+
+    CShadowCache::s_shadowSizeOverride = size;
+    CShadowCache::NotifyTexturesRecreate();
+
+    char buffer[128];
+    sprintf(buffer, "ShadowCache: texture size %u, textures queued for recreation.", size);
+    ConsoleWrite(buffer, DEFAULT_COLOR);
 }
 
 // VERIFY: b392dedb manual
@@ -865,6 +901,11 @@ void CShadowCache::Init() {
 
     if (CShadowCache::s_shadowMode >= SHADOW_HIGH || CShadowCache::s_shadowMode == SHADOW_MEDIUM) {
         CShadowCache::s_shadowSize = 2048;
+    }
+
+    // Not in the original binary. The cvar is applied last so the original tiers above stay intact.
+    if (CShadowCache::s_shadowSizeOverride) {
+        CShadowCache::s_shadowSize = CShadowCache::s_shadowSizeOverride;
     }
 
     CShadowCache::InitPcfOffsets();

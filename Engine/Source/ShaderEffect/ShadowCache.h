@@ -53,6 +53,11 @@ struct CShadowCacheQueryData {
     CShadowCacheQueryData();
 };
 
+// Not in the original binary. Bounds for the shadowTextureSize CVar. Declared here because
+// WorldParam_CVar.cpp clamps against the same numbers, and a bare const would have internal linkage.
+extern const uint32_t SHADOW_TEXTURE_SIZE_MIN;
+extern const uint32_t SHADOW_TEXTURE_SIZE_MAX;
+
 class CShadowCache {
     public:
     static const float s_bandRadius[3];
@@ -77,8 +82,10 @@ class CShadowCache {
     static C4Vector s_shadowMatrices[12];
     static float s_shadowScale;
     static uint32_t s_shadowSize;
-    static const char* s_shadowModeDescs[NUM_SHADOW_MODES + 1];
-    static const uint32_t s_shadowValues[NUM_SHADOW_MODES + 1];
+
+    // Not in the original binary. Diagnostics-free quality override: 0 means "use the tier default".
+    static uint32_t s_shadowSizeOverride;
+    static const char* s_shadowModeDescs[NUM_SHADOW_MODES + 1];    static const uint32_t s_shadowValues[NUM_SHADOW_MODES + 1];
     static C3Vector s_sunDir;
     static C4Vector s_sunDirViewSpace;
     static float s_textureSize[2];
@@ -88,6 +95,10 @@ class CShadowCache {
     static void GatherBands(CShadowCacheQueryData& data, const C3Vector& pos, CFrustum& frustum, int32_t useCullFrustum);
     static uint32_t GetMaxShadowMode();
     static EShadowMode GetShadowMode();
+    // Not in the original binary. GetShadowMode() reports SHADOW_LOWEST while texture recreation is
+    // pending, so it cannot be used to display the mode the user actually selected. This returns the
+    // stored mode unchanged.
+    static EShadowMode GetShadowModeRaw() { return CShadowCache::s_shadowMode; }
     static const char* GetShadowModeDesc(uint32_t mode);
     static uint32_t GetShadowValue();
     static void Init();
@@ -107,6 +118,7 @@ class CShadowCache {
     static void SetShadowMapGenericInterior(int32_t interior);
     static void SetShadowMapTerrain();
     static int32_t SetShadowMode(EShadowMode mode);
+    static void SetShadowTextureSize(uint32_t size);
     static void SetShadowScale(float scale);
     static int32_t Update(const C3Vector& pos, int32_t useCullFrustum);
     static int32_t ValidateShadowMode(EShadowMode mode);

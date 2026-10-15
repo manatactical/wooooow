@@ -77,7 +77,7 @@
 		VideoOptionsEffectsPanelFullScreenGlow = true,
 		VideoOptionsEffectsPanelDeathEffect = true,
 		VideoOptionsEffectsPanelProjectedTextures = true,
-		VideoOptionsAdvancedEffectsPanelShadowQuality = 4,
+		VideoOptionsAdvancedEffectsPanelShadowQuality = 5,
 	},
 	[6] = {
 		VideoOptionsEffectsPanelViewDistance = 0,

@@ -774,7 +774,7 @@
 	<Frame name="VideoOptionsAdvancedEffectsPanel" parent="VideoOptionsFramePanelContainer" hidden="true">
 		<Layers>
 			<Layer level="ARTWORK">
-				<FontString name="$parentTitle" text="ADVANCED_EFFECTS_LABEL" inherits="OptionsFontLarge" justifyH="LEFT" justifyV="TOP">
+				<FontString name="$parentTitle" text="SHADOWS_LABEL" inherits="OptionsFontLarge" justifyH="LEFT" justifyV="TOP">
 					<Anchors>
 						<Anchor point="TOPLEFT">
 							<Offset>
@@ -783,7 +783,7 @@
 						</Anchor>
 					</Anchors>
 				</FontString>
-				<FontString name="$parentSubText" text="ADVANCED_EFFECTS_SUBTEXT" inherits="OptionsFontHighlightSmall" nonspacewrap="true" maxLines="3" justifyH="LEFT" justifyV="TOP">
+				<FontString name="$parentSubText" text="SHADOWS_SUBTEXT" inherits="OptionsFontHighlightSmall" nonspacewrap="true" maxLines="3" justifyH="LEFT" justifyV="TOP">
 					<Size>
 						<AbsDimension y="32" x="0"/>
 					</Size>

@@ -378,31 +378,31 @@ function VideoOptionsResolutionPanelMultiSampleDropDown_OnClick(self)
 end
 
 
--- [[ Advanced Effects Panel ]] --
+-- [[ Shadows Panel ]] --
+-- Renamed from Advanced Effects: the 4.3.4 toggles with no backing CVar were removed, leaving only the two
+-- shadow controls, so this panel is shadow-only and is shown as its own tab.
+-- The quality slider drives extShadowQuality, the real shadow-mode CVar, so it changes both the method and
+-- how often shadows update. shadowMode is only a read-only mirror kept for the game's own bookkeeping.
+-- The resolution slider drives shadowTextureSize independently, so edge sharpness never changes the cadence.
 
-ADVANCED_EFFECTS_LABEL = "Advanced Effects";
-ADVANCED_EFFECTS_SUBTEXT = "These controls adjust the quality and resolution of exterior shadows. Lowering either may greatly improve performance.";
+SHADOWS_LABEL = "Shadows";
+SHADOWS_SUBTEXT = "Shadow quality sets the method and how often shadows update. Shadow resolution only changes how sharp shadow edges are, and never changes how often they refresh.";
 OPTION_TOOLTIP_SHADOW_RESOLUTION = "Resolution of the shadow maps. Lower values give softer, blockier shadow edges and restore some frame rate. How often shadows update is not affected.";
 SHADOW_RESOLUTION = SHADOW_RESOLUTION or "Shadow Resolution";
 OPTION_TOOLTIP_SHADOW_QUALITY = OPTION_TOOLTIP_SHADOW_QUALITY or "Controls both the method and quality of shadows. Decreasing this may greatly improve performance.";
 
 local ADVANCED_LEVEL_NAMES = {
-	ShadowQuality = { "Low", "Fair", "Medium", "High", "Ultra" },
+	-- Steps 0-4 are the tiled, distance-gated modes. Step 5 is SHADOW_VERY_HIGH, the cascaded shadow maps
+	-- that re-render every band each frame, which is why this slider genuinely changes how often shadows
+	-- update rather than only their sharpness.
+	ShadowQuality = { "Lowest", "Low", "Medium", "Medium High", "High", "Cascaded" },
 	ShadowResolution = { "128", "256", "512", "1024", "2048" },
-};
-
-local SHADOW_LEVELS = {
-	[0] = { shadowMode = 0, shadowTextureSize = 1024 },
-	[1] = { shadowMode = 1, shadowTextureSize = 1024 },
-	[2] = { shadowMode = 1, shadowTextureSize = 2048 },
-	[3] = { shadowMode = 2, shadowTextureSize = 2048 },
-	[4] = { shadowMode = 3, shadowTextureSize = 2048 },
 };
 
 local SHADOW_SIZES = { 128, 256, 512, 1024, 2048 };
 
 AdvancedEffectsPanelOptions = {
-	ShadowQuality = { text = "SHADOW_QUALITY", minValue = 0, maxValue = 4, valueStep = 1, tooltip = OPTION_TOOLTIP_SHADOW_QUALITY },
+	ShadowQuality = { text = "SHADOW_QUALITY", minValue = 0, maxValue = 5, valueStep = 1, tooltip = OPTION_TOOLTIP_SHADOW_QUALITY },
 	ShadowResolution = { text = "SHADOW_RESOLUTION", minValue = 0, maxValue = 4, valueStep = 1, tooltip = OPTION_TOOLTIP_SHADOW_RESOLUTION },
 };
 
@@ -417,25 +417,13 @@ local function VideoOptionsAdvancedEffectsPanel_Level (value, maxValue)
 end
 
 function VideoOptionsAdvancedEffectsPanel_GetShadowQuality (self)
-	local mode = tonumber(GetCVar("shadowMode")) or 0;
-	local size = tonumber(GetCVar("shadowTextureSize")) or 1024;
-	if ( mode <= 0 ) then
-		return 0;
-	elseif ( mode == 1 ) then
-		if ( size >= 2048 ) then
-			return 2;
-		end
-		return 1;
-	elseif ( mode == 2 ) then
-		return 3;
-	end
-	return 4;
+	-- extShadowQuality is the authority. Reading it directly avoids the mirror, which reports SHADOW_LOWEST
+	-- while the shadow textures are being rebuilt and would briefly show the wrong step.
+	return VideoOptionsAdvancedEffectsPanel_Level(tonumber(GetCVar("extShadowQuality")) or 0, 5);
 end
 
 function VideoOptionsAdvancedEffectsPanel_SetShadowQuality (value)
-	local level = SHADOW_LEVELS[VideoOptionsAdvancedEffectsPanel_Level(value, 4)];
-	SetCVar("shadowTextureSize", level.shadowTextureSize);
-	SetCVar("shadowMode", level.shadowMode);
+	SetCVar("extShadowQuality", VideoOptionsAdvancedEffectsPanel_Level(value, 5));
 end
 
 function VideoOptionsAdvancedEffectsPanel_GetShadowResolution (self)
@@ -443,7 +431,7 @@ function VideoOptionsAdvancedEffectsPanel_GetShadowResolution (self)
 	if ( size <= 0 ) then
 		-- 0 means "the quality tier decides", so report the size actually in use rather than snapping the
 		-- sentinel onto the 128 notch. Mirrors the tier rule in CShadowCache::Init().
-		local mode = tonumber(GetCVar("shadowMode")) or 0;
+		local mode = tonumber(GetCVar("extShadowQuality")) or 0;
 		size = ( mode == 2 or mode >= 4 ) and 2048 or 1024;
 	end
 	-- slider steps are 0-based like every other advanced option, so the index is returned minus one;
@@ -501,7 +489,7 @@ function VideoOptionsAdvancedEffectsPanel_Refresh (self)
 end
 
 function VideoOptionsAdvancedEffectsPanel_OnLoad (self)
-	self.name = ADVANCED_EFFECTS_LABEL;
+	self.name = SHADOWS_LABEL;
 	self.options = AdvancedEffectsPanelOptions;
 	VideoOptionsPanel_OnLoad(self, nil, nil, VideoOptionsAdvancedEffectsPanel_Default, VideoOptionsAdvancedEffectsPanel_Refresh);
 end

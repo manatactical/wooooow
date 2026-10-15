@@ -68,6 +68,7 @@
 #include "WoW/Source/Ui/ActionBarFrame.h"
 #include "WoW/Source/Ui/AddOns.h"
 #include "WoW/Source/Ui/ArenaTeamInfo.h"
+#include "WoW/Source/Ui/BugReport.h"
 #include "WoW/Source/Ui/AuctionHouse.h"
 #include "WoW/Source/Ui/BarberShop.h"
 #include "WoW/Source/Ui/BattlefieldInfo.h"
@@ -1794,6 +1795,7 @@ void CGGameUI::InitializeFrameXML() {
         SErrDisplayAppFatalMessage("", "", 0);
     }
 
+    BugReportRegister();
     LoadAddOns(&status);
     FrameXML_RegisterLoadProgressCallback(nullptr, nullptr, 0);
     CGGameUI::Initialize();

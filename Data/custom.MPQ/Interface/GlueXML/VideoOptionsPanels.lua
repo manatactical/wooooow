@@ -375,28 +375,14 @@ end
 -- [[ Advanced Effects Panel ]] --
 
 ADVANCED_EFFECTS_LABEL = "Advanced Effects";
-ADVANCED_EFFECTS_SUBTEXT = "These controls adjust the improved shadow, liquid, sunshaft, ambient occlusion and bloom effects.";
-LIQUID_DETAIL = LIQUID_DETAIL or "Liquid Detail";
-SUNSHAFTS = SUNSHAFTS or "Sunshafts";
-AMBIENT_OCCLUSION = "Ambient Occlusion";
-POST_BLOOM = "Bloom";
-POST_AA = "Anti-Aliasing";
-AERIAL_FOG = "Aerial Haze";
-OPTION_TOOLTIP_POST_AA = "Smooths jagged edges on geometry and foliage, then restores texture detail with contrast adaptive sharpening. Requires DirectX 11.";
-OPTION_TOOLTIP_AERIAL_FOG = "Adds height based distance haze in the zone fog color so far terrain fades into the air. Requires DirectX 11.";
-OPTION_TOOLTIP_AMBIENT_OCCLUSION = "Darkens creases, corners and the ground around objects for more depth. Requires DirectX 11. Disabling this setting may improve performance.";
-OPTION_TOOLTIP_POST_BLOOM = "Adds a soft glow around bright areas, sun rays, and filmic contrast and color. Requires DirectX 11. Disabling this setting may improve performance.";
-OPTION_TOOLTIP_LIQUID_DETAIL = "Controls the rendering quality of liquid. Decreasing this may improve performance.";
-OPTION_TOOLTIP_SUNSHAFTS = "Controls the method and quality used to display sunshaft and glare effects. Disabling this setting may improve performance.";
-OPTION_TOOLTIP_SHADOW_QUALITY = "Controls both the method and quality of shadows. Decreasing this may greatly improve performance.";
+ADVANCED_EFFECTS_SUBTEXT = "These controls adjust the quality and resolution of exterior shadows. Lowering either may greatly improve performance.";
 OPTION_TOOLTIP_SHADOW_RESOLUTION = "Resolution of the shadow maps. Lower values give softer, blockier shadow edges and restore some frame rate. How often shadows update is not affected.";
 SHADOW_RESOLUTION = SHADOW_RESOLUTION or "Shadow Resolution";
+OPTION_TOOLTIP_SHADOW_QUALITY = OPTION_TOOLTIP_SHADOW_QUALITY or "Controls both the method and quality of shadows. Decreasing this may greatly improve performance.";
 
 local ADVANCED_LEVEL_NAMES = {
 	ShadowQuality = { "Low", "Fair", "Medium", "High", "Ultra" },
 	ShadowResolution = { "128", "256", "512", "1024", "2048" },
-	LiquidDetail = { "Low", "Fair", "Medium", "Ultra" },
-	Sunshafts = { "Disabled", "Low", "High" },
 };
 
 local SHADOW_LEVELS = {
@@ -407,24 +393,11 @@ local SHADOW_LEVELS = {
 	[4] = { shadowMode = 3, shadowTextureSize = 2048 },
 };
 
-local LIQUID_LEVELS = {
-	[0] = { "waterDetail", 0, "rippleDetail", 0, "reflectionMode", 0 },
-	[1] = { "waterDetail", 1, "rippleDetail", 0, "reflectionMode", 0 },
-	[2] = { "waterDetail", 2, "rippleDetail", 1, "reflectionMode", 0 },
-	[3] = { "waterDetail", 3, "rippleDetail", 2, "reflectionMode", 3 },
-};
-
 local SHADOW_SIZES = { 128, 256, 512, 1024, 2048 };
 
 AdvancedEffectsPanelOptions = {
-	ShadowQuality = { text = "SHADOW_QUALITY", minValue = 0, maxValue = 4, valueStep = 1 },
+	ShadowQuality = { text = "SHADOW_QUALITY", minValue = 0, maxValue = 4, valueStep = 1, tooltip = OPTION_TOOLTIP_SHADOW_QUALITY },
 	ShadowResolution = { text = "SHADOW_RESOLUTION", minValue = 0, maxValue = 4, valueStep = 1, tooltip = OPTION_TOOLTIP_SHADOW_RESOLUTION },
-	LiquidDetail = { text = "LIQUID_DETAIL", minValue = 0, maxValue = 3, valueStep = 1 },
-	Sunshafts = { text = "SUNSHAFTS", minValue = 0, maxValue = 2, valueStep = 1 },
-	ambientOcclusion = { text = "AMBIENT_OCCLUSION" },
-	postBloom = { text = "POST_BLOOM" },
-	postAA = { text = "POST_AA" },
-	aerialFog = { text = "AERIAL_FOG" },
 };
 
 local function VideoOptionsAdvancedEffectsPanel_Level (value, maxValue)
@@ -480,25 +453,6 @@ end
 
 function VideoOptionsAdvancedEffectsPanel_SetShadowResolution (value)
 	SetCVar("shadowTextureSize", SHADOW_SIZES[VideoOptionsAdvancedEffectsPanel_Level(value, #SHADOW_SIZES - 1) + 1]);
-end
-
-function VideoOptionsAdvancedEffectsPanel_GetLiquidDetail (self)
-	return VideoOptionsAdvancedEffectsPanel_Level(GetCVar("waterDetail"), 3);
-end
-
-function VideoOptionsAdvancedEffectsPanel_SetLiquidDetail (value)
-	local level = LIQUID_LEVELS[VideoOptionsAdvancedEffectsPanel_Level(value, 3)];
-	for i = 1, #level, 2 do
-		SetCVar(level[i], level[i + 1]);
-	end
-end
-
-function VideoOptionsAdvancedEffectsPanel_GetSunshafts (self)
-	return VideoOptionsAdvancedEffectsPanel_Level(GetCVar("sunShafts"), 2);
-end
-
-function VideoOptionsAdvancedEffectsPanel_SetSunshafts (value)
-	SetCVar("sunShafts", VideoOptionsAdvancedEffectsPanel_Level(value, 2));
 end
 
 function VideoOptionsAdvancedEffectsPanel_SetupSlider (self)

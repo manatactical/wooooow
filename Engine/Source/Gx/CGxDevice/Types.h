@@ -79,7 +79,10 @@ enum EGxTexTarget {
     GxTex_CubeMap = 1,
     GxTex_Rectangle = 2,
     GxTex_NonPow2 = 3,
-    GxTexTargets_Last = 4,
+    // Not in the original binary. Ported from 15595 (Cataclysm); 12340 had no volume-texture support.
+    // Liquid::ValidateWaterDetail rejects water detail 2 and 3 unless this target is reported available.
+    GxTex_Volume = 4,
+    GxTexTargets_Last = 5,
 };
 
 #endif

@@ -103,70 +103,73 @@ class CGxDevice {
     /* 01B8 */ uint32_t m_cpuFeatures;
     /* 01BC */ CGxFormat m_format;
     /* 0214 */ CGxCaps m_caps;
-    // Every offset from here down to m_cursorDepth is the 12340 value + 0x40, because the DepthCache
-    // depth formats grew CGxCaps by 0x40 (see the breakdown in CGxCaps, Types.h).
-    /* 0390 */ uint32_t m_baseMipLevel;
-    /* 0394 */ CGxGammaRamp m_gammaRamp;
-    /* 0994 */ CGxGammaRamp m_systemGammaRamp;
-    /* 0F94 */ GxWindowProc m_windowProc;
-    /* 0F98 */ int32_t m_context;
-    /* 0F9C */ int32_t m_intF5C;
-    /* 0FA0 */ int32_t m_windowVisible;
-    /* 0FA4 */ int32_t m_windowFocus;
-    /* 0FA8 */ int32_t m_frameCount;
-    /* 0FAC */ int32_t m_viewportDirty;
-    /* 0FB0 */ CBoundingBox m_viewport;
-    /* 0FC8 */ C44Matrix m_projection;
-    /* 1008 */ C44Matrix m_projNative;
-    /* 1048 */ CGxMatrixStack m_xforms [11];
-    /* 1C50 */ CGxMatrixStack m_texGen [8];
-    /* 2510 */ uint32_t m_clipPlaneMask;
-    /* 2514 */ C4Plane m_clipPlane [6];
-    /* 2574 */ int32_t m_scissorRectDirty;
-    /* 2578 */ CRect m_scissorRect;
-    /* 2588 */ CGxApiLight m_lights [4];
-    /* 26A8 */ TSHashTable<CGxShader, HASHKEY_STRI> m_shaderList [6];
-    /* 2798 */ uint32_t m_appMasterEnables;
-    /* 279C */ uint32_t m_hwMasterEnables;
-    /* 27A0 */ TSList<CGxPool> m_poolList;
-    /* 27AC */ TSList<CGxBuf> m_bufList;
-    /* 27B8 */ CGxBuf* m_bufLocked [2];
-    /* 27C0 */ CGxPool* m_vertexPool;
-    /* 27C4 */ CGxPool* m_indexPool;
-    /* 27C8 */ CGxBuf* m_streamBufs [2];
-    /* 27D0 */ CGxVertexAttrib m_primVertexFormatAttrib [14];
-    /* 28B0 */ CGxBuf* m_primVertexFormatBuf [14];
-    /* 28E8 */ uint32_t m_primVertexMask;
-    /* 28EC */ uint32_t m_primVertexDirty;
-    /* 28F0 */ EGxVertexBufferFormat m_primVertexFormat;
-    /* 28F4 */ CGxBuf* m_primVertexBuf;
-    /* 28F8 */ uint32_t m_primVertexSize;
-    /* 28FC */ CGxBuf* m_primIndexBuf;
-    /* 2900 */ int32_t m_primIndexDirty;
-    /* 2904 */ EmergencyMem m_emergencyMem [2];
-    /* 292C */ TSFixedArray<CGxAppRenderState> m_appRenderStates;
-    /* 2938 */ TSFixedArray<CGxStateBom> m_hwRenderStates;
-    /* 2944 */ TSExplicitList<CGxTex, offsetof(CGxTex, m_link)> m_textures;
-    /* 2950 */ CGxDevice::TextureTarget m_textureTarget [2];
+    // Every offset from here down to m_cursorDepth is the 12340 value + 0x1A0: HEAD's +0x40 from the
+    // DepthCache depth formats, plus +0x160 from the 15595 shader/volume caps and the m_texTarget/
+    // m_texMaxSize growth to GxTexTargets_Last (see the breakdown in CGxCaps, Types.h). Note these are the
+    // 32-bit (Win32) frame, matching the original binary; the x64 layout carries a larger delta because the
+    // TS containers grow, which is why the offsets are guarded by build rather than asserted absolutely.
+    /* 04F0 */ uint32_t m_baseMipLevel;
+    /* 04F4 */ CGxGammaRamp m_gammaRamp;
+    /* 0AF4 */ CGxGammaRamp m_systemGammaRamp;
+    /* 10F4 */ GxWindowProc m_windowProc;
+    /* 10F8 */ int32_t m_context;
+    /* 10FC */ int32_t m_intF5C;
+    /* 1100 */ int32_t m_windowVisible;
+    /* 1104 */ int32_t m_windowFocus;
+    /* 1108 */ int32_t m_frameCount;
+    /* 110C */ int32_t m_viewportDirty;
+    /* 1110 */ CBoundingBox m_viewport;
+    /* 1128 */ C44Matrix m_projection;
+    /* 1168 */ C44Matrix m_projNative;
+    /* 11A8 */ CGxMatrixStack m_xforms [11];
+    /* 1DB0 */ CGxMatrixStack m_texGen [8];
+    /* 2670 */ uint32_t m_clipPlaneMask;
+    /* 2674 */ C4Plane m_clipPlane [6];
+    /* 26D4 */ int32_t m_scissorRectDirty;
+    /* 26D8 */ CRect m_scissorRect;
+    /* 26E8 */ CGxApiLight m_lights [4];
+    /* 2808 */ TSHashTable<CGxShader, HASHKEY_STRI> m_shaderList [6];
+    /* 28F8 */ uint32_t m_appMasterEnables;
+    /* 28FC */ uint32_t m_hwMasterEnables;
+    /* 2900 */ TSList<CGxPool> m_poolList;
+    /* 290C */ TSList<CGxBuf> m_bufList;
+    /* 2918 */ CGxBuf* m_bufLocked [2];
+    /* 2920 */ CGxPool* m_vertexPool;
+    /* 2924 */ CGxPool* m_indexPool;
+    /* 2928 */ CGxBuf* m_streamBufs [2];
+    /* 2930 */ CGxVertexAttrib m_primVertexFormatAttrib [14];
+    /* 2A10 */ CGxBuf* m_primVertexFormatBuf [14];
+    /* 2A48 */ uint32_t m_primVertexMask;
+    /* 2A4C */ uint32_t m_primVertexDirty;
+    /* 2A50 */ EGxVertexBufferFormat m_primVertexFormat;
+    /* 2A54 */ CGxBuf* m_primVertexBuf;
+    /* 2A58 */ uint32_t m_primVertexSize;
+    /* 2A5C */ CGxBuf* m_primIndexBuf;
+    /* 2A60 */ int32_t m_primIndexDirty;
+    /* 2A64 */ EmergencyMem m_emergencyMem [2];
+    /* 2A8C */ TSFixedArray<CGxAppRenderState> m_appRenderStates;
+    /* 2A98 */ TSFixedArray<CGxStateBom> m_hwRenderStates;
+    /* 2AA4 */ TSExplicitList<CGxTex, offsetof(CGxTex, m_link)> m_textures;
+    /* 2AB0 */ CGxDevice::TextureTarget m_textureTarget [2];
     // Not in the original binary. Ported from 15595: the whole attachment set as one object, so a pass
     // can save and restore it. m_textureTarget above is still the live device state.
-    /* 2968 */ CGxTex* m_backBufferColorTex;
-    /* 296C */ CGxTex* m_backBufferDepthTex;
-    /* 2970 */ CGxFrameBuffer* m_backBuffer;
-    /* 2974 */ CGxFrameBuffer* m_frameBuffer;
-    /* 2978 */ uint32_t m_frameBufferVersion;
-    /* 297C */ TSExplicitList<CGxQuery, offsetof(CGxQuery, m_link)> m_queryList;
-    /* 2988 */ int32_t m_scrShotClick;
-    /* 298C */ uint32_t m_scrShotWidth;
-    /* 2990 */ uint32_t m_scrShotHeight;
-    /* 2994 */ TSGrowableArray<CImVector> m_scrShotPixels;
-    /* 29A4 */ int32_t m_cursorVisible;
-    /* 29A8 */ int32_t m_hwCursor;
-    /* 29AC */ uint32_t m_cursorHotspotX;
-    /* 29B0 */ uint32_t m_cursorHotspotY;
-    /* 29B4 */ uint32_t m_cursor [1024];
-    /* 39B4 */ CGxTex* m_cursorTexture;
-    /* 39B8 */ float m_cursorDepth;
+    /* 2AC8 */ CGxTex* m_backBufferColorTex;
+    /* 2ACC */ CGxTex* m_backBufferDepthTex;
+    /* 2AD0 */ CGxFrameBuffer* m_backBuffer;
+    /* 2AD4 */ CGxFrameBuffer* m_frameBuffer;
+    /* 2AD8 */ uint32_t m_frameBufferVersion;
+    /* 2ADC */ TSExplicitList<CGxQuery, offsetof(CGxQuery, m_link)> m_queryList;
+    /* 2AE8 */ int32_t m_scrShotClick;
+    /* 2AEC */ uint32_t m_scrShotWidth;
+    /* 2AF0 */ uint32_t m_scrShotHeight;
+    /* 2AF4 */ TSGrowableArray<CImVector> m_scrShotPixels;
+    /* 2B04 */ int32_t m_cursorVisible;
+    /* 2B08 */ int32_t m_hwCursor;
+    /* 2B0C */ uint32_t m_cursorHotspotX;
+    /* 2B10 */ uint32_t m_cursorHotspotY;
+    /* 2B14 */ uint32_t m_cursor [1024];
+    /* 3B14 */ CGxTex* m_cursorTexture;
+    /* 3B18 */ float m_cursorDepth;
 
     virtual void ITexMarkAsUpdated(CGxTex* texId);
     virtual void IRsSendToHw(EGxRenderState which) = 0;
@@ -377,6 +380,24 @@ class CGxDevice {
     void XformPushAndSet(EGxXform xf, const C44Matrix& matrix);
     void XformSetViewport(float minX, float maxX, float minY, float maxY, float minZ, float maxZ);
 };
+
+// Load-bearing: CGxCaps growth moves every CGxDevice member below m_caps, and a silent drift is what
+// produced the m_d3dVertexDecl array overrun that crashed the client on launch. Fail the build, not the run.
+//
+// The /* 0XXX */ comments above stay in the 32-bit (Win32) frame so they stay diffable against the original
+// binary, but the asserts cover the build actually being compiled: x64 is the shipped target and its offsets
+// differ because the TS containers grow. Measured, not derived - re-measure with the probe template if the
+// assert fires. sizeof(CGxCaps) is arch-independent (int32/float arrays only) and guards both.
+static_assert(sizeof(CGxCaps) == 0x2DC, "CGxCaps size changed - re-anchor CGxDevice.h and every caps-indexed table");
+#if defined(WOWDECOMP_ARCH_64)
+static_assert(offsetof(CGxDevice, m_caps) == 0x02B0, "m_caps moved - CGxFormat or a member above it changed size");
+static_assert(offsetof(CGxDevice, m_baseMipLevel) == 0x058C, "CGxDevice layout changed - re-anchor the offsets in CGxDevice.h");
+static_assert(offsetof(CGxDevice, m_cursorDepth) == 0x3D68, "CGxDevice layout changed - re-anchor the offsets in CGxDevice.h");
+#else
+static_assert(offsetof(CGxDevice, m_caps) == 0x0214, "m_caps moved - CGxFormat or a member above it changed size");
+static_assert(offsetof(CGxDevice, m_baseMipLevel) == 0x04F0, "CGxDevice layout changed - re-anchor the offsets in CGxDevice.h");
+static_assert(offsetof(CGxDevice, m_cursorDepth) == 0x3B18, "CGxDevice layout changed - re-anchor the offsets in CGxDevice.h");
+#endif
 
 extern CGxDevice* g_theGxDevicePtr;
 extern const char* s_formatToInt[CGxFormat::Formats_Last];

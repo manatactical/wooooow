@@ -195,13 +195,63 @@ enum EGxColorFormat {
     GxColorFormats_Last = 2,
 };
 
+// Not in the original binary. Ported from 15595 (Cataclysm). The indices matter: ChooseShaderModel fills
+// CGxCaps::m_shaderProfiles with these, and ShaderCreate builds the .bls path from the matching name, so
+// the numbering must match 15595's even though 12340 has no equivalent enum.
+enum EGxShaderProfile {
+    GxShProfile_None = 0,
+    GxShProfile_VsFf = 1,
+    GxShProfile_PsFf = 2,
+    GxShProfile_Vs11 = 3,
+    GxShProfile_Vs20 = 4,
+    GxShProfile_Vs30 = 5,
+    GxShProfile_Vs40 = 6,
+    GxShProfile_Vs50 = 7,
+    GxShProfile_Ps11 = 8,
+    GxShProfile_Ps14 = 9,
+    GxShProfile_Ps20 = 10,
+    GxShProfile_Ps30 = 11,
+    GxShProfile_Ps40 = 12,
+    GxShProfile_Ps50 = 13,
+    GxShProfile_Gs40 = 14,
+    GxShProfile_Gs50 = 15,
+    GxShProfile_Hs50 = 16,
+    GxShProfile_Ds50 = 17,
+    GxShProfile_Cs40 = 18,
+    GxShProfile_Cs50 = 19,
+    GxShProfile_Arbvp1 = 20,
+    GxShProfile_Arbvp1Cg12 = 21,
+    GxShProfile_Arbfp1 = 22,
+    GxShProfile_Glslv = 23,
+    GxShProfile_Glslf = 24,
+    GxShProfile_Opencl = 25,
+    GxShProfile_Vp20 = 26,
+    GxShProfile_Vp30 = 27,
+    GxShProfile_Vp40 = 28,
+    GxShProfile_Gp4vp = 29,
+    GxShProfile_Fp10 = 30,
+    GxShProfile_Fp20 = 31,
+    GxShProfile_Fp25 = 32,
+    GxShProfile_Fp30 = 33,
+    GxShProfile_Fp40 = 34,
+    GxShProfile_Gp4fp = 35,
+    GxShProfile_Gp4gp = 36,
+    GxShProfile_Cuda = 37,
+    GxShProfiles_Last = 38,
+};
+
 class CGxCaps {
     public:
-    // Not in the original binary. m_texFmt/m_rttFormat and the fields after them moved when the eight
-    // DepthCache depth formats were appended to EGxTexFormat (see that enum). No field before m_texFmt
-    // changes. Fields from m_texTarget through m_rttFormat are +0x20 versus 12340; every field after
-    // m_rttFormat is +0x40, because both arrays grew by 0x20. CGxCaps itself is 0x40 larger, so every
-    // CGxDevice member after m_caps is also +0x40 (see CGxDevice.h).
+    // Not in the original binary. Two rounds of growth versus 12340, both deliberate; the whole block is
+    // re-anchored so no field reads a neighbour's storage.
+    //
+    // Round 1: the eight DepthCache depth formats were appended to EGxTexFormat, so m_texFmt/m_rttFormat
+    // are [GxTexFormats_Last] and everything below them moved. Round 2: m_texTarget/m_texMaxSize grew from
+    // 4 to GxTexTargets_Last for the volume-texture flag the water front-end gates on, and the 15595 caps
+    // below m_numShaderTmus were appended.
+    //
+    // CGxDevice members after m_caps are re-anchored by the matching delta (see CGxDevice.h). Unlike 15595
+    // the arrays stay indexed by this tree's EGxTexFormat ordering, so the 15595 slot numbers differ.
     /* 0000 */ int32_t m_numTmus;
     /* 0004 */ int32_t m_pixelCenterOnEdge;
     /* 0008 */ int32_t m_texelCenterOnEdge;
@@ -212,32 +262,47 @@ class CGxCaps {
     /* 001C */ uint32_t m_maxIndex;
     /* 0020 */ int32_t m_generateMipMaps;
     /* 0024 */ int32_t m_texFmt [GxTexFormats_Last];
-    /* 0078 */ int32_t m_texTarget [4];
-    /* 0088 */ uint32_t m_texNonPow2;
-    /* 008C */ uint32_t m_texMaxSize [4];
-    /* 009C */ int32_t m_rttFormat [GxTexFormats_Last];
-    /* 00F0 */ uint32_t unk_00B0;
-    /* 00F4 */ int32_t m_shaderTargets [6];
-    /* 010C */ uint32_t m_shaderConstants [6];
-    /* 0124 */ int32_t m_texFilterTrilinear;
-    /* 0128 */ int32_t m_texFilterAnisotropic;
-    /* 012C */ uint32_t m_maxTexAnisotropy;
-    /* 0130 */ int32_t m_depthBias;
-    /* 0134 */ int32_t m_colorWrite;
-    /* 0138 */ int32_t m_maxClipPlanes;
-    /* 013C */ int32_t m_hwCursor;
-    /* 0140 */ int32_t m_occlusionQuery;
-    /* 0144 */ int32_t m_pointParameters;
-    /* 0148 */ float m_pointScaleMax;
-    /* 014C */ int32_t m_pointSprite;
-    /* 0150 */ uint32_t m_blendFactor;
-    /* 0154 */ uint32_t unused_0114 [5];
-    /* 0168 */ int32_t m_oglRtAlpha;
-    /* 016C */ int32_t m_stereoAvailable;
-    /* 0170 */ int32_t m_shaderAlphaRef;
-    /* 0174 */ int32_t unk_0134;
-    /* 0178 */ int32_t unk_0138;
+    /* 0078 */ int32_t m_texTarget [GxTexTargets_Last];
+    /* 008C */ uint32_t m_texNonPow2;
+    /* 0090 */ uint32_t m_texMaxSize [GxTexTargets_Last];
+    /* 00A4 */ int32_t m_rttFormat [GxTexFormats_Last];
+    /* 00F8 */ uint32_t unk_00B0;
+    /* 00FC */ int32_t m_shaderTargets [6];
+    /* 0114 */ uint32_t m_shaderConstants [6];
+    /* 012C */ int32_t m_texFilterTrilinear;
+    /* 0130 */ int32_t m_texFilterAnisotropic;
+    /* 0134 */ uint32_t m_maxTexAnisotropy;
+    /* 0138 */ int32_t m_depthBias;
+    /* 013C */ int32_t m_colorWrite;
+    /* 0140 */ int32_t m_maxClipPlanes;
+    /* 0144 */ int32_t m_hwCursor;
+    /* 0148 */ int32_t m_occlusionQuery;
+    /* 014C */ int32_t m_pointParameters;
+    /* 0150 */ float m_pointScaleMax;
+    /* 0154 */ int32_t m_pointSprite;
+    /* 0158 */ uint32_t m_blendFactor;
+    /* 015C */ uint32_t unused_0114 [5];
+    /* 0170 */ int32_t m_oglRtAlpha;
+    /* 0174 */ int32_t m_stereoAvailable;
+    /* 0178 */ int32_t m_shaderAlphaRef;
+    /* 017C */ int32_t unk_0134;
+    /* 0180 */ int32_t unk_0138;
+    // Appended from 15595; everything above is 12340's layout shifted by the two growth rounds.
+    /* 0184 */ int32_t m_numVertexTmus;
+    /* 0188 */ int32_t m_numShaderTmus;
+    /* 018C */ uint32_t m_vendorId;
+    /* 0190 */ uint32_t m_deviceId;
+    /* 0194 */ uint32_t m_numRenderTargets;
+    /* 0198 */ int32_t m_shaderModel;
+    /* 019C */ int32_t m_shaderProfiles [GxShProfiles_Last];
+    /* 0234 */ int32_t m_vertexTexFmt [GxTexFormats_Last];
+    /* 0288 */ int32_t m_pcfFormat [GxTexFormats_Last];
 };
+
+// The whole point of re-anchoring is that the layout is now load-bearing: CGxDevice's offsets below m_caps
+// and every table indexed by GxTexFormats_Last assume these sizes. A silent drift here is what produced the
+// m_d3dVertexDecl overrun that crashed the client on launch, so fail the build instead of the runtime.
+static_assert(sizeof(CGxCaps) == 0x2DC, "CGxCaps layout changed - re-anchor the CGxDevice members below m_caps");
 
 class CGxQuery {
     public:

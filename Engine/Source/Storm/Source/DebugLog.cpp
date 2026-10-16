@@ -27,6 +27,7 @@ void DebugLogSetEnabled(int32_t enabled) {
     s_debugLogEnabled = enabled < 0 ? -1 : (enabled != 0 ? 1 : 0);
 }
 
+#ifndef NDEBUG
 void DebugLog(const char* format, ...) {
     if (!DebugLogIsEnabled()) {
         return;
@@ -66,3 +67,5 @@ void DebugLog(int32_t target, const char* format, ...) {
 void DebugValidate(const char* expression) {
     DebugLog("Validation failed: %s", expression);
 }
+
+#endif

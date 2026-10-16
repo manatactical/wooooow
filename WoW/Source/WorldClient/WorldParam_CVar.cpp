@@ -298,6 +298,10 @@ bool CWorldParam::WaterDetailCallback(CVar* var, const char* oldValue, const cha
     int32_t detail = SStrToInt(value);
 
     if (!Liquid::SetWaterDetail(detail)) {
+        // DIAG: the rejection reason is the whole verdict for the new water path. ValidateWaterDetail's codes:
+        // 128 = needs SM3.0, 64 = needs SM2.0, 8 = no depth cache / no float RT / no volume texture, 2 = out of
+        // range. Under DXVK the depth-cache check (8) is the one that fires, until the D3D11 backend exists.
+        g_theGxDevicePtr->Log("waterDetail: %d rejected (ValidateWaterDetail=%d)\n", detail, Liquid::ValidateWaterDetail(detail));
         ConsoleWrite("Unsupported water detail mode.", DEFAULT_COLOR);
         return false;
     }

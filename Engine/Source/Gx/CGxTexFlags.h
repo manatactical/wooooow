@@ -17,7 +17,14 @@ class CGxTexFlags {
     uint32_t m_maxAnisotropy : 5;
     uint32_t m_bit14 : 1;
     uint32_t m_bit15 : 1;
-    uint32_t m_unk16 : 15;
+    // Not in the original binary. Ported from 15595 (Cataclysm), which needs them for the new water system:
+    // m_wrapW wraps the noise volume texture, m_bit20 marks the procedural water-depth textures. Carved out of
+    // m_unk16 (15 bits, never read or written anywhere in this tree) so no existing field moves - 15595 widens
+    // wrapU/wrapV to 2 bits instead, which would shift every field after them and change the meaning of every
+    // stored flag. s_wrapModes stays 2 entries here; add MIRROR to it if a 3rd mode is ever needed.
+    uint32_t m_wrapW : 1;
+    uint32_t m_bit20 : 1;
+    uint32_t m_unk16 : 13;
     uint32_t m_bit31 : 1;
 
     bool operator!=(const CGxTexFlags& flags) const;

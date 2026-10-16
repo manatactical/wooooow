@@ -7,6 +7,30 @@
 // STATIC: 0x00D43B24
 TSGrowableArray<Liquid::IMaterial*> Liquid::CMaterialBank::s_materials;
 
+// Not in the original binary. Ported from 15595 (Cataclysm). 12340 released the materials inside Destroy();
+// 15595 splits that into ResetMaterials (settings changed, keep the objects) and Purge (drop the objects).
+// Bank lifetime stays with 12340's s_materialBankRefCount in Initialize/Shutdown, so 15595's CMaterialBank::
+// Create is not ported - it would be a second refcount that nothing increments.
+// OFFSET: 0x0071C580/0x1403F1540
+void Liquid::CMaterialBank::ResetMaterials() {
+    for (uint32_t i = 0; i < Liquid::CMaterialBank::s_materials.Count(); i++) {
+        if (Liquid::CMaterialBank::s_materials.m_data[i]) {
+            Liquid::CMaterialBank::s_materials.m_data[i]->Reset();
+        }
+    }
+}
+
+// OFFSET: 0x0071C630/0x1403F1660
+void Liquid::CMaterialBank::Purge() {
+    for (uint32_t i = 0; i < Liquid::CMaterialBank::s_materials.Count(); i++) {
+        if (Liquid::CMaterialBank::s_materials.m_data[i]) {
+            Liquid::CMaterialBank::s_materials.m_data[i]->Release();
+        }
+    }
+
+    Liquid::CMaterialBank::s_materials.m_count = 0;
+}
+
 // VERIFY: 8e2d4258 manual
 // OFFSET: 0x008A1F50
 void Liquid::CMaterialBank::Destroy() {

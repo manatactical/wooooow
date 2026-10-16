@@ -273,7 +273,7 @@ void WaterRipple::Initialize() {
 // VERIFY: c46ff70f manual
 // OFFSET: 0x0079E460
 void WaterRipple::Destroy() {
-    Liquid::DestroyProceduralTextures();
+    Liquid::DestroyProceduralTextures(1);
 
     for (uint32_t i = 0; i < sizeof(s_rippleTextures) / sizeof(s_rippleTextures[0]); i++) {
         HandleClose(reinterpret_cast<HOBJECT>(s_rippleTextures[i]));

@@ -1603,6 +1603,12 @@ void CWorld::Update(C3Vector* camPos, C3Vector* camTarget, C3Vector* position) {
     }
 
     World::s_m2Scene->m_liquidTypeId = s_liquidTypeId;
+
+    // Not in the original binary. Ported from 15595, which calls this from CWorldScene::UpdateLiquid() at the
+    // same point in the world update. It is what makes a waterDetail/rippleDetail/reflectionMode change take
+    // effect without reloading the map: the cvar setters only raise Liquid's s_configDirty, and Update() is the
+    // consumer that tears the procedural textures down and rebuilds them.
+    Liquid::Update();
 }
 
 // VERIFY: 1eb0b466 manual

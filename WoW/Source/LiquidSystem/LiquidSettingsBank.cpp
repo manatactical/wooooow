@@ -10,6 +10,24 @@ CDataAllocator Liquid::s_settingsAllocator(sizeof(Liquid::CMaterialSettings), 0x
 // STATIC: 0x00D43B14
 TSGrowableArray<Liquid::CMaterialSettings*> Liquid::CSettingsBank::s_settings;
 
+// Not in the original binary. Ported from 15595 (Cataclysm); 12340 only had Destroy/ResetTextures. This is the
+// settings half of Liquid::Update()'s material-bank rebuild. Bank lifetime stays with 12340's
+// s_settingsBankRefCount in Initialize/Shutdown, so 15595's CSettingsBank::Create is not ported.
+// OFFSET: 0x0071C000/0x1403F0F20
+void Liquid::CSettingsBank::Purge() {
+    for (uint32_t i = 0; i < Liquid::CSettingsBank::s_settings.Count(); i++) {
+        Liquid::CMaterialSettings* settings = Liquid::CSettingsBank::s_settings.m_data[i];
+
+        if (settings) {
+            settings->Destroy();
+            settings->~CMaterialSettings();
+            Liquid::s_settingsAllocator.PutData(settings, nullptr, 0);
+        }
+    }
+
+    Liquid::CSettingsBank::s_settings.m_count = 0;
+}
+
 // VERIFY: 1d70e7aa manual
 // OFFSET: 0x008A2380
 void Liquid::CSettingsBank::Destroy() {

@@ -124,6 +124,8 @@ CTexture* TextureCacheGetTexture(char* fileName, char* extension, CGxTexFlags te
 CTexture* TextureCacheGetTexture(const CImVector& color);
 void TextureCacheUpdate();
 void TextureCacheNewTexture(CTexture* texture);
+// Not in the original binary. Ported from 15595; the new water system's texture-cache bookkeeping needs it.
+void TextureCacheRemoveTexture(CTexture* texture);
 void TextureCacheNewTexture(CTexture* texture, CGxTexFlags texFlags);
 void TextureCacheNewTexture(CTexture* texture, const CImVector& color);
 uint32_t TextureCacheGetMaxSize();

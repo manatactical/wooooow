@@ -653,7 +653,7 @@ void CMap::InitializeLiquidTables() {
     }
 
     WaterRipple::Initialize();
-    Liquid::CreateProceduralTextures();
+    Liquid::CreateProceduralTextures(1);
 }
 
 // VERIFY: cd6270d0 manual

@@ -50,6 +50,16 @@ Liquid::IWaveManager::~IWaveManager() {
 Liquid::IMaterial::~IMaterial() {
 }
 
+// Not in the original binary. Ported from 15595; empty in 15595 too. CMaterialBank::ResetMaterials calls it on
+// every material when the water settings change. The 12340 material classes do not override it yet - that is the
+// C.2 material stage, so this currently just visits each material and does nothing.
+void Liquid::IMaterial::Reset() {
+}
+
+// Not in the original binary. Ported from 15595; also empty there.
+Liquid::DisplMapPerturbationMesh::DisplMapPerturbationMesh() {
+}
+
 // VERIFY: afda035c auto
 // OFFSET: 0x008A1770
 int32_t Liquid::Initialize(int32_t useCameraRelativeCoords, float worldCoordScale, int32_t shadersEnabled, const char* shaderPath, IDatabase<LiquidTypeRec>* liquidTypeDB, IDatabase<LiquidMaterialRec>* liquidMaterialDB) {
@@ -478,4 +488,38 @@ void Liquid::RemoveConfigChangedCallback(CONFIG_CHANGED_CALLBACK callback) {
             return;
         }
     }
+
+}
+
+// OFFSET: 0x0071B2A0/0x1403EF800
+// Ported from 15595. Runs once per frame from the world scene before liquids draw; the dirty flags are set by
+// SignalConfigChanged (water settings changed) and OnTexturesDirty (device restore). Lives here, not in
+// LiquidProcTextures.cpp, because the flags and the callback list are file-scope statics of this file.
+void Liquid::Update() {
+    if (s_configDirty) {
+        if (s_materialsDirty) {
+            Liquid::CMaterialBank::ResetMaterials();
+        }
+
+        for (uint32_t i = 0; i < s_configChangedCallbacks.Count(); i++) {
+            s_configChangedCallbacks[i]();
+        }
+
+        Liquid::DestroyProceduralTextures(s_materialsDirty);
+
+        if (s_materialsDirty) {
+            Liquid::CMaterialBank::Purge();
+            Liquid::CSettingsBank::Purge();
+        }
+
+        Liquid::CreateProceduralTextures(s_materialsDirty);
+        s_configDirty = 0;
+        s_materialsDirty = 1;
+    }
+
+    s_needBackBuffer = 0;
+    s_needDynDisplMap = 0;
+    Liquid::s_oceanDepthTexValid = 0;
+    Liquid::s_riverDepthTexValid = 0;
+    Liquid::s_wmoWaterTexValid = 0;
 }

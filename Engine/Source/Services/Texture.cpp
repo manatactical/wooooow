@@ -2379,6 +2379,16 @@ void TextureCacheNewTexture(CTexture* texture) {
     key.m_texFlags = texture->m_gxTexFlags;
     key.m_filename = texture->m_filename;
     s_textureCache.Insert(texture, hashval, key);
+    s_textureCache.Insert(texture, hashval, key);
+}
+
+// Not in the original binary. Ported from 15595; the new water system caches and uncaches its procedural
+// textures around device restore. 12340 has no RemoveTexture, so this unlinks the entry the same way the
+// GxTex cache eviction above does.
+void TextureCacheRemoveTexture(CTexture* texture) {
+    if (texture) {
+        texture->m_link.Unlink();
+    }
 }
 
 // VERIFY: 07bcfe26 manual

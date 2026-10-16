@@ -9,6 +9,7 @@
 #include "Engine/Source/Tempest/C2Vector.h"
 #include "Engine/Source/Tempest/C3Vector.h"
 #include "Engine/Source/Tempest/C44Matrix.h"
+#include "Engine/Source/Tempest/C2iVector.h"
 #include "Engine/Source/Tempest/C4Vector.h"
 #include "Engine/Source/Tempest/CAaSphere.h"
 #include "Engine/Source/Tempest/CImVector.h"
@@ -18,6 +19,7 @@ template <class T>
 class IDatabase;
 class CGxShader;
 class CGxTex;
+class CGxFrameBuffer;
 class CM2Lighting;
 class CTexture;
 class LiquidMaterialRec;
@@ -29,6 +31,37 @@ namespace Liquid {
     class IWaveManager;
     class IEnvironment;
     class IGeomFactory;
+
+    // Not in the original binary. Ported from 15595 (Cataclysm) - the displacement-map and reflection types the
+    // new water system needs. See the D.1 block further down for the extent of what was ported.
+    enum ERenderPass {
+        RenderPass_Opaque = 0,
+        RenderPass_Transparent = 1,
+    };
+
+    enum EPertSurface {
+        PertSurface_Water = 0,
+        PertSurface_Ocean = 1,
+    };
+
+    struct DisplMapPerturbation {
+        /* 0000 */ C3Vector m_pos;
+        /* 000C */ float m_radius;
+        /* 0010 */ float m_amplitude;
+        /* 0014 */ uint32_t m_period;
+        /* 0018 */ uint32_t unk_0018;
+    };
+
+    struct DisplMapPerturbationMesh {
+        /* 0000 */ C44Matrix m_transform;
+        /* 0040 */ TSGrowableArray<C3Vector> m_vertices;
+        /* 0050 */ TSGrowableArray<uint16_t> m_indices;
+        /* 0060 */ float m_amplitude;
+        /* 0064 */ uint32_t m_period;
+        /* 0068 */ uint32_t unk_0068;
+
+        DisplMapPerturbationMesh();
+    };
 
     struct VSLight {
         /* 0000 */ C4Vector m_position;
@@ -104,6 +137,11 @@ namespace Liquid {
         virtual ~IMaterial();
         virtual void Release() = 0;
         virtual void Render(IEnvironment* environment, IGeomFactory* geomFactory, IWaveManager* waveManager, const C3Vector& cameraPos, const C44Matrix* transform, const CAaSphere* bounds, CMaterialSettings* settings) = 0;
+        // Not in the original binary. Ported from 15595; the material bank calls Reset() when the water
+        // settings change. Added at the END of the virtual list so no existing 12340 slot moves - inserting
+        // one mid-list is what broke CursorSetVisible earlier in this port. The base is empty, like 15595's;
+        // the concrete materials in 12340 do not override it yet, which is the C.2 material stage.
+        virtual void Reset();
     };
 
     class CMaterialProcWater : public IMaterial {
@@ -309,6 +347,8 @@ namespace Liquid {
 
         static void Destroy();
         static CMaterialSettings* GetSettings(uint32_t liquidType);
+        // Not in the original binary. Ported from 15595.
+        static void Purge();
         static void ResetTextures();
         static bool UpdateRecord(CMaterialSettings* settings, uint32_t liquidType);
     };
@@ -319,6 +359,9 @@ namespace Liquid {
 
         static void Destroy();
         static IMaterial* GetMaterial(uint32_t liquidType);
+        // Not in the original binary. Ported from 15595.
+        static void Purge();
+        static void ResetMaterials();
     };
 
     extern CDataAllocator s_settingsAllocator;
@@ -339,9 +382,31 @@ namespace Liquid {
     extern int32_t s_useCameraRelativeCoords;
     extern int32_t s_settingsBankRefCount;
     extern int32_t s_materialBankRefCount;
-    extern uint8_t s_unk_D43B48[4];
-    extern CTexture* s_unk_D43B4C;
-    extern CTexture* s_unk_D43B50[32];
+    // Not in the original binary. Ported from 15595 (Cataclysm). 12340's s_unk_D43B48/s_unk_D43B4C/s_unk_D43B50
+    // were never written anywhere in this tree - the caches below replace them, which is what 15595 did too.
+    extern uint8_t s_oceanDepthTexValid;
+    extern uint8_t s_riverDepthTexValid;
+    extern uint8_t s_wmoWaterTexValid;
+    extern uint8_t s_displMapDirty;
+    extern uint32_t s_displMapCount;
+    extern TSGrowableArray<DisplMapPerturbation*> s_eventPerturbations[2];
+    extern TSGrowableArray<DisplMapPerturbation*> s_perturbations[2];
+    extern TSGrowableArray<DisplMapPerturbationMesh*> s_eventPerturbationMeshes[2];
+    extern TSGrowableArray<DisplMapPerturbationMesh*> s_perturbationMeshes[2];
+    extern CGxFrameBuffer* s_displMapFBs[4];
+    extern CTexture* s_displMaps[4];
+    extern CGxShader* s_clearDisplMapPS;
+    extern CGxShader* s_clearDisplMapVS;
+    extern CGxShader* s_fourTapBlurPS;
+    extern CGxShader* s_fourTapBlurVS;
+    extern uint32_t s_kawasePingPong;
+    extern CGxShader* s_perturbDisplMapMeshPS;
+    extern CGxShader* s_perturbDisplMapMeshVS;
+    extern CGxShader* s_perturbDisplMapPS;
+    extern CGxShader* s_perturbDisplMapVS;
+    extern CTexture* s_perturbTex;
+    extern CGxShader* s_propagateDisplMapPS;
+    extern CGxShader* s_propagateDisplMapVS;
     extern CTexture* s_wmoWaterTex;
     extern CTexture* s_oceanDepthTex;
     extern CTexture* s_riverDepthTex;
@@ -352,8 +417,10 @@ namespace Liquid {
 
     void CacheProceduralTextures();
     void ClearMaterials();
-    void CreateProceduralTextures();
-    void DestroyProceduralTextures();
+    // Not in the original binary. 12340 took no parameter; 15595 keys the work off whether the material bank
+    // is also being rebuilt, so the parameter was added to match.
+    void CreateProceduralTextures(int32_t materials);
+    void DestroyProceduralTextures(int32_t materials);
     void ExtWaterDepthTexCallback(EGxTexCommand command, uint32_t width, uint32_t height, uint32_t depth, uint32_t mipLevel, void* userArg, uint32_t& texelStrideInBytes, const void*& texels);
     const char* GetShaderSuffix();
     C44Matrix* GetTexScrollMtx(const C2Vector& speed);
@@ -407,6 +474,35 @@ namespace Liquid {
     void GetUnderWaterFog(float& start, float& end, float& density, CImVector& color);
     void SetAboveWaterFog(float start, float end, float density, const CImVector& color);
     void GetAboveWaterFog(float& start, float& end, float& density, CImVector& color);
+
+    // Not in the original binary. Ported from 15595 (Cataclysm) - Stage D.1: the reflection / back / blur
+    // buffer set and the displacement-map textures, plus the Update() loop that creates them. The perturbator
+    // simulation (CreatePerturbator/PerturbDisplMap/PropagateDisplMap/KawaseBlur) and the render path were left
+    // out: both need waterDetail 2+, which ValidateWaterDetail rejects until the D3D11 backend makes DepthCache
+    // supported. The buffer plumbing below is what has to exist first either way.
+    void Update();
+    void GrabBackBuffer();
+    void OnTexturesDirty();
+    void UnCacheProceduralTextures();
+    void CreateDynamicDisplacementMap();
+    void SetDisplMapInfo(const C3Vector& pos, const C2Vector& size);
+    void GetDisplMapInfoRaw(uint32_t index, C3Vector& pos, C2Vector& size);
+    void ClearPerturbatorCache();
+    void ClearEventPerturbations();
+    int32_t HasDynamicDisplMap();
+    uint32_t GetDynamicDisplMapCnt();
+    CGxTex* GetDynamicDisplMap(uint32_t index);
+    float GetDynamicDisplMapInterpolation(uint32_t index);
+    C2iVector GetDisplMapTexSize(uint32_t index);
+    CTexture* GetBackBuffer();
+    CTexture* GetBlurredBackBuffer();
+    CTexture* GetRealReflectionBuffer();
+    CTexture* GetBlurredReflectionBuffer();
+    CTexture* GetFakeReflectionBuffer();
+    CGxFrameBuffer* GetBlurredBackBufferFB();
+    CGxFrameBuffer* GetBlurredReflectionBufferFB();
+    CGxFrameBuffer* GetRealReflectionFB();
+    CGxFrameBuffer* GetFakeReflectionFB();
 }
 
 // INLINED

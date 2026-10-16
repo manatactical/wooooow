@@ -1009,6 +1009,17 @@ int32_t GxTexStretch(CGxTex* dest, const CiRect* destRect, const CiRect* sourceR
     return 0;
 }
 
+// Not in the original binary. Ported from 15595; DepthCache::Resolve calls it to collapse a multisampled
+// depth texture into a sample-able one. Guarded the same way 15595 guards GxTexStretch.
+int32_t GxTexResolve(CGxTex* dest, CGxTex* source) {
+    if (dest && source && dest->m_flags.m_renderTarget) {
+        return g_theGxDevicePtr->TexResolve(dest, source);
+    }
+
+    SErrSetLastError(STORM_ERROR_INVALID_PARAMETER);
+    return 0;
+}
+
 // VERIFY: 37bbf5ec auto
 // OFFSET: 0x00681690
 bool GxQueryBegin(CGxQuery* query) {

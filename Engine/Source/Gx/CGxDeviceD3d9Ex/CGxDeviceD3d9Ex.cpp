@@ -2385,6 +2385,9 @@ int32_t CGxDeviceD3d9Ex::ICreateWindow(CGxFormat& format) {
 // OFFSET: 0x006A0B40
 void CGxDeviceD3d9Ex::ISetCaps(const CGxFormat& format) {
     this->m_caps.m_numTmus = this->m_d3dCaps.MaxSimultaneousTextures >= 8 ? 8 : this->m_d3dCaps.MaxSimultaneousTextures;
+    // Not in the original binary. Ported from 15595 CGxDeviceD3d::ISetCaps.
+    this->m_caps.m_numVertexTmus = 0;
+    this->m_caps.m_numShaderTmus = this->m_d3dCaps.MaxSimultaneousTextures >= 16 ? 16 : this->m_d3dCaps.MaxSimultaneousTextures;
     this->m_caps.m_pixelCenterOnEdge = 0;
     this->m_caps.m_texelCenterOnEdge = 1;
 
@@ -2393,6 +2396,8 @@ void CGxDeviceD3d9Ex::ISetCaps(const CGxFormat& format) {
     this->m_caps.m_texMaxSize[GxTex_CubeMap] = maxTextureSize >= 256 ? maxTextureSize : 256;
     this->m_caps.m_texMaxSize[GxTex_Rectangle] = maxTextureSize >= 256 ? maxTextureSize : 256;
     this->m_caps.m_texMaxSize[GxTex_NonPow2] = maxTextureSize >= 256 ? maxTextureSize : 256;
+    // Not in the original binary. Ported from 15595; the water front-end gates detail 2/3 on this target.
+    this->m_caps.m_texMaxSize[GxTex_Volume] = this->m_d3dCaps.MaxVolumeExtent >= 256 ? this->m_d3dCaps.MaxVolumeExtent : 256;
     this->m_caps.m_maxIndex = this->m_d3dCaps.MaxVertexIndex;
 
     uint32_t filterCaps = this->m_d3dCaps.TextureFilterCaps;
@@ -2422,6 +2427,11 @@ void CGxDeviceD3d9Ex::ISetCaps(const CGxFormat& format) {
         this->m_caps.m_shaderConstants[i] = 0;
     }
 
+    // Not in the original binary. Ported from 15595: zeroth, then raised below as the D3D caps allow.
+    for (uint32_t i = 0; i < GxShProfiles_Last; i++) {
+        this->m_caps.m_shaderProfiles[i] = 0;
+    }
+
     uint32_t pixelShaderVersion = this->m_d3dCaps.PixelShaderVersion;
 
     if (pixelShaderVersion >= D3DPS_VERSION(3, 0)) {
@@ -2434,9 +2444,9 @@ void CGxDeviceD3d9Ex::ISetCaps(const CGxFormat& format) {
         this->m_caps.m_shaderTargets[GxSh_Pixel] = 1;
     }
 
-    if (this->m_caps.m_shaderTargets[GxSh_Pixel]) {
-        uint32_t vertexShaderVersion = this->m_d3dCaps.VertexShaderVersion;
+    int32_t vertexShaderVersion = this->m_d3dCaps.VertexShaderVersion;
 
+    if (this->m_caps.m_shaderTargets[GxSh_Pixel]) {
         if (vertexShaderVersion >= D3DVS_VERSION(3, 0)) {
             this->m_caps.m_shaderTargets[GxSh_Vertex] = 3;
         } else if (vertexShaderVersion >= D3DVS_VERSION(2, 0)) {
@@ -2458,6 +2468,83 @@ void CGxDeviceD3d9Ex::ISetCaps(const CGxFormat& format) {
 
     if (this->m_caps.m_shaderTargets[GxSh_Pixel] == 4 && this->m_caps.m_shaderTargets[GxSh_Vertex] != 3) {
         this->m_caps.m_shaderTargets[GxSh_Pixel] = 3;
+    }
+
+    // Not in the original binary. Ported from 15595: record which shader profiles the device reports, then let
+    // ChooseShaderModel reduce that to one model index. Ported before its consumer exists: 15595 gates water
+    // detail 2/3 on m_shaderModel (Liquid::ValidateWaterDetail), and 12340 had nothing filling it. That gate
+    // is not in this tree yet, so today this is caps-only.
+    if (pixelShaderVersion >= D3DPS_VERSION(3, 0)) {
+        this->m_caps.m_shaderProfiles[GxShProfile_Ps30] = 1;
+    }
+
+    if (pixelShaderVersion >= D3DPS_VERSION(2, 0)) {
+        this->m_caps.m_shaderProfiles[GxShProfile_Ps20] = 1;
+    }
+
+    if (pixelShaderVersion >= D3DPS_VERSION(1, 4)) {
+        this->m_caps.m_shaderProfiles[GxShProfile_Ps14] = 1;
+    }
+
+    if (pixelShaderVersion >= D3DPS_VERSION(1, 1)) {
+        this->m_caps.m_shaderProfiles[GxShProfile_Ps11] = 1;
+    }
+
+    this->m_caps.m_shaderProfiles[GxShProfile_PsFf] = 1;
+
+    if (vertexShaderVersion >= D3DVS_VERSION(3, 0)) {
+        this->m_caps.m_shaderProfiles[GxShProfile_Vs30] = 1;
+    }
+
+    if (vertexShaderVersion >= D3DVS_VERSION(2, 0)) {
+        this->m_caps.m_shaderProfiles[GxShProfile_Vs20] = 1;
+    }
+
+    if (vertexShaderVersion >= D3DVS_VERSION(1, 1)) {
+        this->m_caps.m_shaderProfiles[GxShProfile_Vs11] = 1;
+    }
+
+    this->m_caps.m_shaderProfiles[GxShProfile_VsFf] = 1;
+
+    // 15595 passes the format's shader-model cap here. 12340's CGxFormat has no equivalent field (its
+    // m_fixedFunction[6] is per-target, not a model cap), so pass -1: pick the best the hardware supports.
+    {
+        // ChooseShaderModel records the winning profiles in m_shaderTargets using 15595's EGxShaderProfile
+        // numbering. 12340 builds its .bls paths from s_pixelShaderTargetNames/s_vertexShaderTargetNames -
+        // a different numbering - so keep the values already computed above and use ChooseShaderModel only
+        // for m_shaderModel/m_shaderProfiles. Without this the client would request profiles like "nvfp2".
+        int32_t shaderTargets[GxShTargets_Last];
+        static_assert(GxShTargets_Last == 6, "m_caps.m_shaderTargets changed size - fix the save/restore below");
+        memcpy(shaderTargets, this->m_caps.m_shaderTargets, sizeof(this->m_caps.m_shaderTargets));
+
+        this->ChooseShaderModel(-1);
+
+        memcpy(this->m_caps.m_shaderTargets, shaderTargets, sizeof(this->m_caps.m_shaderTargets));
+    }
+
+    // Not in the original binary. Ported from 15595's TMU limits, but keyed off 12340's shaderTarget values
+    // (4 = ps_3_0, 2/3 = ps_1_4/ps_2_0) rather than 15595's profile indices, since m_shaderTargets was just
+    // restored to 12340's numbering above.
+    switch (this->m_caps.m_shaderTargets[GxSh_Pixel]) {
+        case 1:
+            this->m_caps.m_numShaderTmus = 4;
+            break;
+
+        case 2:
+            this->m_caps.m_numShaderTmus = 6;
+            break;
+
+        case 3:
+        case 4:
+            this->m_caps.m_numShaderTmus = 16;
+            break;
+
+        default:
+            break;
+    }
+
+    if (this->m_caps.m_shaderTargets[GxSh_Vertex] == 3) {
+        this->m_caps.m_numVertexTmus = 4;
     }
 
     D3DDEVICE_CREATION_PARAMETERS creationParameters;
@@ -2491,15 +2578,35 @@ void CGxDeviceD3d9Ex::ISetCaps(const CGxFormat& format) {
     this->m_caps.m_rttFormat[GxTex_R32F] = this->m_d3d->CheckDeviceFormat(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, this->m_devAdapterFormat, D3DUSAGE_RENDERTARGET, D3DRTYPE_TEXTURE, D3DFMT_R32F) == D3D_OK;
     this->m_caps.m_rttFormat[GxTex_D24X8] = this->m_d3d->CheckDeviceFormat(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, this->m_devAdapterFormat, D3DUSAGE_DEPTHSTENCIL, D3DRTYPE_TEXTURE, D3DFMT_D24X8) == D3D_OK;
 
+    // Not in the original binary. Ported from 15595: whether each format can be a vertex texture, and whether
+    // it can be sampled with a hardware PCF depth comparison (the _pcf terrain shaders read this). Placed after
+    // the rttFormat assignments above because the D24X8 PCF flag depends on rttFormat[GxTex_D24X8].
+    for (uint32_t i = 0; i < GxTexFormats_Last; i++) {
+        D3DFORMAT d3dFormat = s_GxTexFmtToD3dFmt[i];
+        this->m_caps.m_vertexTexFmt[i] = d3dFormat && this->m_d3d->CheckDeviceFormat(this->m_d3dCaps.AdapterOrdinal, this->m_d3dCaps.DeviceType, this->m_devAdapterFormat, D3DUSAGE_QUERY_VERTEXTEXTURE, D3DRTYPE_TEXTURE, d3dFormat) == D3D_OK;
+        this->m_caps.m_pcfFormat[i] = 0;
+    }
+
+    if (this->m_caps.m_rttFormat[GxTex_D24X8]) {
+        this->m_caps.m_pcfFormat[GxTex_D24X8] = 1;
+    }
+
     this->m_caps.m_colorWrite = (this->m_d3dCaps.PrimitiveMiscCaps & D3DPMISCCAPS_COLORWRITEENABLE) != 0;
     this->m_caps.m_hwCursor = this->m_d3dCaps.CursorCaps & D3DCURSORCAPS_COLOR;
     this->m_caps.m_maxClipPlanes = this->m_d3dCaps.MaxUserClipPlanes;
+    // Not in the original binary. Ported from 15595: MRT count, but only when post-pixel-shader blending is
+    // supported; otherwise it stays 0 from the CGxDevice ctor memset.
+    if (this->m_d3dCaps.PrimitiveMiscCaps & D3DPMISCCAPS_MRTPOSTPIXELSHADERBLENDING) {
+        this->m_caps.m_numRenderTargets = this->m_d3dCaps.NumSimultaneousRTs;
+    }
 
     uint32_t textureCaps = this->m_d3dCaps.TextureCaps;
     this->m_caps.m_texTarget[GxTex_2d] = 1;
     this->m_caps.m_texTarget[GxTex_CubeMap] = (textureCaps & D3DPTEXTURECAPS_CUBEMAP) != 0;
     this->m_caps.m_texTarget[GxTex_Rectangle] = 0;
     this->m_caps.m_texTarget[GxTex_NonPow2] = (textureCaps & D3DPTEXTURECAPS_NONPOW2CONDITIONAL) || !(textureCaps & D3DPTEXTURECAPS_POW2);
+    // Not in the original binary. Ported from 15595; the water front-end gates detail 2/3 on this target.
+    this->m_caps.m_texTarget[GxTex_Volume] = (textureCaps & D3DPTEXTURECAPS_VOLUMEMAP) != 0;
     this->m_caps.m_texNonPow2 = 1;
 
     if (this->m_caps.m_texTarget[GxTex_NonPow2]) {
@@ -2529,6 +2636,17 @@ void CGxDeviceD3d9Ex::ISetCaps(const CGxFormat& format) {
     this->m_caps.unused_0114[4] = 0;
     this->m_caps.unk_0134 = this->m_caps.m_shaderTargets[GxSh_Pixel] != 4;
     this->m_caps.unk_0138 = this->m_caps.m_shaderTargets[GxSh_Pixel] != 4;
+
+    // Not in the original binary. Ported from 15595: the adapter identifiers, for vendor-specific workarounds.
+    this->m_caps.m_vendorId = identifier.VendorId;
+    this->m_caps.m_deviceId = identifier.DeviceId;
+
+    // Not in the original binary. Ported from 15595: "the depth buffer can be read back and resolved". 15595
+    // derives both from NVAPI or an AMD RESZ format; DepthCache::IsSupported gates on unk_0300 and
+    // DepthCache::CreateTextures gates on unk_0314, so a 0 here silently disables depth-based water detail.
+    int32_t depthReadback = this->m_d3dNVAPI || this->m_caps.m_texFmt[GxTex_Resz];
+    this->m_caps.unk_0300 = depthReadback;
+    this->m_caps.unk_0314 = depthReadback;
 }
 
 // VERIFY: 5091454f manual

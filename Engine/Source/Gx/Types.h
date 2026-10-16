@@ -297,12 +297,17 @@ class CGxCaps {
     /* 019C */ int32_t m_shaderProfiles [GxShProfiles_Last];
     /* 0234 */ int32_t m_vertexTexFmt [GxTexFormats_Last];
     /* 0288 */ int32_t m_pcfFormat [GxTexFormats_Last];
+    // Not in the original binary. Ported from 15595 (unk_0300/unk_0314); DepthCache::IsSupported gates on
+    // unk_0300 and DepthCache::CreateTextures gates on unk_0314. Both mean "can the depth buffer be read back
+    // and resolved", which 15595 sets to m_d3dNVAPI || m_texFmt[GxTex_Resz].
+    /* 02DC */ int32_t unk_0300;
+    /* 02E0 */ int32_t unk_0314;
 };
 
 // The whole point of re-anchoring is that the layout is now load-bearing: CGxDevice's offsets below m_caps
 // and every table indexed by GxTexFormats_Last assume these sizes. A silent drift here is what produced the
 // m_d3dVertexDecl overrun that crashed the client on launch, so fail the build instead of the runtime.
-static_assert(sizeof(CGxCaps) == 0x2DC, "CGxCaps layout changed - re-anchor the CGxDevice members below m_caps");
+static_assert(sizeof(CGxCaps) == 0x2E4, "CGxCaps layout changed - re-anchor the CGxDevice members below m_caps");
 
 class CGxQuery {
     public:

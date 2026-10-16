@@ -103,73 +103,73 @@ class CGxDevice {
     /* 01B8 */ uint32_t m_cpuFeatures;
     /* 01BC */ CGxFormat m_format;
     /* 0214 */ CGxCaps m_caps;
-    // Every offset from here down to m_cursorDepth is the 12340 value + 0x1A0: HEAD's +0x40 from the
-    // DepthCache depth formats, plus +0x160 from the 15595 shader/volume caps and the m_texTarget/
-    // m_texMaxSize growth to GxTexTargets_Last (see the breakdown in CGxCaps, Types.h). Note these are the
+    // Every offset from here down to m_cursorDepth is the 12340 value + 0x1A8: HEAD's +0x40 from the
+    // DepthCache depth formats, +0x160 from the 15595 shader/volume caps and the m_texTarget/m_texMaxSize
+    // growth to GxTexTargets_Last, and +0x8 from unk_0300/unk_0314 (see CGxCaps, Types.h). Note these are the
     // 32-bit (Win32) frame, matching the original binary; the x64 layout carries a larger delta because the
     // TS containers grow, which is why the offsets are guarded by build rather than asserted absolutely.
-    /* 04F0 */ uint32_t m_baseMipLevel;
-    /* 04F4 */ CGxGammaRamp m_gammaRamp;
-    /* 0AF4 */ CGxGammaRamp m_systemGammaRamp;
-    /* 10F4 */ GxWindowProc m_windowProc;
-    /* 10F8 */ int32_t m_context;
-    /* 10FC */ int32_t m_intF5C;
-    /* 1100 */ int32_t m_windowVisible;
-    /* 1104 */ int32_t m_windowFocus;
-    /* 1108 */ int32_t m_frameCount;
-    /* 110C */ int32_t m_viewportDirty;
-    /* 1110 */ CBoundingBox m_viewport;
-    /* 1128 */ C44Matrix m_projection;
-    /* 1168 */ C44Matrix m_projNative;
-    /* 11A8 */ CGxMatrixStack m_xforms [11];
-    /* 1DB0 */ CGxMatrixStack m_texGen [8];
-    /* 2670 */ uint32_t m_clipPlaneMask;
-    /* 2674 */ C4Plane m_clipPlane [6];
-    /* 26D4 */ int32_t m_scissorRectDirty;
-    /* 26D8 */ CRect m_scissorRect;
-    /* 26E8 */ CGxApiLight m_lights [4];
-    /* 2808 */ TSHashTable<CGxShader, HASHKEY_STRI> m_shaderList [6];
-    /* 28F8 */ uint32_t m_appMasterEnables;
-    /* 28FC */ uint32_t m_hwMasterEnables;
-    /* 2900 */ TSList<CGxPool> m_poolList;
-    /* 290C */ TSList<CGxBuf> m_bufList;
-    /* 2918 */ CGxBuf* m_bufLocked [2];
-    /* 2920 */ CGxPool* m_vertexPool;
-    /* 2924 */ CGxPool* m_indexPool;
-    /* 2928 */ CGxBuf* m_streamBufs [2];
-    /* 2930 */ CGxVertexAttrib m_primVertexFormatAttrib [14];
-    /* 2A10 */ CGxBuf* m_primVertexFormatBuf [14];
-    /* 2A48 */ uint32_t m_primVertexMask;
-    /* 2A4C */ uint32_t m_primVertexDirty;
-    /* 2A50 */ EGxVertexBufferFormat m_primVertexFormat;
-    /* 2A54 */ CGxBuf* m_primVertexBuf;
-    /* 2A58 */ uint32_t m_primVertexSize;
-    /* 2A5C */ CGxBuf* m_primIndexBuf;
-    /* 2A60 */ int32_t m_primIndexDirty;
-    /* 2A64 */ EmergencyMem m_emergencyMem [2];
-    /* 2A8C */ TSFixedArray<CGxAppRenderState> m_appRenderStates;
-    /* 2A98 */ TSFixedArray<CGxStateBom> m_hwRenderStates;
-    /* 2AA4 */ TSExplicitList<CGxTex, offsetof(CGxTex, m_link)> m_textures;
-    /* 2AB0 */ CGxDevice::TextureTarget m_textureTarget [2];
+    /* 04F8 */ uint32_t m_baseMipLevel;
+    /* 04FC */ CGxGammaRamp m_gammaRamp;
+    /* 0AFC */ CGxGammaRamp m_systemGammaRamp;
+    /* 10FC */ GxWindowProc m_windowProc;
+    /* 1100 */ int32_t m_context;
+    /* 1104 */ int32_t m_intF5C;
+    /* 1108 */ int32_t m_windowVisible;
+    /* 110C */ int32_t m_windowFocus;
+    /* 1110 */ int32_t m_frameCount;
+    /* 1114 */ int32_t m_viewportDirty;
+    /* 1118 */ CBoundingBox m_viewport;
+    /* 1130 */ C44Matrix m_projection;
+    /* 1170 */ C44Matrix m_projNative;
+    /* 11B0 */ CGxMatrixStack m_xforms [11];
+    /* 1DB8 */ CGxMatrixStack m_texGen [8];
+    /* 2678 */ uint32_t m_clipPlaneMask;
+    /* 267C */ C4Plane m_clipPlane [6];
+    /* 26DC */ int32_t m_scissorRectDirty;
+    /* 26E0 */ CRect m_scissorRect;
+    /* 26F0 */ CGxApiLight m_lights [4];
+    /* 2810 */ TSHashTable<CGxShader, HASHKEY_STRI> m_shaderList [6];
+    /* 2900 */ uint32_t m_appMasterEnables;
+    /* 2904 */ uint32_t m_hwMasterEnables;
+    /* 2908 */ TSList<CGxPool> m_poolList;
+    /* 2914 */ TSList<CGxBuf> m_bufList;
+    /* 2920 */ CGxBuf* m_bufLocked [2];
+    /* 2928 */ CGxPool* m_vertexPool;
+    /* 292C */ CGxPool* m_indexPool;
+    /* 2930 */ CGxBuf* m_streamBufs [2];
+    /* 2938 */ CGxVertexAttrib m_primVertexFormatAttrib [14];
+    /* 2A18 */ CGxBuf* m_primVertexFormatBuf [14];
+    /* 2A50 */ uint32_t m_primVertexMask;
+    /* 2A54 */ uint32_t m_primVertexDirty;
+    /* 2A58 */ EGxVertexBufferFormat m_primVertexFormat;
+    /* 2A5C */ CGxBuf* m_primVertexBuf;
+    /* 2A60 */ uint32_t m_primVertexSize;
+    /* 2A64 */ CGxBuf* m_primIndexBuf;
+    /* 2A68 */ int32_t m_primIndexDirty;
+    /* 2A6C */ EmergencyMem m_emergencyMem [2];
+    /* 2A94 */ TSFixedArray<CGxAppRenderState> m_appRenderStates;
+    /* 2AA0 */ TSFixedArray<CGxStateBom> m_hwRenderStates;
+    /* 2AAC */ TSExplicitList<CGxTex, offsetof(CGxTex, m_link)> m_textures;
+    /* 2AB8 */ CGxDevice::TextureTarget m_textureTarget [2];
     // Not in the original binary. Ported from 15595: the whole attachment set as one object, so a pass
     // can save and restore it. m_textureTarget above is still the live device state.
-    /* 2AC8 */ CGxTex* m_backBufferColorTex;
-    /* 2ACC */ CGxTex* m_backBufferDepthTex;
-    /* 2AD0 */ CGxFrameBuffer* m_backBuffer;
-    /* 2AD4 */ CGxFrameBuffer* m_frameBuffer;
-    /* 2AD8 */ uint32_t m_frameBufferVersion;
-    /* 2ADC */ TSExplicitList<CGxQuery, offsetof(CGxQuery, m_link)> m_queryList;
-    /* 2AE8 */ int32_t m_scrShotClick;
-    /* 2AEC */ uint32_t m_scrShotWidth;
-    /* 2AF0 */ uint32_t m_scrShotHeight;
-    /* 2AF4 */ TSGrowableArray<CImVector> m_scrShotPixels;
-    /* 2B04 */ int32_t m_cursorVisible;
-    /* 2B08 */ int32_t m_hwCursor;
-    /* 2B0C */ uint32_t m_cursorHotspotX;
-    /* 2B10 */ uint32_t m_cursorHotspotY;
-    /* 2B14 */ uint32_t m_cursor [1024];
-    /* 3B14 */ CGxTex* m_cursorTexture;
-    /* 3B18 */ float m_cursorDepth;
+    /* 2AD0 */ CGxTex* m_backBufferColorTex;
+    /* 2AD4 */ CGxTex* m_backBufferDepthTex;
+    /* 2AD8 */ CGxFrameBuffer* m_backBuffer;
+    /* 2ADC */ CGxFrameBuffer* m_frameBuffer;
+    /* 2AE0 */ uint32_t m_frameBufferVersion;
+    /* 2AE4 */ TSExplicitList<CGxQuery, offsetof(CGxQuery, m_link)> m_queryList;
+    /* 2AF0 */ int32_t m_scrShotClick;
+    /* 2AF4 */ uint32_t m_scrShotWidth;
+    /* 2AF8 */ uint32_t m_scrShotHeight;
+    /* 2AFC */ TSGrowableArray<CImVector> m_scrShotPixels;
+    /* 2B0C */ int32_t m_cursorVisible;
+    /* 2B10 */ int32_t m_hwCursor;
+    /* 2B14 */ uint32_t m_cursorHotspotX;
+    /* 2B18 */ uint32_t m_cursorHotspotY;
+    /* 2B1C */ uint32_t m_cursor [1024];
+    /* 3B1C */ CGxTex* m_cursorTexture;
+    /* 3B20 */ float m_cursorDepth;
 
     virtual void ITexMarkAsUpdated(CGxTex* texId);
     virtual void IRsSendToHw(EGxRenderState which) = 0;
@@ -267,11 +267,27 @@ class CGxDevice {
     virtual CGxFrameBuffer* BackBuffer();
     virtual CGxTex* BackBufferColorTex();
     virtual CGxTex* BackBufferDepthTex();
+    // Not in the original binary. Ported from 15595, which needs it for DepthCache::Resolve. 15595 only
+    // overrides it in the D3D11 backend; the D3D9 backend leaves the base returning 0 and resolves depth via
+    // DeviceResolveDepthBuffer instead. Appended at the END of the virtual list so no 12340 vtable slot moves -
+    // inserting it next to TexStretch instead shifted CursorSetVisible to IShaderCreate and crashed the client.
+    virtual int32_t TexResolve(CGxTex* dest, CGxTex* source);
 
     static HSLOG m_log;
     static C2iVector s_clientAdjust;
     static const char* s_pixelShaderTargetNames[14];
     static const char* s_vertexShaderTargetNames[12];
+    // Not in the original binary. Ported from 15595 shape: the shader-model / shader-profile name tables
+    // s_pixelShaderTargetNames/s_vertexShaderTargetNames above index 12340's per-target profile numbering,
+    // while these index the 15595 EGxShaderProfile order that ChooseShaderModel and m_shaderProfiles use.
+    // The two numberings differ on purpose; see the note on ChooseShaderModel.
+    static const char* s_shaderModelNames[8];
+    static const char* s_shaderProfileNames[GxShProfiles_Last];
+    // Not in the original binary. Ported from 15595: 1 where the format is a depth/stencil format, so an
+    // ISetCaps RTT loop can pick D3DUSAGE_DEPTHSTENCIL over D3DUSAGE_RENDERTARGET. Appended with the other
+    // s_texFormat* tables rather than at 15595's offset, because it joins the 12340 EGxTexFormat ordering.
+    // Not referenced yet: 12340's ISetCaps still lists its m_rttFormat checks individually.
+    static const uint32_t s_texFormatIsDepth[GxTexFormats_Last];
     static C3Vector s_pointScaleAttenuation;
     static CGxShader* s_uiPixelShader;
     static CGxShader* s_uiVertexShader[2];
@@ -325,6 +341,12 @@ class CGxDevice {
     void Log(const CGxFormat& format) const;
     void IRsDirty(EGxRenderState which);
     void IRsForceUpdate();
+    // Not in the original binary. Ported from 15595. Picks the highest shader model whose whole profile set
+    // the device reports in m_caps.m_shaderProfiles, then writes the winning profiles into
+    // m_caps.m_shaderTargets. NOTE: m_shaderTargets is written in 15595's EGxShaderProfile numbering, which
+    // is NOT the numbering 12340's ShaderCreate/IShaderLoad uses to build the .bls path (that one indexes
+    // s_pixelShaderTargetNames/s_vertexShaderTargetNames). Keep the two separate or every shader load moves.
+    void ChooseShaderModel(int32_t shaderModel);
     void IRsForceUpdate(EGxRenderState which);
     void IRsInit();
     void IRsSync(int32_t force);
@@ -344,6 +366,9 @@ class CGxDevice {
     void DeviceClearScreenShot();
     const CRect& DeviceCurWindow();
     const CRect& DeviceDefWindow();
+    // Not in the original binary. Ported from 15595; DepthCache::IsSupported and CreateTextures read the active
+    // format's depth format and multisample count to pick a sample-able depth texture format.
+    const CGxFormat& DeviceFormat();
     void DeviceGamma(CGxGammaRamp& ramp);
     void DeviceGetRenderTarget(EGxBuffer buffer, CGxTex*& texture);
     void DeviceScreenShot();
@@ -388,15 +413,15 @@ class CGxDevice {
 // binary, but the asserts cover the build actually being compiled: x64 is the shipped target and its offsets
 // differ because the TS containers grow. Measured, not derived - re-measure with the probe template if the
 // assert fires. sizeof(CGxCaps) is arch-independent (int32/float arrays only) and guards both.
-static_assert(sizeof(CGxCaps) == 0x2DC, "CGxCaps size changed - re-anchor CGxDevice.h and every caps-indexed table");
+static_assert(sizeof(CGxCaps) == 0x2E4, "CGxCaps size changed - re-anchor CGxDevice.h and every caps-indexed table");
 #if defined(WOWDECOMP_ARCH_64)
 static_assert(offsetof(CGxDevice, m_caps) == 0x02B0, "m_caps moved - CGxFormat or a member above it changed size");
-static_assert(offsetof(CGxDevice, m_baseMipLevel) == 0x058C, "CGxDevice layout changed - re-anchor the offsets in CGxDevice.h");
-static_assert(offsetof(CGxDevice, m_cursorDepth) == 0x3D68, "CGxDevice layout changed - re-anchor the offsets in CGxDevice.h");
+static_assert(offsetof(CGxDevice, m_baseMipLevel) == 0x0594, "CGxDevice layout changed - re-anchor the offsets in CGxDevice.h");
+static_assert(offsetof(CGxDevice, m_cursorDepth) == 0x3D70, "CGxDevice layout changed - re-anchor the offsets in CGxDevice.h");
 #else
 static_assert(offsetof(CGxDevice, m_caps) == 0x0214, "m_caps moved - CGxFormat or a member above it changed size");
-static_assert(offsetof(CGxDevice, m_baseMipLevel) == 0x04F0, "CGxDevice layout changed - re-anchor the offsets in CGxDevice.h");
-static_assert(offsetof(CGxDevice, m_cursorDepth) == 0x3B18, "CGxDevice layout changed - re-anchor the offsets in CGxDevice.h");
+static_assert(offsetof(CGxDevice, m_baseMipLevel) == 0x04F8, "CGxDevice layout changed - re-anchor the offsets in CGxDevice.h");
+static_assert(offsetof(CGxDevice, m_cursorDepth) == 0x3B20, "CGxDevice layout changed - re-anchor the offsets in CGxDevice.h");
 #endif
 
 extern CGxDevice* g_theGxDevicePtr;

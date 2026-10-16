@@ -29,6 +29,88 @@ const uint32_t CGxDevice::s_texFormatBlockSize[GxTexFormats_Last] = { 1, 1, 1, 1
 // Not in the original binary. Tail entries are the appended depth-stencil formats (see EGxTexFormat).
 const uint32_t CGxDevice::s_texFormatBytesPerBlock[GxTexFormats_Last] = { 0, 4, 4, 2, 2, 2, 8, 16, 16, 2, 4, 4, 4, 4, 4, 4, 4, 2, 4, 2, 4 };
 
+// STATIC: 0x00EC6518/0x140DB8594
+// Not in the original binary. Ported from 15595, where ISetCaps uses it to choose D3DUSAGE_DEPTHSTENCIL over
+// D3DUSAGE_RENDERTARGET per format. 15595's raw slot numbers do NOT carry over: this is indexed by 12340's
+// EGxTexFormat order (see s_texFormatNames below), which differs, so the flags are named per index.
+// Unreferenced so far - 12340's ISetCaps still spells out its m_rttFormat checks one by one; the table is here
+// so the loop that consumes it can be added without re-deriving which formats are depth.
+const uint32_t CGxDevice::s_texFormatIsDepth[GxTexFormats_Last] = {
+    /* GxTex_Unknown   */ 0,
+    /* GxTex_Abgr8888  */ 0,
+    /* GxTex_Argb8888  */ 0,
+    /* GxTex_Argb4444  */ 0,
+    /* GxTex_Argb1555  */ 0,
+    /* GxTex_Rgb565    */ 0,
+    /* GxTex_Dxt1      */ 0,
+    /* GxTex_Dxt3      */ 0,
+    /* GxTex_Dxt5      */ 0,
+    /* GxTex_Uv88      */ 0,
+    /* GxTex_Gr1616F   */ 0,
+    /* GxTex_R32F      */ 0,
+    /* GxTex_D24X8     */ 1,
+    /* GxTex_Intz      */ 1,
+    /* GxTex_Rawz      */ 1,
+    /* GxTex_Resz      */ 1,
+    /* GxTex_AtiD24    */ 1,
+    /* GxTex_D16       */ 1,
+    /* GxTex_D32       */ 1,
+    /* GxTex_R16       */ 0,
+    /* GxTex_R24X8     */ 1,
+};
+
+// STATIC: 0x00D08F00/0x140BBABF0
+// Not in the original binary. Index order matches 15595's g_gxShaderModelNames. 15595's water gate
+// (Liquid::ValidateWaterDetail) compares this index against 4 and 5 to allow detail 1 and 2/3, so the ordering
+// is load-bearing rather than cosmetic - but note the gate itself is NOT ported yet (see Liquid.cpp), so this
+// value has no consumer in the 12340 tree today. Ported now so the caps are correct before the liquid work.
+const char* CGxDevice::s_shaderModelNames[8] = { "ff", "nvrc", "ff_ps", "1_1", "2_0", "3_0", "4_0", "5_0" };
+
+// STATIC: 0x00D08F20/0x140BBAC10
+// Not in the original binary. Indexed by EGxShaderProfile, so the order must stay identical to that enum -
+// a reorder silently misnames every .bls the client requests. These two tables (and s_shaderProfileTarget
+// below) are positionally initialised, so growing EGxShaderProfile without extending them zero-fills the tail;
+// the assert fails the build instead, because a null entry would reach a Log("%s") as UB.
+static_assert(GxShProfiles_Last == 38, "EGxShaderProfile grew - extend s_shaderProfileNames and s_shaderProfileTarget");
+const char* CGxDevice::s_shaderProfileNames[GxShProfiles_Last] = { "none", "vs_ff", "ps_ff", "vs_1_1", "vs_2_0", "vs_3_0", "vs_4_0", "vs_5_0", "ps_1_1", "ps_1_4", "ps_2_0", "ps_3_0", "ps_4_0", "ps_5_0", "gs_4_0", "gs_5_0", "hs_5_0", "ds_5_0", "cs_4_0", "cs_5_0", "arbvp1", "arbvp1_cg12", "arbfp1", "glslv", "glslf", "opencl", "vp20", "vp30", "vp40", "gp4vp", "fp10", "fp20", "fp25", "fp30", "fp40", "gp4fp", "gp4gp", "cuda" };
+
+// Not in the original binary. Ported from 15595. Each row is the target's profile list, terminated by an
+// EGxShProfile_None (0) sentinel; ChooseShaderModel requires the whole row to be supported.
+static const int32_t s_shaderProfileSet_Ff[] = { GxShProfile_VsFf, GxShProfile_PsFf, 0 };
+static const int32_t s_shaderProfileSet_Nvrc[] = { GxShProfile_VsFf, GxShProfile_Fp10, 0 };
+static const int32_t s_shaderProfileSet_NvrcPs[] = { GxShProfile_VsFf, GxShProfile_Ps20, 0 };
+static const int32_t s_shaderProfileSet_Arbfp[] = { GxShProfile_VsFf, GxShProfile_Arbfp1, 0 };
+static const int32_t s_shaderProfileSet_11[] = { GxShProfile_Vs11, GxShProfile_Ps11, 0 };
+static const int32_t s_shaderProfileSet_Vp20[] = { GxShProfile_Vp20, GxShProfile_Fp20, 0 };
+static const int32_t s_shaderProfileSet_Arbvp[] = { GxShProfile_Arbvp1, GxShProfile_Fp20, 0 };
+static const int32_t s_shaderProfileSet_20[] = { GxShProfile_Vs20, GxShProfile_Ps20, 0 };
+static const int32_t s_shaderProfileSet_ArbvpArbfp[] = { GxShProfile_Arbvp1, GxShProfile_Arbfp1, 0 };
+static const int32_t s_shaderProfileSet_ArbvpCg12[] = { GxShProfile_Arbvp1Cg12, GxShProfile_Arbfp1, 0 };
+static const int32_t s_shaderProfileSet_Vp30[] = { GxShProfile_Vp30, GxShProfile_Fp30, 0 };
+static const int32_t s_shaderProfileSet_30[] = { GxShProfile_Vs30, GxShProfile_Ps30, 0 };
+static const int32_t s_shaderProfileSet_Vp40[] = { GxShProfile_Vp40, GxShProfile_Fp40, 0 };
+static const int32_t s_shaderProfileSet_40[] = { GxShProfile_Vs40, GxShProfile_Gs40, GxShProfile_Ps40, GxShProfile_Cs40, 0 };
+static const int32_t s_shaderProfileSet_Gp4[] = { GxShProfile_Gp4vp, GxShProfile_Gp4gp, GxShProfile_Gp4fp, 0 };
+static const int32_t s_shaderProfileSet_50[] = { GxShProfile_Vs50, GxShProfile_Hs50, GxShProfile_Ds50, GxShProfile_Gs50, GxShProfile_Ps50, GxShProfile_Cs50, 0 };
+
+static const int32_t* const s_shaderModel0Sets[] = { s_shaderProfileSet_Ff, NULL };
+static const int32_t* const s_shaderModel1Sets[] = { s_shaderProfileSet_Nvrc, NULL };
+static const int32_t* const s_shaderModel2Sets[] = { s_shaderProfileSet_NvrcPs, s_shaderProfileSet_Arbfp, NULL };
+static const int32_t* const s_shaderModel3Sets[] = { s_shaderProfileSet_11, s_shaderProfileSet_Vp20, s_shaderProfileSet_Arbvp, NULL };
+static const int32_t* const s_shaderModel4Sets[] = { s_shaderProfileSet_20, s_shaderProfileSet_ArbvpArbfp, s_shaderProfileSet_ArbvpCg12, s_shaderProfileSet_Vp30, NULL };
+static const int32_t* const s_shaderModel5Sets[] = { s_shaderProfileSet_30, s_shaderProfileSet_Vp40, NULL };
+static const int32_t* const s_shaderModel6Sets[] = { s_shaderProfileSet_40, s_shaderProfileSet_Gp4, NULL };
+static const int32_t* const s_shaderModel7Sets[] = { s_shaderProfileSet_50, NULL };
+
+static const int32_t* const* const s_shaderModelProfiles[8] = { s_shaderModel0Sets, s_shaderModel1Sets, s_shaderModel2Sets, s_shaderModel3Sets, s_shaderModel4Sets, s_shaderModel5Sets, s_shaderModel6Sets, s_shaderModel7Sets };
+
+// STATIC: 0x00D08F10/0x140BBAC00
+// Not in the original binary. EGxShaderProfile -> EGxShTarget, so ChooseShaderModel can file each winning
+// profile under its target. GxShTargets_Last means "no target" for EGxShaderProfile_None.
+static const EGxShTarget s_shaderProfileTarget[GxShProfiles_Last] = { GxShTargets_Last, GxSh_Vertex, GxSh_Pixel, GxSh_Vertex, GxSh_Vertex, GxSh_Vertex, GxSh_Vertex, GxSh_Vertex, GxSh_Pixel, GxSh_Pixel, GxSh_Pixel, GxSh_Pixel, GxSh_Pixel, GxSh_Pixel, GxSh_Geometry, GxSh_Geometry, GxSh_Hull, GxSh_Domain, GxSh_Compute, GxSh_Compute, GxSh_Vertex, GxSh_Vertex, GxSh_Pixel, GxSh_Vertex, GxSh_Pixel, GxSh_Compute, GxSh_Vertex, GxSh_Vertex, GxSh_Vertex, GxSh_Vertex, GxSh_Pixel, GxSh_Pixel, GxSh_Pixel, GxSh_Pixel, GxSh_Pixel, GxSh_Pixel, GxSh_Geometry, GxSh_Compute };
+
+
+
 // STATIC: 0x00AD8B4C
 static uint32_t s_primVertsPerPrim[GxPrims_Last] = { 1, 2, 1, 3, 1, 1 };
 
@@ -58,6 +140,55 @@ static const char* s_computeShaderTargetNames[4] = { "none", "cs_5_0", "cs_cuda"
 
 // STATIC: 0x00AD8890
 static const char** s_shaderTargetNames[GxShTargets_Last] = { CGxDevice::s_vertexShaderTargetNames, s_hullShaderTargetNames, s_domainShaderTargetNames, s_geometryShaderTargetNames, CGxDevice::s_pixelShaderTargetNames, s_computeShaderTargetNames };
+
+// Not in the original binary. Ported from 15595 (CGxDevice::ChooseShaderModel). Walks models high to low and
+// takes the first whose profile set the device reports in m_caps.m_shaderProfiles, then records it in
+// m_caps.m_shaderModel and files each profile under its target in m_caps.m_shaderTargets.
+//
+// Pass shaderModel == -1 for "no cap": it tries 7..0 once and gives up. A non-negative value tries that
+// model and below, then retries once from 7 in case nothing matched.
+//
+// Defined below s_shaderTargetNames because that table is file-scope in 12340.
+void CGxDevice::ChooseShaderModel(int32_t shaderModel) {
+    while (true) {
+        for (int32_t model = 7; model >= 0; model--) {
+            if (shaderModel != -1 && model > shaderModel) {
+                continue;
+            }
+
+            const int32_t* const* sets = s_shaderModelProfiles[model];
+
+            for (const int32_t* set = *sets; set; set = *++sets) {
+                const int32_t* profile = set;
+
+                while (*profile && this->m_caps.m_shaderProfiles[*profile]) {
+                    profile++;
+                }
+
+                if (*profile) {
+                    continue;
+                }
+
+                CGxDevice::Log("Shader Model: %s", CGxDevice::s_shaderModelNames[model]);
+                this->m_caps.m_shaderModel = model;
+
+                for (profile = set; *profile; profile++) {
+                    EGxShTarget profileTarget = s_shaderProfileTarget[*profile];
+                    this->m_caps.m_shaderTargets[profileTarget] = *profile;
+                    CGxDevice::Log(" %s: %s", s_shaderTargetNames[profileTarget], CGxDevice::s_shaderProfileNames[*profile]);
+                }
+
+                return;
+            }
+        }
+
+        if (shaderModel == -1) {
+            return;
+        }
+
+        shaderModel = -1;
+    }
+}
 
 // Not in the original binary. Ported from 15595 so texture-creation logging can name a format.
 // Designated by index so a future format append cannot silently shift the names.
@@ -740,6 +871,12 @@ const CRect& CGxDevice::DeviceDefWindow() {
     return this->m_defWindowRect;
 }
 
+// Not in the original binary. Ported from 15595; DepthCache reads the active format's depth format and
+// multisample count to choose a sample-able depth texture format.
+const CGxFormat& CGxDevice::DeviceFormat() {
+    return this->m_format;
+}
+
 // VERIFY: e58361ab auto
 // OFFSET: 0x00682D90
 void CGxDevice::DeviceSetCurWindow(const CRect& rect) {
@@ -1146,6 +1283,13 @@ int32_t CGxDevice::TexCreate(EGxTexTarget target, uint32_t width, uint32_t heigh
 void CGxDevice::TexDestroy(CGxTex* texId) {
     texId->m_link.Unlink();
     delete texId;
+}
+
+// Not in the original binary. Ported from 15595: resolve a multisampled source texture into a sample-able
+// dest. The 15595 D3D9 backend does NOT override this - only D3D11 does - so on the 12340 D3D9 path this
+// returns 0, matching 15595 behaviour. Actual depth attachment happens in DeviceResolveDepthBuffer.
+int32_t CGxDevice::TexResolve(CGxTex* dest, CGxTex* source) {
+    return 0;
 }
 
 // VERIFY: 87fe3127 manual
@@ -1556,6 +1700,16 @@ void CGxDevice::Log(const CGxCaps& caps) const {
     CGxDevice::Log("\tvertexShaderConstants: %d", caps.m_shaderConstants[GxSh_Vertex]);
     CGxDevice::Log("\tnumStreams: %d", caps.m_numStreams);
     CGxDevice::Log("\tstereoAvailable: %d", caps.m_stereoAvailable);
+    // Not in the original binary. These are the 15595 caps fields. m_shaderModel has no consumer in 12340 yet
+    // (15595's water gate, Liquid::ValidateWaterDetail, is not ported), and its degenerate value (0) would
+    // silently gate water detail 2/3 off once it is - so it is logged here to be readable from a live run.
+    CGxDevice::Log("\tshaderModel: %d (%s)", caps.m_shaderModel, caps.m_shaderModel >= 0 && caps.m_shaderModel < 8 ? s_shaderModelNames[caps.m_shaderModel] : "?");
+    CGxDevice::Log("\tvertexTmus: %d, shaderTmus: %d, renderTargets: %d", caps.m_numVertexTmus, caps.m_numShaderTmus, caps.m_numRenderTargets);
+    CGxDevice::Log("\tvendorId: 0x%04X, deviceId: 0x%04X", caps.m_vendorId, caps.m_deviceId);
+    CGxDevice::Log("\tvolumeTexture: %d, vertexTexFormat: %d, pcfFormat: %d", caps.m_texTarget[GxTex_Volume], caps.m_vertexTexFmt[0] != 0, caps.m_pcfFormat[GxTex_D24X8]);
+    // Not in the original binary. DepthCache gates on both of these; a 0 silently disables depth-based water
+    // detail (Liquid::ValidateWaterDetail returns 8), so they must be readable from a live run.
+    CGxDevice::Log("\tdepthReadback: unk_0300=%d, unk_0314=%d", caps.unk_0300, caps.unk_0314);
 }
 
 // VERIFY: e3c13afb auto

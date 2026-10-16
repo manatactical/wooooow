@@ -90,6 +90,9 @@ void GxTexUpdate(CGxTex* texId, CiRect& updateRect, int32_t immediate);
 int32_t GxTexCreate(const CGxTexParms& parms, CGxTex*& texId);
 int32_t GxTexCreate(EGxTexTarget target, uint32_t width, uint32_t height, uint32_t depth, EGxTexFormat format, EGxTexFormat dataFormat, CGxTexFlags flags, void* userArg, GxTexUserFunc userFunc, const char* name, CGxTex*& texId);
 int32_t GxTexStretch(CGxTex* dest, const CiRect* destRect, const CiRect* sourceRect, uint32_t level, uint32_t face);
+// Not in the original binary. Ported from 15595; DepthCache::Resolve calls it to collapse a multisampled
+// depth texture into a sample-able one.
+int32_t GxTexResolve(CGxTex* dest, CGxTex* source);
 int32_t GxTexCreate(uint32_t width, uint32_t height, EGxTexFormat format, CGxTexFlags flags, void* userArg, GxTexUserFunc userFunc, CGxTex*& texId);
 void GxXformPush(EGxXform xf, const C44Matrix& matrix);
 void GxCapsWindowSizeInScreenCoords(CRect& rect);

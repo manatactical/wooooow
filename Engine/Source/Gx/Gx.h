@@ -15,6 +15,7 @@ class C44Matrix;
 class CGxBatch;
 class CGxDevice;
 class CGxFormat;
+class CGxFrameBuffer;
 struct CGxBuf;
 class CGxQuery;
 class CGxTex;
@@ -64,6 +65,14 @@ char* GxBufLock(CGxBuf* buf);
 void GxBufUnlock(CGxBuf* buf, uint32_t size);
 void GxBufDestroy(CGxBuf* buf);
 void GxRenderTargetSet(EGxBuffer buffer, CGxTex* texture, uint32_t plane);
+// Not in the original binary. Frame-buffer wrappers ported from 15595; unqualified names (GxFrameBufferSet,
+// not ViewSettings::GxFrameBufferSet) to match 15595, unlike the rest of this header.
+CGxFrameBuffer* GxFrameBufferCreate(CGxTex* depthTex, CGxTex* colorTex);
+int32_t GxFrameBufferAttach(CGxFrameBuffer* frameBuffer, EGxBuffer buffer, CGxTex* texture, uint32_t plane);
+int32_t GxFrameBufferFinalize(CGxFrameBuffer* frameBuffer);
+void GxFrameBufferDelete(CGxFrameBuffer*& frameBuffer);
+CGxFrameBuffer* GxFrameBufferGet();
+void GxFrameBufferSet(CGxFrameBuffer* frameBuffer);
 void GxBufData(CGxBuf* buf, const void* data, uint32_t size, uint32_t offset);
 CGxBuf* GxBufStream(EGxPoolTarget target, uint32_t itemSize, uint32_t itemCount);
 void GxPrimIndexPtr(uint32_t indexCount, const uint16_t* indices);

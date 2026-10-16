@@ -50,7 +50,17 @@ enum EGxTexFormat {
     GxTex_Gr1616F = 10,
     GxTex_R32F = 11,
     GxTex_D24X8 = 12,
-    GxTexFormats_Last = 13,
+    // Not in the original binary. Depth-stencil formats DepthCache needs to sample the depth buffer;
+    // appended after the 12340 formats so the existing 13 values stay put, so these numbers differ from 15595.
+    GxTex_Intz = 13,
+    GxTex_Rawz = 14,
+    GxTex_Resz = 15,
+    GxTex_AtiD24 = 16,
+    GxTex_D16 = 17,
+    GxTex_D32 = 18,
+    GxTex_R16 = 19,
+    GxTex_R24X8 = 20,
+    GxTexFormats_Last = 21,
 };
 
 enum EGxVertexBufferFormat {
@@ -187,6 +197,11 @@ enum EGxColorFormat {
 
 class CGxCaps {
     public:
+    // Not in the original binary. m_texFmt/m_rttFormat and the fields after them moved when the eight
+    // DepthCache depth formats were appended to EGxTexFormat (see that enum). No field before m_texFmt
+    // changes. Fields from m_texTarget through m_rttFormat are +0x20 versus 12340; every field after
+    // m_rttFormat is +0x40, because both arrays grew by 0x20. CGxCaps itself is 0x40 larger, so every
+    // CGxDevice member after m_caps is also +0x40 (see CGxDevice.h).
     /* 0000 */ int32_t m_numTmus;
     /* 0004 */ int32_t m_pixelCenterOnEdge;
     /* 0008 */ int32_t m_texelCenterOnEdge;
@@ -196,32 +211,32 @@ class CGxCaps {
     /* 0018 */ int32_t unk_0018;
     /* 001C */ uint32_t m_maxIndex;
     /* 0020 */ int32_t m_generateMipMaps;
-    /* 0024 */ int32_t m_texFmt [13];
-    /* 0058 */ int32_t m_texTarget [4];
-    /* 0068 */ uint32_t m_texNonPow2;
-    /* 006C */ uint32_t m_texMaxSize [4];
-    /* 007C */ int32_t m_rttFormat [13];
-    /* 00B0 */ uint32_t unk_00B0;
-    /* 00B4 */ int32_t m_shaderTargets [6];
-    /* 00CC */ uint32_t m_shaderConstants [6];
-    /* 00E4 */ int32_t m_texFilterTrilinear;
-    /* 00E8 */ int32_t m_texFilterAnisotropic;
-    /* 00EC */ uint32_t m_maxTexAnisotropy;
-    /* 00F0 */ int32_t m_depthBias;
-    /* 00F4 */ int32_t m_colorWrite;
-    /* 00F8 */ int32_t m_maxClipPlanes;
-    /* 00FC */ int32_t m_hwCursor;
-    /* 0100 */ int32_t m_occlusionQuery;
-    /* 0104 */ int32_t m_pointParameters;
-    /* 0108 */ float m_pointScaleMax;
-    /* 010C */ int32_t m_pointSprite;
-    /* 0110 */ uint32_t m_blendFactor;
-    /* 0114 */ uint32_t unused_0114 [5];
-    /* 0128 */ int32_t m_oglRtAlpha;
-    /* 012C */ int32_t m_stereoAvailable;
-    /* 0130 */ int32_t m_shaderAlphaRef;
-    /* 0134 */ int32_t unk_0134;
-    /* 0138 */ int32_t unk_0138;
+    /* 0024 */ int32_t m_texFmt [GxTexFormats_Last];
+    /* 0078 */ int32_t m_texTarget [4];
+    /* 0088 */ uint32_t m_texNonPow2;
+    /* 008C */ uint32_t m_texMaxSize [4];
+    /* 009C */ int32_t m_rttFormat [GxTexFormats_Last];
+    /* 00F0 */ uint32_t unk_00B0;
+    /* 00F4 */ int32_t m_shaderTargets [6];
+    /* 010C */ uint32_t m_shaderConstants [6];
+    /* 0124 */ int32_t m_texFilterTrilinear;
+    /* 0128 */ int32_t m_texFilterAnisotropic;
+    /* 012C */ uint32_t m_maxTexAnisotropy;
+    /* 0130 */ int32_t m_depthBias;
+    /* 0134 */ int32_t m_colorWrite;
+    /* 0138 */ int32_t m_maxClipPlanes;
+    /* 013C */ int32_t m_hwCursor;
+    /* 0140 */ int32_t m_occlusionQuery;
+    /* 0144 */ int32_t m_pointParameters;
+    /* 0148 */ float m_pointScaleMax;
+    /* 014C */ int32_t m_pointSprite;
+    /* 0150 */ uint32_t m_blendFactor;
+    /* 0154 */ uint32_t unused_0114 [5];
+    /* 0168 */ int32_t m_oglRtAlpha;
+    /* 016C */ int32_t m_stereoAvailable;
+    /* 0170 */ int32_t m_shaderAlphaRef;
+    /* 0174 */ int32_t unk_0134;
+    /* 0178 */ int32_t unk_0138;
 };
 
 class CGxQuery {

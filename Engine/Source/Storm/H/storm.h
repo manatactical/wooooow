@@ -277,6 +277,10 @@ void StormRtlDestroy();
 void StormRtlInitialize();
 int32_t STORMAPI StormSetOption(int32_t optname, void* optval, uint32_t optlen);
 
+// Not in the original binary. Enables/disables DebugLog output; negative restores the default, which is
+// on only while a debugger is attached. See DebugLog.cpp for why gating is behaviour preserving.
+void DebugLogSetEnabled(int32_t enabled);
+
 #ifdef NDEBUG
 inline void DebugLog(const char* format, ...) {
 }
@@ -289,10 +293,6 @@ inline void DebugValidate(const char* expression) {
 #else
 void DebugLog(const char* format, ...);
 void DebugLog(int32_t target, const char* format, ...);
-
-// Not in the original binary. Enables/disables DebugLog output; negative restores the default, which is
-// on only while a debugger is attached. See DebugLog.cpp for why gating is behaviour preserving.
-void DebugLogSetEnabled(int32_t enabled);
 
 void DebugValidate(const char* expression);
 #endif

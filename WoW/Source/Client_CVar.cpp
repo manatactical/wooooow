@@ -523,11 +523,14 @@ bool TimerResolutionCallback(CVar* var, const char* oldValue, const char* value,
 
 // Not in the original binary; backs the debugLog CVar. DebugLog is otherwise off unless a debugger is
 // attached, because per-batch callers made it cost 44% of a frame while producing no visible output.
+// Debug-only: storm.h compiles DebugLog to a no-op in release, so there is nothing to enable there.
+#ifndef NDEBUG
 bool DebugLogCallback(CVar* var, const char* oldValue, const char* value, void* arg) {
     DebugLogSetEnabled(SStrToInt(value));
 
     return true;
 }
+#endif
 
 // VERIFY: 46b0bbdc auto
 // OFFSET: 0x00402320

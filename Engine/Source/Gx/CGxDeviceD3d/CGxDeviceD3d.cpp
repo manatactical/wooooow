@@ -27,13 +27,17 @@ const uint32_t CGxDeviceD3d::s_gxAttribToD3dAttribSize[7] = { 4, 4, 4, 8, 12, 4,
 static const D3DQUERYTYPE s_d3dQueryTypes[1] = { D3DQUERYTYPE_OCCLUSION };
 
 // STATIC: 0x00A2F7E8
-const EGxTexFormat CGxDeviceD3d::s_tolerableTexFmtMapping[GxTexFormats_Last] = { GxTex_Unknown, GxTex_Argb4444, GxTex_Argb4444, GxTex_Argb4444, GxTex_Argb4444, GxTex_Argb4444, GxTex_Dxt1, GxTex_Dxt3, GxTex_Dxt5, GxTex_Uv88, GxTex_Gr1616F, GxTex_R32F, GxTex_D24X8 };
+// Not in the original binary. Tail entries are the appended depth-stencil formats (see EGxTexFormat);
+// next-best fallback only, the depth formats are not substituted for a colour format.
+const EGxTexFormat CGxDeviceD3d::s_tolerableTexFmtMapping[GxTexFormats_Last] = { GxTex_Unknown, GxTex_Argb4444, GxTex_Argb4444, GxTex_Argb4444, GxTex_Argb4444, GxTex_Argb4444, GxTex_Dxt1, GxTex_Dxt3, GxTex_Dxt5, GxTex_Uv88, GxTex_Gr1616F, GxTex_R32F, GxTex_D24X8, GxTex_Intz, GxTex_Rawz, GxTex_Resz, GxTex_AtiD24, GxTex_D16, GxTex_D32, GxTex_R16, GxTex_R24X8 };
 
 // STATIC: 0x00A2F850
 const D3DCUBEMAP_FACES CGxDeviceD3d::s_faceTypes[6] = { D3DCUBEMAP_FACE_POSITIVE_X, D3DCUBEMAP_FACE_NEGATIVE_X, D3DCUBEMAP_FACE_POSITIVE_Y, D3DCUBEMAP_FACE_NEGATIVE_Y, D3DCUBEMAP_FACE_POSITIVE_Z, D3DCUBEMAP_FACE_NEGATIVE_Z };
 
 // STATIC: 0x00A2F81C
-const D3DFORMAT CGxDeviceD3d::s_GxTexFmtToD3dFmt[GxTexFormats_Last] = { D3DFMT_UNKNOWN, D3DFMT_A8B8G8R8, D3DFMT_A8R8G8B8, D3DFMT_A4R4G4B4, D3DFMT_A1R5G5B5, D3DFMT_R5G6B5, D3DFMT_DXT1, D3DFMT_DXT3, D3DFMT_DXT5, D3DFMT_V8U8, D3DFMT_G16R16F, D3DFMT_R32F, D3DFMT_D24X8 };
+// Not in the original binary. Tail entries are the appended depth-stencil formats (see EGxTexFormat);
+// the four-of-a-kind values match 15595, so the driver samples depth through INTZ/RAWZ/RESZ/DF24.
+const D3DFORMAT CGxDeviceD3d::s_GxTexFmtToD3dFmt[GxTexFormats_Last] = { D3DFMT_UNKNOWN, D3DFMT_A8B8G8R8, D3DFMT_A8R8G8B8, D3DFMT_A4R4G4B4, D3DFMT_A1R5G5B5, D3DFMT_R5G6B5, D3DFMT_DXT1, D3DFMT_DXT3, D3DFMT_DXT5, D3DFMT_V8U8, D3DFMT_G16R16F, D3DFMT_R32F, D3DFMT_D24X8, static_cast<D3DFORMAT>(MAKEFOURCC('I', 'N', 'T', 'Z')), static_cast<D3DFORMAT>(MAKEFOURCC('R', 'A', 'W', 'Z')), static_cast<D3DFORMAT>(MAKEFOURCC('R', 'E', 'S', 'Z')), static_cast<D3DFORMAT>(MAKEFOURCC('D', 'F', '2', '4')), D3DFMT_D16, D3DFMT_D32, D3DFMT_L16, D3DFMT_D24X8 };
 
 // STATIC: 0x00A2F8D4
 const D3DPRIMITIVETYPE CGxDeviceD3d::s_primitiveConversion[GxPrims_Last] = { D3DPT_POINTLIST, D3DPT_LINELIST, D3DPT_LINESTRIP, D3DPT_TRIANGLELIST, D3DPT_TRIANGLESTRIP, D3DPT_TRIANGLEFAN };
@@ -66,7 +70,8 @@ const D3DCMPFUNC CGxDeviceD3d::s_cmpFunc[4] = { D3DCMP_LESSEQUAL, D3DCMP_EQUAL, 
 const D3DCULL CGxDeviceD3d::s_cullMode[3] = { D3DCULL_NONE, D3DCULL_CW, D3DCULL_CCW };
 
 // STATIC: 0x00AD8EF0
-EGxTexFormat CGxDeviceD3d::s_GxTexFormatToUse[GxTexFormats_Last] = { GxTex_Unknown, GxTex_Abgr8888, GxTex_Argb8888, GxTex_Argb4444, GxTex_Argb1555, GxTex_Rgb565, GxTex_Dxt1, GxTex_Dxt3, GxTex_Dxt5, GxTex_Uv88, GxTex_Gr1616F, GxTex_R32F, GxTex_D24X8 };
+// Not in the original binary. Tail entries are the appended depth-stencil formats (see EGxTexFormat).
+EGxTexFormat CGxDeviceD3d::s_GxTexFormatToUse[GxTexFormats_Last] = { GxTex_Unknown, GxTex_Abgr8888, GxTex_Argb8888, GxTex_Argb4444, GxTex_Argb1555, GxTex_Rgb565, GxTex_Dxt1, GxTex_Dxt3, GxTex_Dxt5, GxTex_Uv88, GxTex_Gr1616F, GxTex_R32F, GxTex_D24X8, GxTex_Intz, GxTex_Rawz, GxTex_Resz, GxTex_AtiD24, GxTex_D16, GxTex_D32, GxTex_R16, GxTex_R24X8 };
 
 // STATIC: 0x00AD8F24
 D3DDECLTYPE CGxDeviceD3d::s_gxAttribToD3dAttribType[7] = { D3DDECLTYPE_D3DCOLOR, D3DDECLTYPE_UBYTE4, D3DDECLTYPE_UBYTE4N, D3DDECLTYPE_FLOAT2, D3DDECLTYPE_FLOAT3, D3DDECLTYPE_SHORT2, D3DDECLTYPE_FLOAT1 };
@@ -3360,6 +3365,17 @@ void CGxDeviceD3d::IStateSetD3DDefaults() {
 
     this->m_d3dDevice->GetRenderTarget(0, &this->m_defColorSurface);
     this->m_d3dDevice->GetDepthStencilSurface(&this->m_defDepthSurface);
+    // Not in the original binary. 15595 wraps the default colour/depth surfaces in a frame buffer so
+    // FrameBufferSet(BackBuffer()) restores them; 12340 tracked the two surfaces only. 12340 has no
+    // CGxTex for a surface it did not create, so the back buffer carries no textures here.
+    if (!this->m_backBuffer) {
+        this->m_backBuffer = this->FrameBufferCreate();
+    }
+
+    this->m_backBuffer->Attach(GxBuffers_Color, NULL, 0);
+    this->m_backBuffer->Attach(GxBuffers_Depth, NULL, 0);
+    this->m_backBuffer->Finalize();
+    this->FrameBufferSet(this->m_backBuffer);
     this->InitLights();
     this->m_ambientOnlyMode = 0;
 

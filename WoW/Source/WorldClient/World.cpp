@@ -15,6 +15,7 @@
 #include "Engine/Source/Os/RenderProfiler.h"
 #include "Engine/Source/Tempest/CWFrustum.h"
 #include "Engine/Source/Gx/Gx.h"
+#include "Engine/Source/Gx/ViewSettings.h"
 #include "Engine/Source/Gx/Types.h"
 #include "Engine/Source/Gxu/Gxu.h"
 #include "Engine/Source/Gxu/GxuLight.h"
@@ -1183,6 +1184,12 @@ void World::PrepareAreaOfInterest(const C3Vector& position) {
 
     C44Matrix projection;
     GxuXformCreateProjection_Exact(fov * 0.6f, camera->m_aspect, nearZ, farZ, projection);
+
+    // Not in the original binary. Feeds ViewSettings, which the screen-space passes read back through
+    // CalculateParams/CalculateHomToScreen. 15595 sets the same two values in its PrepareAreaOfInterest;
+    // the far-clip fraction is the same 0.94 this tree already passes as the world viewport maxZ.
+    ViewSettings::SetZNearFar(nearZ, farZ);
+    ViewSettings::SetViewportFarClip(CWorld::s_unk_ADEEE4);
 
     C44Matrix view;
     GxXformView(view);

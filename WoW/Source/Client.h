@@ -104,7 +104,9 @@ void SetPaths();
 void StartupReport(bool firstRun);
 bool TextureCacheSizeCallback(CVar* var, const char* oldValue, const char* value, void* arg);
 bool TimerResolutionCallback(CVar* var, const char* oldValue, const char* value, void* arg);
+#ifndef NDEBUG
 bool DebugLogCallback(CVar* var, const char* oldValue, const char* value, void* arg);
+#endif
 bool TimingMethodCallback(CVar* var, const char* oldValue, const char* value, void* arg);
 bool UIFasterCallback(CVar* var, const char* oldValue, const char* value, void* arg);
 int32_t STORMAPI WowLogHeader(char* buffer, uint32_t bufferchars);

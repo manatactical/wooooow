@@ -6,6 +6,7 @@
 #include <cstdint>
 #include "Engine/Source/Gx/CGxBuf.h"
 #include "Engine/Source/Gx/CGxDevice/CGxShader.h"
+#include "Engine/Source/Gx/CGxFrameBuffer.h"
 #include "Engine/Source/Gx/CGxDevice/EmergencyMem.h"
 #include "Engine/Source/Gx/CGxDevice/Types.h"
 #include "Engine/Source/Gx/CGxFormat.h"
@@ -102,61 +103,70 @@ class CGxDevice {
     /* 01B8 */ uint32_t m_cpuFeatures;
     /* 01BC */ CGxFormat m_format;
     /* 0214 */ CGxCaps m_caps;
-    /* 0350 */ uint32_t m_baseMipLevel;
-    /* 0354 */ CGxGammaRamp m_gammaRamp;
-    /* 0954 */ CGxGammaRamp m_systemGammaRamp;
-    /* 0F54 */ GxWindowProc m_windowProc;
-    /* 0F58 */ int32_t m_context;
-    /* 0F5C */ int32_t m_intF5C;
-    /* 0F60 */ int32_t m_windowVisible;
-    /* 0F64 */ int32_t m_windowFocus;
-    /* 0F68 */ int32_t m_frameCount;
-    /* 0F6C */ int32_t m_viewportDirty;
-    /* 0F70 */ CBoundingBox m_viewport;
-    /* 0F88 */ C44Matrix m_projection;
-    /* 0FC8 */ C44Matrix m_projNative;
-    /* 1008 */ CGxMatrixStack m_xforms [11];
-    /* 1C10 */ CGxMatrixStack m_texGen [8];
-    /* 24D0 */ uint32_t m_clipPlaneMask;
-    /* 24D4 */ C4Plane m_clipPlane [6];
-    /* 2534 */ int32_t m_scissorRectDirty;
-    /* 2538 */ CRect m_scissorRect;
-    /* 2548 */ CGxApiLight m_lights [4];
-    /* 2668 */ TSHashTable<CGxShader, HASHKEY_STRI> m_shaderList [6];
-    /* 2758 */ uint32_t m_appMasterEnables;
-    /* 275C */ uint32_t m_hwMasterEnables;
-    /* 2760 */ TSList<CGxPool> m_poolList;
-    /* 276C */ TSList<CGxBuf> m_bufList;
-    /* 2778 */ CGxBuf* m_bufLocked [2];
-    /* 2780 */ CGxPool* m_vertexPool;
-    /* 2784 */ CGxPool* m_indexPool;
-    /* 2788 */ CGxBuf* m_streamBufs [2];
-    /* 2790 */ CGxVertexAttrib m_primVertexFormatAttrib [14];
-    /* 2870 */ CGxBuf* m_primVertexFormatBuf [14];
-    /* 28A8 */ uint32_t m_primVertexMask;
-    /* 28AC */ uint32_t m_primVertexDirty;
-    /* 28B0 */ EGxVertexBufferFormat m_primVertexFormat;
-    /* 28B4 */ CGxBuf* m_primVertexBuf;
-    /* 28B8 */ uint32_t m_primVertexSize;
-    /* 28BC */ CGxBuf* m_primIndexBuf;
-    /* 28C0 */ int32_t m_primIndexDirty;
-    /* 28C4 */ EmergencyMem m_emergencyMem [2];
-    /* 28EC */ TSFixedArray<CGxAppRenderState> m_appRenderStates;
-    /* 28F8 */ TSFixedArray<CGxStateBom> m_hwRenderStates;
-    /* 2904 */ TSExplicitList<CGxTex, offsetof(CGxTex, m_link)> m_textures;
-    /* 2910 */ CGxDevice::TextureTarget m_textureTarget [2];
-    /* 2928 */ TSExplicitList<CGxQuery, offsetof(CGxQuery, m_link)> m_queryList;
-    /* 2934 */ int32_t m_scrShotClick;
-    /* 2938 */ uint32_t m_scrShotWidth;
-    /* 293C */ uint32_t m_scrShotHeight;
-    /* 2940 */ TSGrowableArray<CImVector> m_scrShotPixels;
-    /* 2950 */ int32_t m_cursorVisible;
-    /* 2954 */ int32_t m_hwCursor;
-    /* 2958 */ uint32_t m_cursorHotspotX;
-    /* 295C */ uint32_t m_cursorHotspotY;
-    /* 2960 */ uint32_t m_cursor [1024];
-    /* 3960 */ CGxTex* m_cursorTexture;
-    /* 3964 */ float m_cursorDepth;
+    // Every offset from here down to m_cursorDepth is the 12340 value + 0x40, because the DepthCache
+    // depth formats grew CGxCaps by 0x40 (see the breakdown in CGxCaps, Types.h).
+    /* 0390 */ uint32_t m_baseMipLevel;
+    /* 0394 */ CGxGammaRamp m_gammaRamp;
+    /* 0994 */ CGxGammaRamp m_systemGammaRamp;
+    /* 0F94 */ GxWindowProc m_windowProc;
+    /* 0F98 */ int32_t m_context;
+    /* 0F9C */ int32_t m_intF5C;
+    /* 0FA0 */ int32_t m_windowVisible;
+    /* 0FA4 */ int32_t m_windowFocus;
+    /* 0FA8 */ int32_t m_frameCount;
+    /* 0FAC */ int32_t m_viewportDirty;
+    /* 0FB0 */ CBoundingBox m_viewport;
+    /* 0FC8 */ C44Matrix m_projection;
+    /* 1008 */ C44Matrix m_projNative;
+    /* 1048 */ CGxMatrixStack m_xforms [11];
+    /* 1C50 */ CGxMatrixStack m_texGen [8];
+    /* 2510 */ uint32_t m_clipPlaneMask;
+    /* 2514 */ C4Plane m_clipPlane [6];
+    /* 2574 */ int32_t m_scissorRectDirty;
+    /* 2578 */ CRect m_scissorRect;
+    /* 2588 */ CGxApiLight m_lights [4];
+    /* 26A8 */ TSHashTable<CGxShader, HASHKEY_STRI> m_shaderList [6];
+    /* 2798 */ uint32_t m_appMasterEnables;
+    /* 279C */ uint32_t m_hwMasterEnables;
+    /* 27A0 */ TSList<CGxPool> m_poolList;
+    /* 27AC */ TSList<CGxBuf> m_bufList;
+    /* 27B8 */ CGxBuf* m_bufLocked [2];
+    /* 27C0 */ CGxPool* m_vertexPool;
+    /* 27C4 */ CGxPool* m_indexPool;
+    /* 27C8 */ CGxBuf* m_streamBufs [2];
+    /* 27D0 */ CGxVertexAttrib m_primVertexFormatAttrib [14];
+    /* 28B0 */ CGxBuf* m_primVertexFormatBuf [14];
+    /* 28E8 */ uint32_t m_primVertexMask;
+    /* 28EC */ uint32_t m_primVertexDirty;
+    /* 28F0 */ EGxVertexBufferFormat m_primVertexFormat;
+    /* 28F4 */ CGxBuf* m_primVertexBuf;
+    /* 28F8 */ uint32_t m_primVertexSize;
+    /* 28FC */ CGxBuf* m_primIndexBuf;
+    /* 2900 */ int32_t m_primIndexDirty;
+    /* 2904 */ EmergencyMem m_emergencyMem [2];
+    /* 292C */ TSFixedArray<CGxAppRenderState> m_appRenderStates;
+    /* 2938 */ TSFixedArray<CGxStateBom> m_hwRenderStates;
+    /* 2944 */ TSExplicitList<CGxTex, offsetof(CGxTex, m_link)> m_textures;
+    /* 2950 */ CGxDevice::TextureTarget m_textureTarget [2];
+    // Not in the original binary. Ported from 15595: the whole attachment set as one object, so a pass
+    // can save and restore it. m_textureTarget above is still the live device state.
+    /* 2968 */ CGxTex* m_backBufferColorTex;
+    /* 296C */ CGxTex* m_backBufferDepthTex;
+    /* 2970 */ CGxFrameBuffer* m_backBuffer;
+    /* 2974 */ CGxFrameBuffer* m_frameBuffer;
+    /* 2978 */ uint32_t m_frameBufferVersion;
+    /* 297C */ TSExplicitList<CGxQuery, offsetof(CGxQuery, m_link)> m_queryList;
+    /* 2988 */ int32_t m_scrShotClick;
+    /* 298C */ uint32_t m_scrShotWidth;
+    /* 2990 */ uint32_t m_scrShotHeight;
+    /* 2994 */ TSGrowableArray<CImVector> m_scrShotPixels;
+    /* 29A4 */ int32_t m_cursorVisible;
+    /* 29A8 */ int32_t m_hwCursor;
+    /* 29AC */ uint32_t m_cursorHotspotX;
+    /* 29B0 */ uint32_t m_cursorHotspotY;
+    /* 29B4 */ uint32_t m_cursor [1024];
+    /* 39B4 */ CGxTex* m_cursorTexture;
+    /* 39B8 */ float m_cursorDepth;
 
     virtual void ITexMarkAsUpdated(CGxTex* texId);
     virtual void IRsSendToHw(EGxRenderState which) = 0;
@@ -242,6 +252,18 @@ class CGxDevice {
     virtual void DeviceUnk81(uint32_t a, uint32_t b) = 0;
     virtual void DeviceUnk82() = 0;
     virtual void DeviceUnk83(uint32_t a, uint32_t b) = 0;
+    // Not in the original binary. Frame-buffer wrappers, ported from 15595. Appended after the last
+    // 12340 virtual so no existing vtable slot moves. 12340 has two buffers (color, depth) rather than
+    // 15595's five, so CGxFrameBuffer holds one target per EGxBuffer instead of a fixed array.
+    virtual CGxFrameBuffer* FrameBufferCreate();
+    virtual void FrameBufferDelete(CGxFrameBuffer*& frameBuffer);
+    virtual int32_t FrameBufferAttach(CGxFrameBuffer* frameBuffer, EGxBuffer buffer, CGxTex* texture, uint32_t plane);
+    virtual int32_t FrameBufferFinalize(CGxFrameBuffer* frameBuffer);
+    virtual CGxFrameBuffer* FrameBufferGet();
+    virtual void FrameBufferSet(CGxFrameBuffer* frameBuffer);
+    virtual CGxFrameBuffer* BackBuffer();
+    virtual CGxTex* BackBufferColorTex();
+    virtual CGxTex* BackBufferDepthTex();
 
     static HSLOG m_log;
     static C2iVector s_clientAdjust;
@@ -251,6 +273,7 @@ class CGxDevice {
     static CGxShader* s_uiPixelShader;
     static CGxShader* s_uiVertexShader[2];
     static ShadowConstants s_shadowConstants[2];
+    static const char* s_texFormatNames[GxTexFormats_Last];
     static uint32_t s_alphaRef[12];
     static const uint32_t s_texFormatBitDepth[GxTexFormats_Last];
     static const uint32_t s_texFormatBlockSize[GxTexFormats_Last];

@@ -17,6 +17,7 @@
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/CGxTexFlags.h"
 #include "Engine/Source/Gx/Gx.h"
+#include "Engine/Source/Gx/ViewSettings.h"
 #include "Engine/Source/Gxu/Gxu.h"
 #include "Engine/Source/Model2/M2Scene.h"
 #include "Engine/Source/Os/RenderProfiler.h"
@@ -27,6 +28,7 @@
 #include "Engine/Source/Services/Texture.h"
 #include "Engine/Source/ShaderEffect/ShaderEffect.h"
 #include "Engine/Source/Tempest/C4Vector.h"
+#include "Engine/Source/Tempest/CAaRect.h"
 #include "Engine/Source/Tempest/CAaBox.h"
 #include "Engine/Source/Tempest/CImVector.h"
 #include "Engine/Source/lua-5.1/src/lua.h"
@@ -1718,6 +1720,20 @@ void CGWorldFrame::OnWorldRender() {
     }
 
     GxXformSetViewport(width * this->m_viewportNDC.minX + minX, this->m_viewportNDC.maxX * width + minX, height * bottom + minY, top * height + minY, minZ, CWorld::s_unk_ADEEE4);
+
+    // Not in the original binary. 15595 builds the same extents from the device viewport at the top of
+    // CWorldScene::Render; the screen-space passes read them back through ViewSettings::CalculateHomToScreen.
+    // Note the X/Y swap: SetViewExtents takes (minX,minY,maxX,maxY) as viewport Y then X, matching 15595.
+    {
+        const CBoundingBox& viewport = g_theGxDevicePtr->m_viewport;
+        CAaRect extents;
+        extents.minX = viewport.m_y.m_l;
+        extents.minY = viewport.m_x.m_l;
+        extents.maxX = viewport.m_y.m_h;
+        extents.maxY = viewport.m_x.m_h;
+        ViewSettings::SetViewExtents(extents);
+    }
+
     TextureCacheResetLoadCount();
     PlayerNameUpdateEarly();
 

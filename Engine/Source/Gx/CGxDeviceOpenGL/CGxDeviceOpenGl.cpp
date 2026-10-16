@@ -30,7 +30,8 @@ static const GLenum s_glTexTarget[4] = { GL_TEXTURE_2D, GL_TEXTURE_CUBE_MAP_ARB,
 static const GLenum s_glQueryTarget[1] = { GL_SAMPLES_PASSED_ARB };
 
 // STATIC: 0x00A2F210
-static const GLint s_glInternalFormat[GxTexFormats_Last] = { 0, GL_RGBA8, GL_RGBA8, GL_RGBA4, GL_RGB5_A1, GL_RGB5, 0x83F1, 0x83F2, 0x83F3, 0x8709, 0x881B, 0, GL_DEPTH_COMPONENT24_ARB };
+// Not in the original binary. Tail entries are the appended depth-stencil formats (see EGxTexFormat).
+static const GLint s_glInternalFormat[GxTexFormats_Last] = { 0, GL_RGBA8, GL_RGBA8, GL_RGBA4, GL_RGB5_A1, GL_RGB5, 0x83F1, 0x83F2, 0x83F3, 0x8709, 0x881B, 0, GL_DEPTH_COMPONENT24_ARB, GL_DEPTH_COMPONENT24_ARB, GL_DEPTH_COMPONENT24_ARB, GL_DEPTH_COMPONENT24_ARB, GL_DEPTH_COMPONENT24_ARB, 0x81A5, 0x81A7, GL_LUMINANCE16, GL_DEPTH_COMPONENT24_ARB };
 
 // STATIC: 0x00A2F1E0
 static const GLint s_glMinFilter[GxTexFilters_Last] = { GL_NEAREST, GL_LINEAR, GL_NEAREST_MIPMAP_NEAREST, GL_LINEAR_MIPMAP_NEAREST, GL_LINEAR_MIPMAP_LINEAR, GL_LINEAR_MIPMAP_LINEAR };
@@ -39,16 +40,19 @@ static const GLint s_glMinFilter[GxTexFilters_Last] = { GL_NEAREST, GL_LINEAR, G
 static const GLint s_glMagFilter[GxTexFilters_Last] = { GL_NEAREST, GL_LINEAR, GL_LINEAR, GL_LINEAR, GL_LINEAR, GL_LINEAR };
 
 // STATIC: 0x00A2F244
-static const uint32_t s_glBytesPerPixel[GxTexFormats_Last] = { 0, 4, 4, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0 };
+// Not in the original binary. Tail entries are the appended depth-stencil formats (see EGxTexFormat).
+static const uint32_t s_glBytesPerPixel[GxTexFormats_Last] = { 0, 4, 4, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 4, 4, 4, 4, 2, 4, 2, 4 };
 
 // STATIC: 0x00A2F2E0
 static const GLenum s_glCubeFaces[6] = { 0x8515, 0x8516, 0x8517, 0x8518, 0x8519, 0x851A };
 
 // STATIC: 0x00A2F278
-static const GLenum s_glFormat[GxTexFormats_Last] = { 0, GL_RGBA, 0x80E1, 0x80E1, 0x80E1, GL_RGB, 0, 0, 0, 0x86F5, GL_RGB, GL_RGB, GL_DEPTH_COMPONENT };
+// Not in the original binary. Tail entries are the appended depth-stencil formats (see EGxTexFormat).
+static const GLenum s_glFormat[GxTexFormats_Last] = { 0, GL_RGBA, 0x80E1, 0x80E1, 0x80E1, GL_RGB, 0, 0, 0, 0x86F5, GL_RGB, GL_RGB, GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT, GL_LUMINANCE, GL_DEPTH_COMPONENT };
 
 // STATIC: 0x00A2F2AC
-static const GLenum s_glType[GxTexFormats_Last] = { 0, 0x8367, 0x8367, 0x8365, 0x8366, 0x8363, 0, 0, 0, GL_BYTE, 0x140B, 0, GL_FLOAT };
+// Not in the original binary. Tail entries are the appended depth-stencil formats (see EGxTexFormat).
+static const GLenum s_glType[GxTexFormats_Last] = { 0, 0x8367, 0x8367, 0x8365, 0x8366, 0x8363, 0, 0, 0, GL_BYTE, 0x140B, 0, GL_FLOAT, GL_UNSIGNED_INT, GL_UNSIGNED_INT, GL_UNSIGNED_INT, GL_UNSIGNED_INT, GL_UNSIGNED_SHORT, GL_UNSIGNED_INT, GL_UNSIGNED_SHORT, GL_UNSIGNED_INT };
 
 struct GlTexEnvOp {
     GLenum m_mode;

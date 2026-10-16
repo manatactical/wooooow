@@ -4,6 +4,7 @@
 #include <windows.h>
 #include "Engine/Source/Storm/H/storm.h"
 
+#ifndef NDEBUG
 namespace {
 
 // Not in the original binary, but behaviour preserving: OutputDebugStringA produces no output at all
@@ -27,7 +28,6 @@ void DebugLogSetEnabled(int32_t enabled) {
     s_debugLogEnabled = enabled < 0 ? -1 : (enabled != 0 ? 1 : 0);
 }
 
-#ifndef NDEBUG
 void DebugLog(const char* format, ...) {
     if (!DebugLogIsEnabled()) {
         return;

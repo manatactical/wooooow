@@ -18,13 +18,16 @@
 #include "Engine/Source/Os/TimeManager.h"
 
 // STATIC: 0x00A2DAF8
-const uint32_t CGxDevice::s_texFormatBitDepth[GxTexFormats_Last] = { 0, 32, 32, 16, 16, 16, 4, 8, 8, 16, 32, 32, 32 };
+// Not in the original binary. Tail entries are the appended depth-stencil formats (see EGxTexFormat).
+const uint32_t CGxDevice::s_texFormatBitDepth[GxTexFormats_Last] = { 0, 32, 32, 16, 16, 16, 4, 8, 8, 16, 32, 32, 32, 32, 32, 32, 32, 16, 32, 16, 32 };
 
 // STATIC: 0x00A2DB2C
-const uint32_t CGxDevice::s_texFormatBlockSize[GxTexFormats_Last] = { 1, 1, 1, 1, 1, 1, 4, 4, 4, 1, 1, 1, 1 };
+// Not in the original binary. Tail entries are the appended depth-stencil formats (see EGxTexFormat).
+const uint32_t CGxDevice::s_texFormatBlockSize[GxTexFormats_Last] = { 1, 1, 1, 1, 1, 1, 4, 4, 4, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
 
 // STATIC: 0x00A2DB60
-const uint32_t CGxDevice::s_texFormatBytesPerBlock[GxTexFormats_Last] = { 0, 4, 4, 2, 2, 2, 8, 16, 16, 2, 4, 4, 4 };
+// Not in the original binary. Tail entries are the appended depth-stencil formats (see EGxTexFormat).
+const uint32_t CGxDevice::s_texFormatBytesPerBlock[GxTexFormats_Last] = { 0, 4, 4, 2, 2, 2, 8, 16, 16, 2, 4, 4, 4, 4, 4, 4, 4, 2, 4, 2, 4 };
 
 // STATIC: 0x00AD8B4C
 static uint32_t s_primVertsPerPrim[GxPrims_Last] = { 1, 2, 1, 3, 1, 1 };
@@ -55,6 +58,32 @@ static const char* s_computeShaderTargetNames[4] = { "none", "cs_5_0", "cs_cuda"
 
 // STATIC: 0x00AD8890
 static const char** s_shaderTargetNames[GxShTargets_Last] = { CGxDevice::s_vertexShaderTargetNames, s_hullShaderTargetNames, s_domainShaderTargetNames, s_geometryShaderTargetNames, CGxDevice::s_pixelShaderTargetNames, s_computeShaderTargetNames };
+
+// Not in the original binary. Ported from 15595 so texture-creation logging can name a format.
+// Designated by index so a future format append cannot silently shift the names.
+const char* CGxDevice::s_texFormatNames[GxTexFormats_Last] = {
+    /* GxTex_Unknown   */ "Unknown",
+    /* GxTex_Abgr8888  */ "Abgr8888",
+    /* GxTex_Argb8888  */ "Argb8888",
+    /* GxTex_Argb4444  */ "Argb4444",
+    /* GxTex_Argb1555  */ "Argb1555",
+    /* GxTex_Rgb565    */ "Rgb565",
+    /* GxTex_Dxt1      */ "Dxt1",
+    /* GxTex_Dxt3      */ "Dxt3",
+    /* GxTex_Dxt5      */ "Dxt5",
+    /* GxTex_Uv88      */ "Uv88",
+    /* GxTex_Gr1616F   */ "Gr1616F",
+    /* GxTex_R32F      */ "R32F",
+    /* GxTex_D24X8     */ "D24X8",
+    /* GxTex_Intz      */ "Intz",
+    /* GxTex_Rawz      */ "Rawz",
+    /* GxTex_Resz      */ "Resz",
+    /* GxTex_AtiD24    */ "AtiD24",
+    /* GxTex_D16       */ "D16",
+    /* GxTex_D32       */ "D32",
+    /* GxTex_R16       */ "R16",
+    /* GxTex_R24X8     */ "R24X8",
+};
 
 // STATIC: 0x00AD8B7C
 uint32_t CGxDevice::s_alphaRef[12] = { 0, 224, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0 };
@@ -1587,6 +1616,12 @@ CGxDevice::CGxDevice() : m_defWindowRect(), m_curWindowRect(), m_viewport(), m_s
     this->m_primVertexBuf = nullptr;
     this->m_primIndexBuf = nullptr;
     this->m_primIndexDirty = 0;
+    // Not in the original binary. Frame buffers added in 15595; 12340 has no equivalent state.
+    this->m_backBufferColorTex = nullptr;
+    this->m_backBufferDepthTex = nullptr;
+    this->m_backBuffer = nullptr;
+    this->m_frameBuffer = nullptr;
+    this->m_frameBufferVersion = 0;
     this->m_gammaRamp.Set(1.0f);
     this->m_systemGammaRamp.Set(1.0f);
 

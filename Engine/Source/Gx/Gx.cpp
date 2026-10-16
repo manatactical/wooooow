@@ -13,7 +13,8 @@
 #include "Engine/Source/Os/RenderProfiler.h"
 
 // STATIC: 0x00A2D57C
-static const uint32_t s_texelSize[GxTexFormats_Last] = { 0, 4, 4, 2, 2, 2, 2, 4, 4, 2, 4, 4, 4 };
+// Not in the original binary. Tail entries are the appended depth-stencil formats (see EGxTexFormat).
+static const uint32_t s_texelSize[GxTexFormats_Last] = { 0, 4, 4, 2, 2, 2, 2, 4, 4, 2, 4, 4, 4, 4, 4, 4, 4, 2, 4, 2, 4 };
 
 // STATIC: 0x00A2D5B0
 static const int32_t s_vertexAttribOffset[GxVertexBufferFormats_Last][GxVAs_Last] = {
@@ -37,7 +38,10 @@ static const int32_t s_vertexAttribOffset[GxVertexBufferFormats_Last][GxVAs_Last
 static BlitFormat s_blitFormats[GxTexFormats_Last] = {
     BlitFormat_Unknown, BlitFormat_Abgr8888, BlitFormat_Argb8888, BlitFormat_Argb4444, BlitFormat_Argb1555,
     BlitFormat_Rgb565, BlitFormat_Dxt1, BlitFormat_Dxt3, BlitFormat_Dxt5, BlitFormat_Uv88, BlitFormat_Gr1616F,
-    BlitFormat_R32F, BlitFormat_D24X8
+    BlitFormat_R32F, BlitFormat_D24X8,
+    // Not in the original binary. No blit path exists for the appended depth-stencil formats in 12340.
+    BlitFormat_Unknown, BlitFormat_Unknown, BlitFormat_Unknown, BlitFormat_Unknown,
+    BlitFormat_Unknown, BlitFormat_Unknown, BlitFormat_Unknown, BlitFormat_Unknown
 };
 
 // STATIC: 0x00AD87E4
@@ -948,6 +952,35 @@ void GxFormatColor(CImVector& color) {
 void GxRenderTargetSet(EGxBuffer buffer, CGxTex* texture, uint32_t plane) {
     GxRsSet(GxRs_ScissorTest, 0);
     g_theGxDevicePtr->DeviceSetRenderTarget(buffer, texture, plane);
+}
+
+// Not in the original binary. Frame-buffer wrappers ported from 15595; the liquid reflection and
+// displacement passes save and restore the whole attachment set through these.
+CGxFrameBuffer* GxFrameBufferCreate(CGxTex* depthTex, CGxTex* colorTex) {
+    CGxFrameBuffer* frameBuffer = g_theGxDevicePtr->FrameBufferCreate();
+    g_theGxDevicePtr->FrameBufferAttach(frameBuffer, GxBuffers_Depth, depthTex, 0);
+    g_theGxDevicePtr->FrameBufferAttach(frameBuffer, GxBuffers_Color, colorTex, 0);
+    return frameBuffer;
+}
+
+int32_t GxFrameBufferAttach(CGxFrameBuffer* frameBuffer, EGxBuffer buffer, CGxTex* texture, uint32_t plane) {
+    return g_theGxDevicePtr->FrameBufferAttach(frameBuffer, buffer, texture, plane);
+}
+
+int32_t GxFrameBufferFinalize(CGxFrameBuffer* frameBuffer) {
+    return g_theGxDevicePtr->FrameBufferFinalize(frameBuffer);
+}
+
+void GxFrameBufferDelete(CGxFrameBuffer*& frameBuffer) {
+    g_theGxDevicePtr->FrameBufferDelete(frameBuffer);
+}
+
+CGxFrameBuffer* GxFrameBufferGet() {
+    return g_theGxDevicePtr->FrameBufferGet();
+}
+
+void GxFrameBufferSet(CGxFrameBuffer* frameBuffer) {
+    g_theGxDevicePtr->FrameBufferSet(frameBuffer);
 }
 
 // VERIFY: 9ee00156 manual

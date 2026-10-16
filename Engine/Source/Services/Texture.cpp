@@ -1296,6 +1296,17 @@ void TextureIncreasePriority(CTexture* texture) {
     }
 }
 
+// Not in the original binary. Ported from 15595, which needs it for DepthCache. 12340 releases textures through
+// HandleClose instead, so this is the same operation wearing 15595's name: release one reference and null the
+// caller's pointer. Kept as a function (not a macro) so the DepthCache port stays line-comparable.
+void TextureRelease(CTexture*& texture) {
+    if (texture) {
+        HandleClose(reinterpret_cast<HOBJECT>(texture));
+    }
+
+    texture = nullptr;
+}
+
 // VERIFY: 3c936638 auto
 // OFFSET: 0x004B6CB0
 CGxTex* TextureGetGxTex(CTexture* texture, int32_t wait, CStatus* status) {

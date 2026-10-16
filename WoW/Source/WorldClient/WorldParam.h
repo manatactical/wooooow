@@ -46,6 +46,14 @@ class CWorldParam {
     static CVar* cvar_projectedTextures;
     static CVar* cvar_gxTextureCacheSize;
 
+    // Not in the original binary. Ported from 15595 (Cataclysm) water settings. 12340's original water cvars
+    // do not exist here, so these are additive; 15595 replaced its own waterLOD with them. See the note on
+    // CWorldParam::waterLOD above.
+    static CVar* cvar_waterDetail;
+    static CVar* cvar_rippleDetail;
+    static CVar* cvar_reflectionMode;
+    static CVar* cvar_reflectionDownscale;
+
     static bool BaseMipCallback(CVar* var, const char* oldValue, const char* value, void* arg);
     static bool BspCacheCallback(CVar* var, const char* oldValue, const char* value, void* arg);
     static bool CloudLODCallback(CVar* var, const char* oldValue, const char* value, void* arg);
@@ -82,6 +90,11 @@ class CWorldParam {
     static bool TexLodBiasCallback(CVar* var, const char* oldValue, const char* value, void* arg);
     static bool TextureFilteringCallback(CVar* var, const char* oldValue, const char* value, void* arg);
     static bool WaterLodCallback(CVar* var, const char* oldValue, const char* value, void* arg);
+    // Not in the original binary. Ported from 15595 (Cataclysm) water settings callbacks.
+    static bool WaterDetailCallback(CVar* var, const char* oldValue, const char* value, void* arg);
+    static bool RippleDetailCallback(CVar* var, const char* oldValue, const char* value, void* arg);
+    static bool ReflectionModeCallback(CVar* var, const char* oldValue, const char* value, void* arg);
+    static bool ReflectionDownscaleCallback(CVar* var, const char* oldValue, const char* value, void* arg);
     static bool WorldPoolUsageCallback(CVar* var, const char* oldValue, const char* value, void* arg);
 };
 

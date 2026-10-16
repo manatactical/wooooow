@@ -176,6 +176,8 @@ void TextureSetMaxAnisotropy(uint32_t maxAnisotropy);
 void TextureSetTextureSubstitutions(const char* from, const char* to);
 void TextureSetUserData(CTexture* texture, GxTexUserFunc userFunc, void* userArg);
 int32_t TextureUnloadBlob(const char* fileName);
+// Not in the original binary. Ported from 15595; DepthCache::Reset/Release/DestroyTextures use it.
+void TextureRelease(CTexture*& texture);
 int32_t TextureUpdate(const void* data, void* param);
 void UpdateBlpTextureAsync(EGxTexCommand command, uint32_t width, uint32_t height, uint32_t face, uint32_t level, void* userArg, uint32_t& texelStrideInBytes, const void*& texels);
 void UpdateTgaTexture(EGxTexCommand command, uint32_t width, uint32_t height, uint32_t face, uint32_t level, void* userArg, uint32_t& texelStrideInBytes, const void*& texels);

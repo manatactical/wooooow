@@ -6,6 +6,8 @@
 #include "Engine/Source/Services/Texture.h"
 #include "Engine/Source/ShaderEffect/ShaderEffect.h"
 #include "Engine/Source/ShaderEffect/ShadowCache.h"
+#include "Engine/Source/ShaderEffect/DepthCache.h"
+#include "WoW/Source/LiquidSystem/Liquid.h"
 #include "WoW/Common/AaBsp.h"
 #include "WoW/Source/UIUtil/PortraitButton.h"
 #include "WoW/Source/WorldClient/Map.h"
@@ -55,6 +57,11 @@ CVar* CWorldParam::cvar_particleDensity;
 
 // STATIC: 0x00CD8598
 CVar* CWorldParam::cvar_waterLOD;
+// Not in the original binary. Ported from 15595 (Cataclysm) water settings.
+CVar* CWorldParam::cvar_waterDetail;
+CVar* CWorldParam::cvar_rippleDetail;
+CVar* CWorldParam::cvar_reflectionMode;
+CVar* CWorldParam::cvar_reflectionDownscale;
 
 // STATIC: 0x00CD859C
 CVar* CWorldParam::cvar_baseMip;
@@ -278,6 +285,73 @@ bool CWorldParam::WaterLodCallback(CVar* var, const char* oldValue, const char* 
         return false;
     }
 
+    return true;
+}
+
+// Not in the original binary. Ported from 15595 (Cataclysm). Each callback returns false to reject the value,
+// which is how the console keeps the old setting; Liquid::SetX returns 0 for unsupported values.
+// DIAG: these are the only user-facing switch for the new water path, and an unsupported value is rejected
+// silently apart from the console line, so the accepted value is logged to gx.log as well.
+
+// OFFSET: 0x0076B7B0/0x140453860
+bool CWorldParam::WaterDetailCallback(CVar* var, const char* oldValue, const char* value, void* arg) {
+    int32_t detail = SStrToInt(value);
+
+    if (!Liquid::SetWaterDetail(detail)) {
+        ConsoleWrite("Unsupported water detail mode.", DEFAULT_COLOR);
+        return false;
+    }
+
+    g_theGxDevicePtr->Log("waterDetail: %d (DepthCache %s)\n", detail, DepthCache::IsValid() ? "valid" : "invalid");
+
+    char text[256];
+    SStrPrintf(text, sizeof(text), "Water detail changed to %d", detail);
+    ConsoleWrite(text, DEFAULT_COLOR);
+    return true;
+}
+
+// OFFSET: 0x0076B820/0x1404538D0
+bool CWorldParam::RippleDetailCallback(CVar* var, const char* oldValue, const char* value, void* arg) {
+    int32_t detail = SStrToInt(value);
+
+    if (!Liquid::SetRippleDetail(detail)) {
+        ConsoleWrite("Unsupported ripple detail mode.", DEFAULT_COLOR);
+        return false;
+    }
+
+    char text[256];
+    SStrPrintf(text, sizeof(text), "Ripple detail changed to %d", detail);
+    ConsoleWrite(text, DEFAULT_COLOR);
+    return true;
+}
+
+// OFFSET: 0x0076B890/0x140453940
+bool CWorldParam::ReflectionModeCallback(CVar* var, const char* oldValue, const char* value, void* arg) {
+    int32_t mode = SStrToInt(value);
+
+    if (!Liquid::SetReflectionMode(mode)) {
+        ConsoleWrite("Unsupported reflection mode (0 = screen space, 1 = sky, 2 = sky/terrain, 3 = sky/terrain/wmo).", DEFAULT_COLOR);
+        return false;
+    }
+
+    char text[256];
+    SStrPrintf(text, sizeof(text), "Reflection mode changed to %d", mode);
+    ConsoleWrite(text, DEFAULT_COLOR);
+    return true;
+}
+
+// OFFSET: 0x0076B900/0x1404539B0
+bool CWorldParam::ReflectionDownscaleCallback(CVar* var, const char* oldValue, const char* value, void* arg) {
+    int32_t downscale = SStrToInt(value);
+
+    if (!Liquid::SetReflectionDownscale(downscale)) {
+        ConsoleWrite("Unsupported reflection downscale mode.", DEFAULT_COLOR);
+        return false;
+    }
+
+    char text[256];
+    SStrPrintf(text, sizeof(text), "Reflection downscale changed to %d", downscale);
+    ConsoleWrite(text, DEFAULT_COLOR);
     return true;
 }
 
@@ -709,6 +783,12 @@ void CWorldParam::Initialize() {
     CWorldParam::cvar_mapObjLightLOD = CVar::Register("mapObjLightLOD", "Map object light LOD", 1, "0", CWorldParam::MapObjLightLODCallback, CATEGORY_GRAPHICS, false, nullptr, false);
     CWorldParam::cvar_particleDensity = CVar::Register("particleDensity", "Video option: Particle density", 1, "1.0", CWorldParam::ParticleDensityCallback, CATEGORY_GRAPHICS, false, nullptr, false);
     CWorldParam::cvar_waterLOD = CVar::Register("waterLOD", "Water geometry LOD", 1, "0", CWorldParam::WaterLodCallback, CATEGORY_GRAPHICS, false, nullptr, false);
+    // Not in the original binary. Ported from 15595 (Cataclysm) water settings, registered alongside waterLOD.
+    // 15595 dropped waterLOD in favour of these; kept both here so nothing reading waterLOD breaks.
+    CWorldParam::cvar_waterDetail = CVar::Register("waterDetail", "Water surface detail", 1, "0", CWorldParam::WaterDetailCallback, CATEGORY_GRAPHICS, false, nullptr, false);
+    CWorldParam::cvar_rippleDetail = CVar::Register("rippleDetail", "Ripple surface detail", 1, "2", CWorldParam::RippleDetailCallback, CATEGORY_GRAPHICS, false, nullptr, false);
+    CWorldParam::cvar_reflectionMode = CVar::Register("reflectionMode", "Reflection mode", 1, "3", CWorldParam::ReflectionModeCallback, CATEGORY_GRAPHICS, false, nullptr, false);
+    CWorldParam::cvar_reflectionDownscale = CVar::Register("reflectionDownscale", "Reflection downscale", 1, "0", CWorldParam::ReflectionDownscaleCallback, CATEGORY_GRAPHICS, false, nullptr, false);
     CWorldParam::cvar_baseMip = CVar::Register("baseMip", "base mipmap level", 1, "0", CWorldParam::BaseMipCallback, CATEGORY_GRAPHICS, false, nullptr, false);
     CWorldParam::cvar_horizonFarClip = CVar::Register("horizonFarclipScale", "Far clip plane scale for horizon", 1, "4.0", CWorldParam::HorizonFarClipScaleCallback, CATEGORY_GRAPHICS, false, nullptr, false);
     CWorldParam::cvar_horizonNearClip = CVar::Register("horizonNearclipScale", "Near clip plane scale for horizon", 1, "0.7", CWorldParam::HorizonNearClipScaleCallback, CATEGORY_GRAPHICS, false, nullptr, false);

@@ -373,6 +373,40 @@ namespace Liquid {
     int32_t UseCameraRelativeCoords();
     void WmoWaterTexCallback(EGxTexCommand command, uint32_t width, uint32_t height, uint32_t depth, uint32_t mipLevel, void* userArg, uint32_t& texelStrideInBytes, const void*& texels);
     float WorldCoordScale();
+
+    // Not in the original binary. Ported from 15595 (Cataclysm) - the settings/config cluster of the new water
+    // system, added in one block so the C.1 additions stay visible as a unit. These are what tie the water
+    // detail level to DepthCache (SetWaterDetail -> DepthCache::AddRef/Release), which is what gives the
+    // Stage B port an owner. The material/renderer half of 15595's Liquid is a separate stage.
+    typedef void (*CONFIG_CHANGED_CALLBACK)();
+
+    void AddConfigChangedCallback(CONFIG_CHANGED_CALLBACK callback);
+    void RemoveConfigChangedCallback(CONFIG_CHANGED_CALLBACK callback);
+    void SignalConfigChanged(int32_t materials);
+    uint32_t GetWaterDetail();
+    uint32_t GetRippleDetail();
+    uint32_t GetReflectionMode();
+    uint32_t GetReflectionDownscale();
+    int32_t WaterDetailNeedsDepthCache(uint32_t detail);
+    int32_t CameraSubmerged();
+    void SetCameraSubmerged(int32_t submerged);
+    int32_t NeedBackBuffer();
+    void SetNeedBackBuffer(int32_t need);
+    int32_t NeedDynDisplMap();
+    void SetNeedDynDisplMap(int32_t need);
+    int32_t GetShadersEnabled();
+    uint32_t ValidateWaterDetail(uint32_t detail);
+    int32_t SetWaterDetail(uint32_t detail);
+    uint32_t ValidateRippleDetail(uint32_t detail);
+    int32_t SetRippleDetail(uint32_t detail);
+    uint32_t ValidateReflectionMode(uint32_t mode);
+    int32_t SetReflectionMode(uint32_t mode);
+    uint32_t ValidateReflectionDownscale(uint32_t downscale);
+    int32_t SetReflectionDownscale(uint32_t downscale);
+    void SetUnderWaterFog(float start, float end, float density, const CImVector& color);
+    void GetUnderWaterFog(float& start, float& end, float& density, CImVector& color);
+    void SetAboveWaterFog(float start, float end, float density, const CImVector& color);
+    void GetAboveWaterFog(float& start, float& end, float& density, CImVector& color);
 }
 
 // INLINED

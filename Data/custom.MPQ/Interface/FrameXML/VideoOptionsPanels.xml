@@ -219,40 +219,6 @@
 					</OnLoad>
 				</Scripts>
 			</CheckButton>
-			<CheckButton name="$parentHardwareCursor" inherits="VideoOptionsSmallCheckButtonTemplate">
-				<Anchors>
-					<Anchor point="TOPLEFT" relativeTo="$parentTripleBuffer" relativePoint="BOTTOMLEFT">
-						<Offset>
-							<AbsDimension x="-16" y="-4"/>
-						</Offset>
-					</Anchor>
-				</Anchors>
-				<Scripts>
-					<OnLoad>
-						self.type = CONTROLTYPE_CHECKBOX;
-						self.cvar = "gxCursor";
-						self.restart = true;
-						BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
-					</OnLoad>
-				</Scripts>
-			</CheckButton>
-			<CheckButton name="$parentFixInputLag" inherits="VideoOptionsSmallCheckButtonTemplate">
-				<Anchors>
-					<Anchor point="TOPLEFT" relativeTo="$parentHardwareCursor" relativePoint="BOTTOMLEFT">
-						<Offset>
-							<AbsDimension x="0" y="-4"/>
-						</Offset>
-					</Anchor>
-				</Anchors>
-				<Scripts>
-					<OnLoad>
-						self.type = CONTROLTYPE_CHECKBOX;
-						self.cvar = "gxFixLag";
-						self.restart = true;
-						BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
-					</OnLoad>
-				</Scripts>
-			</CheckButton>
 			<CheckButton name="$parentWindowed" inherits="VideoOptionsSmallCheckButtonTemplate">
 				<Anchors>
 					<Anchor point="LEFT" relativeTo="$parentVSync" relativePoint="RIGHT">
@@ -306,8 +272,8 @@
 			<Frame name="$parentBrightness" inherits="OptionsBoxTemplate">
 				<Size x="380" y="96"/>
 				<Anchors>
-					<Anchor point="TOPLEFT" relativeTo="$parentFixInputLag" relativePoint="BOTTOMLEFT">
-						<Offset x="0" y="-20"/>
+					<Anchor point="TOPLEFT" relativeTo="$parentTripleBuffer" relativePoint="BOTTOMLEFT">
+						<Offset x="0" y="-36"/>
 					</Anchor>
 				</Anchors>
 				<Layers>
@@ -800,7 +766,7 @@
 			</CheckButton>
 		</Frames>
 	</Frame>	
-	<Frame name="VideoOptionsAdvancedEffectsPanel" parent="VideoOptionsFramePanelContainer" hidden="true">
+	<Frame name="VideoOptionsShadowsPanel" parent="VideoOptionsFramePanelContainer" hidden="true">
 		<Layers>
 			<Layer level="ARTWORK">
 				<FontString name="$parentTitle" text="SHADOWS_LABEL" inherits="GameFontNormalLarge" justifyH="LEFT" justifyV="TOP">
@@ -832,7 +798,7 @@
 			</Layer>
 		</Layers>
 		<Scripts>
-			<OnLoad function="VideoOptionsAdvancedEffectsPanel_OnLoad"/>
+			<OnLoad function="VideoOptionsShadowsPanel_OnLoad"/>
 		</Scripts>	
 		<Frames>
 			<Slider name="$parentShadowQuality" inherits="OptionsSliderTemplate">
@@ -849,14 +815,14 @@
 						self.SetDisplayValue = self.SetValue;
 						self.SetValue = function (self, value)
 							self:SetDisplayValue(value);
-							VideoOptionsAdvancedEffectsPanel_SetShadowQuality(value);
+							VideoOptionsShadowsPanel_SetShadowQuality(value);
 						end
-						self.GetCurrentValue = VideoOptionsAdvancedEffectsPanel_GetShadowQuality;
+						self.GetCurrentValue = VideoOptionsShadowsPanel_GetShadowQuality;
 						_G[self:GetName().."Text"]:SetFontObject("GameFontNormalSmall");
-						VideoOptionsAdvancedEffectsPanel_SetupSlider(self);
+						VideoOptionsShadowsPanel_SetupSlider(self);
 						BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
 					</OnLoad>
-					<OnValueChanged function="VideoOptionsAdvancedEffectsPanelSlider_OnValueChanged"/>
+					<OnValueChanged function="VideoOptionsShadowsPanelSlider_OnValueChanged"/>
 				</Scripts>
 			</Slider>
 			<Slider name="$parentShadowResolution" inherits="OptionsSliderTemplate">
@@ -873,16 +839,98 @@
 						self.SetDisplayValue = self.SetValue;
 						self.SetValue = function (self, value)
 							self:SetDisplayValue(value);
-							VideoOptionsAdvancedEffectsPanel_SetShadowResolution(value);
+							VideoOptionsShadowsPanel_SetShadowResolution(value);
 						end
-						self.GetCurrentValue = VideoOptionsAdvancedEffectsPanel_GetShadowResolution;
+						self.GetCurrentValue = VideoOptionsShadowsPanel_GetShadowResolution;
 						_G[self:GetName().."Text"]:SetFontObject("GameFontNormalSmall");
-						VideoOptionsAdvancedEffectsPanel_SetupSlider(self);
+						VideoOptionsShadowsPanel_SetupSlider(self);
 						BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
 					</OnLoad>
-					<OnValueChanged function="VideoOptionsAdvancedEffectsPanelSlider_OnValueChanged"/>
+					<OnValueChanged function="VideoOptionsShadowsPanelSlider_OnValueChanged"/>
 				</Scripts>
 			</Slider>
+		</Frames>
+	</Frame>
+	<Frame name="VideoOptionsAdvancedEffectsPanel" parent="VideoOptionsFramePanelContainer" hidden="true">
+		<Layers>
+			<Layer level="ARTWORK">
+				<FontString name="$parentTitle" text="ADVANCED_LABEL" inherits="GameFontNormalLarge" justifyH="LEFT" justifyV="TOP">
+					<Anchors>
+						<Anchor point="TOPLEFT">
+							<Offset>
+								<AbsDimension x="16" y="-16"/>
+							</Offset>
+						</Anchor>
+					</Anchors>
+				</FontString>
+				<FontString name="$parentSubText" text="ADVANCED_SUBTEXT" inherits="GameFontHighlightSmall" nonspacewrap="true" maxLines="3" justifyH="LEFT" justifyV="TOP">
+					<Size>
+						<AbsDimension y="32" x="0"/>
+					</Size>
+					<Anchors>
+						<Anchor point="TOPLEFT" relativeTo="$parentTitle" relativePoint="BOTTOMLEFT">
+							<Offset>
+								<AbsDimension x="0" y="-8"/>
+							</Offset>
+						</Anchor>
+						<Anchor point="RIGHT">
+							<Offset>
+								<AbsDimension x="-32" y="0"/>
+							</Offset>
+						</Anchor>
+					</Anchors>
+				</FontString>
+			</Layer>
+		</Layers>
+		<Scripts>
+			<OnLoad function="VideoOptionsAdvancedPanel_OnLoad"/>
+		</Scripts>	
+		<Frames>
+			<Frame name="$parentCursor" inherits="OptionsBoxTemplate">
+				<Size x="380" y="120"/>
+				<Anchors>
+					<Anchor point="TOPLEFT" relativeTo="$parentSubText" relativePoint="BOTTOMLEFT">
+						<Offset x="8" y="-24"/>
+					</Anchor>
+				</Anchors>
+				<Scripts>
+					<OnLoad>
+						self:SetBackdropBorderColor(0.4, 0.4, 0.4);
+						self:SetBackdropColor(0.15, 0.15, 0.15);
+						_G[self:GetName().."Title"]:SetText(CURSOR_LABEL);
+					</OnLoad>
+				</Scripts>
+			</Frame>
+			<CheckButton name="$parentHardwareCursor" inherits="VideoOptionsSmallCheckButtonTemplate">
+				<Anchors>
+					<Anchor point="TOPLEFT" relativeTo="$parentCursor" relativePoint="TOPLEFT">
+						<Offset x="12" y="-8"/>
+					</Anchor>
+				</Anchors>
+				<Scripts>
+					<OnLoad>
+						self.type = CONTROLTYPE_CHECKBOX;
+						self.cvar = "gxCursor";
+						self.restart = true;
+						BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
+					</OnLoad>
+				</Scripts>
+			</CheckButton>
+			<CheckButton name="$parentFixInputLag" inherits="VideoOptionsSmallCheckButtonTemplate">
+				<Anchors>
+					<Anchor point="TOPLEFT" relativeTo="$parentHardwareCursor" relativePoint="BOTTOMLEFT">
+						<Offset x="0" y="-4"/>
+					</Anchor>
+				</Anchors>
+				<Scripts>
+					<OnLoad>
+						self.type = CONTROLTYPE_CHECKBOX;
+						self.cvar = "gxFixLag";
+						self.restart = true;
+						BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
+					</OnLoad>
+				</Scripts>
+			</CheckButton>
 		</Frames>
 	</Frame>
 	<Frame name="VideoOptionsStereoPanel" parent="VideoOptionsFramePanelContainer" hidden="true">

@@ -74,8 +74,6 @@ end
 ResolutionPanelOptions = {
 	gxVSync = { text = "VERTICAL_SYNC" },
 	gxTripleBuffer = { text = "TRIPLE_BUFFER" },
-	gxCursor = { text = "HARDWARE_CURSOR" },
-	gxFixLag = { text = "FIX_LAG" },
 	gxWindow = { text = "WINDOWED_MODE" },
 	gxMaximize = { text = "WINDOWED_MAXIMIZED" },
 	windowResizeLock = { text = "WINDOW_LOCK" },
@@ -108,12 +106,14 @@ function VideoOptionsResolutionPanel_OnEvent (self, event, ...)
 
 	if ( event == "SET_GLUE_SCREEN" ) then
 		-- don't allow systems that don't support features to enable them
+		-- The cursor controls live on the Advanced tab; the gxCursor capability guard stays here so a driver
+		-- without hardware cursor support never offers it.
 		local anisotropic, pixelShaders, vertexShaders, trilinear, buffering, maxAnisotropy, hardwareCursor = GetVideoCaps();
 		if ( not hardwareCursor ) then
-			VideoOptionsResolutionPanelHardwareCursor:SetChecked(false);
-			VideoOptionsResolutionPanelHardwareCursor:Disable();
+			VideoOptionsAdvancedEffectsPanelHardwareCursor:SetChecked(false);
+			VideoOptionsAdvancedEffectsPanelHardwareCursor:Disable();
 		end
-		VideoOptionsResolutionPanelHardwareCursor.SetChecked =
+		VideoOptionsAdvancedEffectsPanelHardwareCursor.SetChecked =
 			function (self, checked)
 				local anisotropic, pixelShaders, vertexShaders, trilinear, buffering, maxAnisotropy, hardwareCursor = GetVideoCaps();
 				if ( not hardwareCursor ) then
@@ -121,7 +121,7 @@ function VideoOptionsResolutionPanel_OnEvent (self, event, ...)
 				end
 				getmetatable(self).__index.SetChecked(self, checked);
 			end
-		VideoOptionsResolutionPanelHardwareCursor.Enable =
+		VideoOptionsAdvancedEffectsPanelHardwareCursor.Enable =
 			function (self)
 				local anisotropic, pixelShaders, vertexShaders, trilinear, buffering, maxAnisotropy, hardwareCursor = GetVideoCaps();
 				if ( not hardwareCursor ) then
@@ -372,15 +372,21 @@ function VideoOptionsResolutionPanelMultiSampleDropDown_OnClick(self)
 end
 
 
--- [[ Shadows Panel ]] --
--- Renamed from Advanced Effects: the 4.3.4 toggles with no backing CVar were removed, leaving only the two
--- shadow controls, so this panel is shadow-only and is shown as its own tab.
--- The quality slider drives extShadowQuality, the real shadow-mode CVar, so it changes both the method and
--- how often shadows update. shadowMode is only a read-only mirror kept for the game's own bookkeeping.
--- The resolution slider drives shadowTextureSize independently, so edge sharpness never changes the cadence.
+-- [[ Advanced Panel ]] --
+-- Shadows plus the cursor pair. Shadow quality is the real shadow-mode CVar, so it changes both the method and
+-- how often shadows update; shadowMode is only a read-only mirror kept for the game's own bookkeeping. The
+-- resolution slider drives shadowTextureSize independently, so edge sharpness never changes the cadence.
+-- [[ Shadows Panel and Advanced (cursor) Panel ]] --
+-- Two tabs. Shadows holds everything about shadows: shadow quality is the real shadow-mode CVar, so it changes
+-- both the method and how often shadows update, while shadowMode is only a read-only mirror kept for the game's
+-- own bookkeeping; the resolution slider drives shadowTextureSize independently, so edge sharpness never
+-- changes the cadence. Advanced holds the cursor pair, which is not part of any quality preset.
 
+ADVANCED_LABEL = "Advanced";
+ADVANCED_SUBTEXT = "Cursor settings that are not part of a graphics quality preset.";
+CURSOR_LABEL = "Cursor";
 SHADOWS_LABEL = "Shadows";
-SHADOWS_SUBTEXT = "Shadow quality sets the method and how often shadows update. Shadow resolution only changes how sharp shadow edges are, and never changes how often they refresh.";
+SHADOWS_SUBTEXT = "Shadow quality sets the method and how often shadows update, and shadow resolution how sharp the edges are. Hardware cursor draws the cursor through the GPU; Fix Lag adds a per-frame GPU sync that can reduce cursor lag at a frame rate cost.";
 OPTION_TOOLTIP_SHADOW_RESOLUTION = "Resolution of the shadow maps. Lower values give softer, blockier shadow edges and restore some frame rate. How often shadows update is not affected.";
 SHADOW_RESOLUTION = SHADOW_RESOLUTION or "Shadow Resolution";
 OPTION_TOOLTIP_SHADOW_QUALITY = OPTION_TOOLTIP_SHADOW_QUALITY or "Controls both the method and quality of shadows. Decreasing this may greatly improve performance.";
@@ -395,12 +401,17 @@ local ADVANCED_LEVEL_NAMES = {
 
 local SHADOW_SIZES = { 128, 256, 512, 1024, 2048 };
 
-AdvancedEffectsPanelOptions = {
+ShadowsPanelOptions = {
 	ShadowQuality = { text = "SHADOW_QUALITY", minValue = 0, maxValue = 5, valueStep = 1, tooltip = OPTION_TOOLTIP_SHADOW_QUALITY },
 	ShadowResolution = { text = "SHADOW_RESOLUTION", minValue = 0, maxValue = 4, valueStep = 1, tooltip = OPTION_TOOLTIP_SHADOW_RESOLUTION },
 };
 
-local function VideoOptionsAdvancedEffectsPanel_Level (value, maxValue)
+AdvancedPanelOptions = {
+	gxCursor = { text = "HARDWARE_CURSOR" },
+	gxFixLag = { text = "FIX_LAG" },
+};
+
+local function VideoOptionsShadowsPanel_Level (value, maxValue)
 	value = math.floor((tonumber(value) or 0) + 0.5);
 	if ( value < 0 ) then
 		return 0;
@@ -410,17 +421,17 @@ local function VideoOptionsAdvancedEffectsPanel_Level (value, maxValue)
 	return value;
 end
 
-function VideoOptionsAdvancedEffectsPanel_GetShadowQuality (self)
+function VideoOptionsShadowsPanel_GetShadowQuality (self)
 	-- extShadowQuality is the authority. Reading it directly avoids the mirror, which reports SHADOW_LOWEST
 	-- while the shadow textures are being rebuilt and would briefly show the wrong step.
-	return VideoOptionsAdvancedEffectsPanel_Level(tonumber(GetCVar("extShadowQuality")) or 0, 5);
+	return VideoOptionsShadowsPanel_Level(tonumber(GetCVar("extShadowQuality")) or 0, 5);
 end
 
-function VideoOptionsAdvancedEffectsPanel_SetShadowQuality (value)
-	SetCVar("extShadowQuality", VideoOptionsAdvancedEffectsPanel_Level(value, 5));
+function VideoOptionsShadowsPanel_SetShadowQuality (value)
+	SetCVar("extShadowQuality", VideoOptionsShadowsPanel_Level(value, 5));
 end
 
-function VideoOptionsAdvancedEffectsPanel_GetShadowResolution (self)
+function VideoOptionsShadowsPanel_GetShadowResolution (self)
 	local size = tonumber(GetCVar("shadowTextureSize")) or 0;
 	if ( size <= 0 ) then
 		-- 0 means "the quality tier decides", so report the size actually in use rather than snapping the
@@ -439,11 +450,11 @@ function VideoOptionsAdvancedEffectsPanel_GetShadowResolution (self)
 	return best - 1;
 end
 
-function VideoOptionsAdvancedEffectsPanel_SetShadowResolution (value)
-	SetCVar("shadowTextureSize", SHADOW_SIZES[VideoOptionsAdvancedEffectsPanel_Level(value, #SHADOW_SIZES - 1) + 1]);
+function VideoOptionsShadowsPanel_SetShadowResolution (value)
+	SetCVar("shadowTextureSize", SHADOW_SIZES[VideoOptionsShadowsPanel_Level(value, #SHADOW_SIZES - 1) + 1]);
 end
 
-function VideoOptionsAdvancedEffectsPanel_SetupSlider (self)
+function VideoOptionsShadowsPanel_SetupSlider (self)
 	local names = ADVANCED_LEVEL_NAMES[self.label];
 	local name = self:GetName();
 	if ( _G[name.."Low"] ) then
@@ -454,38 +465,44 @@ function VideoOptionsAdvancedEffectsPanel_SetupSlider (self)
 	end
 end
 
-function VideoOptionsAdvancedEffectsPanel_UpdateLabel (self, value)
+function VideoOptionsShadowsPanel_UpdateLabel (self, value)
 	local names = ADVANCED_LEVEL_NAMES[self.label];
-	local entry = AdvancedEffectsPanelOptions[self.label];
-	local level = names[VideoOptionsAdvancedEffectsPanel_Level(value, #names - 1) + 1];
+	local entry = ShadowsPanelOptions[self.label];
+	local level = names[VideoOptionsShadowsPanel_Level(value, #names - 1) + 1];
 	_G[self:GetName().."Text"]:SetText((_G[entry.text] or entry.text) .. ": " .. level);
 end
 
-function VideoOptionsAdvancedEffectsPanelSlider_OnValueChanged (self, value)
-	VideoOptionsAdvancedEffectsPanel_UpdateLabel(self, value);
+function VideoOptionsShadowsPanelSlider_OnValueChanged (self, value)
+	VideoOptionsShadowsPanel_UpdateLabel(self, value);
 	VideoOptionsEffectsPanelSlider_OnValueChanged(self, value);
 end
 
-function VideoOptionsAdvancedEffectsPanel_Default (self)
+function VideoOptionsShadowsPanel_Default (self)
 	RestoreVideoEffectsDefaults();
 	for _, control in next, self.controls do
 		control.newValue = nil;
 	end
 end
 
-function VideoOptionsAdvancedEffectsPanel_Refresh (self)
+function VideoOptionsShadowsPanel_Refresh (self)
 	BlizzardOptionsPanel_Refresh(self);
 	for _, control in next, self.controls do
 		if ( control.type == CONTROLTYPE_SLIDER ) then
-			VideoOptionsAdvancedEffectsPanel_UpdateLabel(control, control:GetValue());
+			VideoOptionsShadowsPanel_UpdateLabel(control, control:GetValue());
 		end
 	end
 end
 
-function VideoOptionsAdvancedEffectsPanel_OnLoad (self)
+function VideoOptionsShadowsPanel_OnLoad (self)
 	self.name = SHADOWS_LABEL;
-	self.options = AdvancedEffectsPanelOptions;
-	VideoOptionsPanel_OnLoad(self, nil, nil, VideoOptionsAdvancedEffectsPanel_Default, VideoOptionsAdvancedEffectsPanel_Refresh);
+	self.options = ShadowsPanelOptions;
+	VideoOptionsPanel_OnLoad(self, nil, nil, VideoOptionsShadowsPanel_Default, VideoOptionsShadowsPanel_Refresh);
+end
+
+function VideoOptionsAdvancedPanel_OnLoad (self)
+	self.name = ADVANCED_LABEL;
+	self.options = AdvancedPanelOptions;
+	VideoOptionsPanel_OnLoad(self);
 end
 
 -- particleDensity / environmentDetail were 0.1-1.0 / 0.5-1.5 in 3.3.5, the 4.3.4 world uses percent

@@ -1,4 +1,4 @@
-﻿GraphicsQualityLevels = {
+GraphicsQualityLevels = {
 	[1] = {
 		VideoOptionsEffectsPanelViewDistance = 177,
 		VideoOptionsEffectsPanelTerrainDetail = 0,
@@ -13,7 +13,7 @@
 		VideoOptionsEffectsPanelFullScreenGlow = false,
 		VideoOptionsEffectsPanelDeathEffect = false,
 		VideoOptionsEffectsPanelProjectedTextures = false,
-		VideoOptionsAdvancedEffectsPanelShadowQuality = 0,
+		VideoOptionsShadowsPanelShadowQuality = 0,
 	},
 	[2] = {
 		VideoOptionsEffectsPanelViewDistance = 507,
@@ -29,7 +29,7 @@
 		VideoOptionsEffectsPanelFullScreenGlow = true,
 		VideoOptionsEffectsPanelDeathEffect = true,
 		VideoOptionsEffectsPanelProjectedTextures = false,
-		VideoOptionsAdvancedEffectsPanelShadowQuality = 1,
+		VideoOptionsShadowsPanelShadowQuality = 1,
 	},
 	[3] = {
 		VideoOptionsEffectsPanelViewDistance = 727,
@@ -45,7 +45,7 @@
 		VideoOptionsEffectsPanelFullScreenGlow = true,
 		VideoOptionsEffectsPanelDeathEffect = true,
 		VideoOptionsEffectsPanelProjectedTextures = true,
-		VideoOptionsAdvancedEffectsPanelShadowQuality = 2,
+		VideoOptionsShadowsPanelShadowQuality = 2,
 	},
 	[4] = {
 		VideoOptionsEffectsPanelViewDistance = 1057,
@@ -61,7 +61,7 @@
 		VideoOptionsEffectsPanelFullScreenGlow = true,
 		VideoOptionsEffectsPanelDeathEffect = true,
 		VideoOptionsEffectsPanelProjectedTextures = true,
-		VideoOptionsAdvancedEffectsPanelShadowQuality = 3,
+		VideoOptionsShadowsPanelShadowQuality = 3,
 	},
 	[5] = {
 		VideoOptionsEffectsPanelViewDistance = 2500,
@@ -77,7 +77,7 @@
 		VideoOptionsEffectsPanelFullScreenGlow = true,
 		VideoOptionsEffectsPanelDeathEffect = true,
 		VideoOptionsEffectsPanelProjectedTextures = true,
-		VideoOptionsAdvancedEffectsPanelShadowQuality = 5,
+		VideoOptionsShadowsPanelShadowQuality = 5,
 	},
 	[6] = {
 		VideoOptionsEffectsPanelViewDistance = 0,
@@ -93,6 +93,6 @@
 		VideoOptionsEffectsPanelFullScreenGlow = false,
 		VideoOptionsEffectsPanelDeathEffect = false,
 		VideoOptionsEffectsPanelProjectedTextures = true,
-		VideoOptionsAdvancedEffectsPanelShadowQuality = 0,
+		VideoOptionsShadowsPanelShadowQuality = 0,
 	},
 }

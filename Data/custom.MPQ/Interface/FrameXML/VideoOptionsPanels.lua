@@ -396,6 +396,7 @@ SHADOWS_SUBTEXT = "Shadow quality sets the method and how often shadows update, 
 OPTION_TOOLTIP_SHADOW_RESOLUTION = "Resolution of the shadow maps. Lower values give softer, blockier shadow edges and restore some frame rate. How often shadows update is not affected.";
 SHADOW_RESOLUTION = SHADOW_RESOLUTION or "Shadow Resolution";
 OPTION_TOOLTIP_SHADOW_QUALITY = OPTION_TOOLTIP_SHADOW_QUALITY or "Controls both the method and quality of shadows. Decreasing this may greatly improve performance.";
+SHADOW_CASCADED = "Cascaded Shadows";
 
 local ADVANCED_LEVEL_NAMES = {
 	-- Steps 0-4 are the tiled, distance-gated modes. Step 5 is SHADOW_VERY_HIGH, the cascaded shadow maps
@@ -410,6 +411,7 @@ local SHADOW_SIZES = { 128, 256, 512, 1024, 2048 };
 ShadowsPanelOptions = {
 	ShadowQuality = { text = "SHADOW_QUALITY", minValue = 0, maxValue = 5, valueStep = 1, tooltip = OPTION_TOOLTIP_SHADOW_QUALITY },
 	ShadowResolution = { text = "SHADOW_RESOLUTION", minValue = 0, maxValue = 4, valueStep = 1, tooltip = OPTION_TOOLTIP_SHADOW_RESOLUTION },
+	cascadedShadows = { text = "SHADOW_CASCADED" },
 };
 
 AdvancedPanelOptions = {

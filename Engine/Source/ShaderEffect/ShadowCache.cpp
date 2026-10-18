@@ -265,6 +265,18 @@ const uint32_t SHADOW_TEXTURE_SIZE_MAX = 4096;
 
 uint32_t CShadowCache::s_shadowSizeOverride;
 
+bool CShadowCache::s_cascadedShadows = true;
+
+// Not in the original binary. See ShadowCache.h. Reads the stored mode, not GetShadowMode(), because
+// Init() runs while the recreate flag is still set and would otherwise see SHADOW_LOWEST.
+EShadowMode CShadowCache::GetEffectiveShadowMode() {
+    if (CShadowCache::s_shadowMode == SHADOW_VERY_HIGH && !CShadowCache::s_cascadedShadows) {
+        return SHADOW_HIGH;
+    }
+
+    return CShadowCache::s_shadowMode;
+}
+
 // VERIFY: c1d6590c auto
 // OFFSET: 0x00874210
 int32_t CShadowCache::SetShadowMode(EShadowMode mode) {
@@ -491,7 +503,7 @@ void CShadowCache::SetShadowMapDetailDoodad() {
 void CShadowCache::GatherBands(CShadowCacheQueryData& data, const C3Vector& pos, CFrustum& frustum, int32_t useCullFrustum) {
     uint32_t frame = 0;
 
-    if (CShadowCache::GetShadowMode() < SHADOW_VERY_HIGH) {
+    if (CShadowCache::GetEffectiveShadowMode() < SHADOW_VERY_HIGH) {
         C44Matrix identity;
 
         for (uint32_t i = 0; i < 3; i++) {
@@ -651,7 +663,7 @@ void CShadowCache::GatherBands(CShadowCacheQueryData& data, const C3Vector& pos,
 // VERIFY: bfe3e321 manual
 // OFFSET: 0x00874FB0
 void CShadowCache::RenderBands(CShadowCacheQueryData& data) {
-    EShadowMode mode = CShadowCache::GetShadowMode();
+    EShadowMode mode = CShadowCache::GetEffectiveShadowMode();
 
     for (int32_t i = 0; i <= data.m_lastBand; i++) {
         if (!data.m_active[i]) {
@@ -952,7 +964,7 @@ void CShadowCache::Init() {
                 CShadowBand& band = CShadowCache::s_extShadowBands[i];
                 band.m_textures[0] = TextureCreate(GxTex_2d, size, size, 0, format, format, flags, nullptr, ShadowCacheTextureCallback, "ShadowCache", 0);
 
-                if (CShadowCache::s_shadowMode < SHADOW_VERY_HIGH) {
+                if (CShadowCache::GetEffectiveShadowMode() < SHADOW_VERY_HIGH) {
                     band.m_textures[1] = TextureCreate(GxTex_2d, size, size, 0, format, format, flags, nullptr, ShadowCacheTextureCallback, "ShadowCache", 0);
                 }
 
@@ -997,7 +1009,7 @@ int32_t CShadowCache::Update(const C3Vector& pos, int32_t useCullFrustum) {
         return 1;
     }
 
-    EShadowMode mode = CShadowCache::s_shadowMode;
+    EShadowMode mode = CShadowCache::GetEffectiveShadowMode();
 
     if (mode < SHADOW_LOW) {
         return 1;
@@ -1066,7 +1078,7 @@ int32_t CShadowCache::Update(const C3Vector& pos, int32_t useCullFrustum) {
     if (useCullFrustum) {
         data.m_queryFlags[0] = 1;
 
-        if (mode > SHADOW_HIGH) {
+        if (CShadowCache::s_shadowMode > SHADOW_HIGH) {
             data.m_queryFlags[0] = 13;
         } else if (mode > SHADOW_MEDIUM) {
             data.m_queryFlags[0] = 5;

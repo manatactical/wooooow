@@ -85,6 +85,10 @@ class CShadowCache {
 
     // Not in the original binary. Diagnostics-free quality override: 0 means "use the tier default".
     static uint32_t s_shadowSizeOverride;
+
+    // Not in the original binary. When off, SHADOW_VERY_HIGH runs the tiled, distance-gated band path
+    // that the tiers below it use instead of the per-frame full re-render.
+    static bool s_cascadedShadows;
     static const char* s_shadowModeDescs[NUM_SHADOW_MODES + 1];    static const uint32_t s_shadowValues[NUM_SHADOW_MODES + 1];
     static C3Vector s_sunDir;
     static C4Vector s_sunDirViewSpace;
@@ -99,6 +103,10 @@ class CShadowCache {
     // pending, so it cannot be used to display the mode the user actually selected. This returns the
     // stored mode unchanged.
     static EShadowMode GetShadowModeRaw() { return CShadowCache::s_shadowMode; }
+    // Not in the original binary. Same as GetShadowModeRaw(), except SHADOW_VERY_HIGH is reported as
+    // SHADOW_HIGH while the cascadedShadows cvar is off, so the tiled band path below it runs instead.
+    // The shadow value and the shader permutations are identical either way.
+    static EShadowMode GetEffectiveShadowMode();
     static const char* GetShadowModeDesc(uint32_t mode);
     static uint32_t GetShadowValue();
     static void Init();

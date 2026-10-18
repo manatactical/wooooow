@@ -37,11 +37,13 @@ class CWorldParam {
     static CVar* cvar_hwPCF;
     static CVar* cvar_extShadowQuality;
 
-    // Not in the original binary. See ShadowTextureSizeCallback / ShadowModeCallback.
+    // Not in the original binary. See ShadowTextureSizeCallback / ShadowModeCallback / CascadedShadowsCallback.
     static CVar* cvar_shadowTextureSize;
     static CVar* cvar_shadowMode;
+    static CVar* cvar_cascadedShadows;
     static bool ShadowTextureSizeCallback(CVar* var, const char* oldValue, const char* value, void* arg);
     static bool ShadowModeCallback(CVar* var, const char* oldValue, const char* value, void* arg);
+    static bool CascadedShadowsCallback(CVar* var, const char* oldValue, const char* value, void* arg);
     static void SyncShadowModeCVar();
     static CVar* cvar_projectedTextures;
     static CVar* cvar_gxTextureCacheSize;

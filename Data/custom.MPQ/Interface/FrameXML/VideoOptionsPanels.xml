@@ -849,6 +849,20 @@
 					<OnValueChanged function="VideoOptionsShadowsPanelSlider_OnValueChanged"/>
 				</Scripts>
 			</Slider>
+			<CheckButton name="$parentCascadedShadows" inherits="VideoOptionsSmallCheckButtonTemplate">
+				<Anchors>
+					<Anchor point="TOPLEFT" relativeTo="$parentShadowResolution" relativePoint="BOTTOMLEFT">
+						<Offset x="0" y="-32"/>
+					</Anchor>
+				</Anchors>
+				<Scripts>
+					<OnLoad>
+						self.type = CONTROLTYPE_CHECKBOX;
+						self.cvar = "cascadedShadows";
+						BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
+					</OnLoad>
+				</Scripts>
+			</CheckButton>
 		</Frames>
 	</Frame>
 	<Frame name="VideoOptionsAdvancedEffectsPanel" parent="VideoOptionsFramePanelContainer" hidden="true">

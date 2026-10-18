@@ -34,6 +34,7 @@ CVar* CWorldParam::cvar_shadowLevel;
 // Not in the original binary. See ShadowTextureSizeCallback.
 CVar* CWorldParam::cvar_shadowTextureSize;
 CVar* CWorldParam::cvar_shadowMode;
+CVar* CWorldParam::cvar_cascadedShadows;
 
 // STATIC: 0x00CD857C
 CVar* CWorldParam::cvar_texLodBias;
@@ -520,6 +521,18 @@ void CWorldParam::SyncShadowModeCVar() {
     s_syncingShadowMode = false;
 }
 
+// Not in the original binary. Turns the cascaded shadow maps (SHADOW_VERY_HIGH) into the tiled band path
+// used by the tiers below them. The stored mode is left alone so the quality slider keeps reporting
+// Cascaded; CShadowCache::GetEffectiveShadowMode() is what the renderer actually reads.
+bool CWorldParam::CascadedShadowsCallback(CVar* var, const char* oldValue, const char* value, void* arg) {
+    CShadowCache::s_cascadedShadows = SStrToInt(value) != 0;
+    CShadowCache::NotifyTexturesRecreate();
+
+    ConsoleWrite(CShadowCache::s_cascadedShadows ? "Cascaded shadows enabled." : "Cascaded shadows disabled, shadow bands fall back to the tiled path.", DEFAULT_COLOR);
+
+    return true;
+}
+
 // VERIFY: 782f4c26 manual
 // OFFSET: 0x0078DCB0
 bool CWorldParam::ExtShadowQualityCallback(CVar* var, const char* oldValue, const char* value, void* arg) {
@@ -731,6 +744,12 @@ void CWorldParam::Initialize() {
     // which leaves Init()'s quality-tier sizing in charge; registering a real size here would apply it
     // through the override before the tier logic ever runs and silently lose the 2048 default.
     CWorldParam::cvar_shadowTextureSize = CVar::Register("shadowTextureSize", "Shadow map resolution in texels", 1, "0", CWorldParam::ShadowTextureSizeCallback, CATEGORY_GRAPHICS, false, nullptr, false);
+
+    // Not in the original binary. Default 1 keeps the cascaded shadow maps the mode-5 tier always had; the
+    // Shadows panel checkbox writes it. Recreated textures are queued by its callback, so toggling it takes
+    // effect without a restart. The shadowMode mirror deliberately still reports the stored mode, so the
+    // quality slider keeps showing Cascaded while the bands run tiled.
+    CWorldParam::cvar_cascadedShadows = CVar::Register("cascadedShadows", "Cascaded shadow maps at the Very High shadow quality tier", 1, "1", CWorldParam::CascadedShadowsCallback, CATEGORY_GRAPHICS, false, nullptr, false);
 
     // Not in the original binary. The panel reads this, nothing may usefully write it - ShadowModeCallback
     // refuses writes, so it is read-only in effect without the CVar flag that would make Lua raise an error.

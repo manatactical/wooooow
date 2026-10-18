@@ -1,5 +1,6 @@
 #include "WorldParam.h"
 #include <cstdio>
+#include <cstring>
 #include <new>
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Services/GfxSingletonManager.h"
@@ -35,6 +36,7 @@ CVar* CWorldParam::cvar_shadowLevel;
 CVar* CWorldParam::cvar_shadowTextureSize;
 CVar* CWorldParam::cvar_shadowMode;
 CVar* CWorldParam::cvar_cascadedShadows;
+CVar* CWorldParam::cvar_shadowBandRange;
 
 // STATIC: 0x00CD857C
 CVar* CWorldParam::cvar_texLodBias;
@@ -533,6 +535,60 @@ bool CWorldParam::CascadedShadowsCallback(CVar* var, const char* oldValue, const
     return true;
 }
 
+// Not in the original binary. "outer" pulls in bands 1 and 2 only: texels-per-unit is s_shadowSize /
+// (2 * radius), so the 4x density step between bands is exactly the 4x ratio of the stock radii, and
+// shrinking the outer radii shrinks the step. The cost is that band coverage ends closer than 640 units.
+// "linear" scales all three, which moves the whole shadow draw distance but leaves the seam where it is.
+bool CWorldParam::ShadowBandRangeCallback(CVar* var, const char* oldValue, const char* value, void* arg) {
+    float scale[3] = { 1.0f, 1.0f, 1.0f };
+
+    if (!SStrCmpI(value, "outer", STORM_MAX_STR)) {
+        scale[1] = 0.875f;      // 160 -> 140, density step to band 0 drops from 4x to 3.5x
+        scale[2] = 0.53125f;    // 640 -> 340, density step to band 1 drops from 4x to 2.43x
+    } else if (!SStrCmpI(value, "linear", STORM_MAX_STR)) {
+        scale[0] = scale[1] = scale[2] = 0.53125f;
+    } else if (!SStrCmpI(value, "default", STORM_MAX_STR)) {
+        // Registered default: the three scales stay 1.0, so Init() uses s_bandRadius unmodified.
+    } else {
+        uint32_t count = 0;
+        const char* entry = value;
+
+        // ':' separated, same shape as particleDensity. sscanf takes the leading number of each field
+        // and leaves the cursor on the separator, so no tokenising copy is needed.
+        for (; count < 3 && entry; count++) {
+            float parsed = 0.0f;
+
+            if (sscanf(entry, "%f", &parsed) != 1 || parsed <= 0.0f) {
+                break;
+            }
+
+            scale[count] = parsed;
+            entry = strchr(entry, ':');
+
+            if (entry) {
+                entry++;
+            }
+        }
+
+        if (count != 3) {
+            ConsoleWrite("shadowBandRange needs three positive ':' separated multipliers, or 'outer' / 'linear' / 'default'.", DEFAULT_COLOR);
+
+            return false;
+        }
+    }
+
+    CShadowCache::s_bandRadiusScale[0] = scale[0];
+    CShadowCache::s_bandRadiusScale[1] = scale[1];
+    CShadowCache::s_bandRadiusScale[2] = scale[2];
+    CShadowCache::NotifyTexturesRecreate();
+
+    char buffer[192];
+    sprintf(buffer, "Shadow band radii scaled to %.4g / %.4g / %.4g of %g / %g / %g.", scale[0], scale[1], scale[2], CShadowCache::s_bandRadius[0], CShadowCache::s_bandRadius[1], CShadowCache::s_bandRadius[2]);
+    ConsoleWrite(buffer, DEFAULT_COLOR);
+
+    return true;
+}
+
 // VERIFY: 782f4c26 manual
 // OFFSET: 0x0078DCB0
 bool CWorldParam::ExtShadowQualityCallback(CVar* var, const char* oldValue, const char* value, void* arg) {
@@ -750,6 +806,10 @@ void CWorldParam::Initialize() {
     // effect without a restart. The shadowMode mirror deliberately still reports the stored mode, so the
     // quality slider keeps showing Cascaded while the bands run tiled.
     CWorldParam::cvar_cascadedShadows = CVar::Register("cascadedShadows", "Cascaded shadow maps at the Very High shadow quality tier", 1, "1", CWorldParam::CascadedShadowsCallback, CATEGORY_GRAPHICS, false, nullptr, false);
+
+    // Not in the original binary. Default "default" leaves s_bandRadius untouched, so the stock tiers and
+    // the 12340 constants stay intact for anyone who does not opt in.
+    CWorldParam::cvar_shadowBandRange = CVar::Register("shadowBandRange", "Shadow band radii: three multipliers, or 'outer' / 'linear' / 'default'", 1, "default", CWorldParam::ShadowBandRangeCallback, CATEGORY_GRAPHICS, false, nullptr, false);
 
     // Not in the original binary. The panel reads this, nothing may usefully write it - ShadowModeCallback
     // refuses writes, so it is read-only in effect without the CVar flag that would make Lua raise an error.

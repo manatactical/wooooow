@@ -89,6 +89,10 @@ class CShadowCache {
     // Not in the original binary. When off, SHADOW_VERY_HIGH runs the tiled, distance-gated band path
     // that the tiers below it use instead of the per-frame full re-render.
     static bool s_cascadedShadows;
+
+    // Not in the original binary. Multiplies each entry of s_bandRadius. Bands 1 and 2 can be pulled in
+    // independently of band 0, which is what reduces the density step between bands (the band seam).
+    static float s_bandRadiusScale[3];
     static const char* s_shadowModeDescs[NUM_SHADOW_MODES + 1];    static const uint32_t s_shadowValues[NUM_SHADOW_MODES + 1];
     static C3Vector s_sunDir;
     static C4Vector s_sunDirViewSpace;

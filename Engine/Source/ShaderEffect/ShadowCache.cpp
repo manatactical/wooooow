@@ -267,6 +267,11 @@ uint32_t CShadowCache::s_shadowSizeOverride;
 
 bool CShadowCache::s_cascadedShadows = true;
 
+// Not in the original binary. Scaling all three band radii by the same factor leaves the texels-per-unit
+// density (s_shadowSize / (2 * radius)) untouched, so the 4x density step between neighbouring bands - and
+// therefore the band seam - does not move. Tightening only the outer two radii shrinks that step instead.
+float CShadowCache::s_bandRadiusScale[3] = { 1.0f, 1.0f, 1.0f };
+
 // Not in the original binary. See ShadowCache.h. Reads the stored mode, not GetShadowMode(), because
 // Init() runs while the recreate flag is still set and would otherwise see SHADOW_LOWEST.
 EShadowMode CShadowCache::GetEffectiveShadowMode() {
@@ -968,8 +973,10 @@ void CShadowCache::Init() {
                     band.m_textures[1] = TextureCreate(GxTex_2d, size, size, 0, format, format, flags, nullptr, ShadowCacheTextureCallback, "ShadowCache", 0);
                 }
 
-                band.m_radius = CShadowCache::s_bandRadius[i];
-                band.m_updateDistance = CShadowCache::s_bandUpdateDistance[i];
+                band.m_radius = CShadowCache::s_bandRadius[i] * CShadowCache::s_bandRadiusScale[i];
+                // GatherBands compares a squared distance against m_updateDistance, so keeping the
+                // re-centre lag proportional to the band size means scaling the threshold by the square.
+                band.m_updateDistance = CShadowCache::s_bandUpdateDistance[i] * CShadowCache::s_bandRadiusScale[i] * CShadowCache::s_bandRadiusScale[i];
             }
         }
     }

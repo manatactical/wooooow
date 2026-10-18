@@ -413,7 +413,6 @@ FodyWeavers.xsd
 
 # Local Visual Studio CMake settings (absolute paths to re/tools)
 CMakeSettings.json
-/Tools/VulkanShaders/translated
 /graphify-out/
 *.md
 .claude/skills/graphify/.graphify_version

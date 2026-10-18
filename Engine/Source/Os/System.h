@@ -42,6 +42,9 @@ int32_t IOsGetProcessorFeatures(CpuIdInfo* info);
 int32_t IOsParseProcessorFrequency(const char* brand);
 void IOsSystemCpuLog(const CpuIdInfo* info);
 void OsFindTextSectionBounds();
+// Not in the original binary: the frame limiter sleeps 5ms (maxFPS 200), but the default ~15.6ms Windows
+// tick makes Sleep() oversleep to ~15.6ms. Request 1ms once at startup so WaitForFPSCap can hit its target.
+void OsApplyTimerResolution();
 uint32_t OsGetBackgroundSleepMs();
 int32_t OsGetComputerName(char* buffer, uint32_t* size);
 uint32_t OsGetNumberOfProcessors();

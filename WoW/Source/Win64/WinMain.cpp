@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <cstdlib>
 #include <float.h>
+#include "Engine/Source/Os/System.h"
 #include "Engine/Source/Storm/H/storm.h"
 #include "WoW/Source/Client.h"
 
@@ -30,6 +31,10 @@ int main() {
     _clearfp();
     _control87(0x9001F & ~(_MCW_PC | _MCW_IC), _MCW_DN | _MCW_EM | _MCW_RC);
     ReturnFalse();
+
+    // Not in the original binary: see OsApplyTimerResolution. Must precede the first Sleep() so the
+    // frame limiter's 5ms wait is not rounded up to the ~15.6ms default tick.
+    OsApplyTimerResolution();
 
     return CommonMain();
 }

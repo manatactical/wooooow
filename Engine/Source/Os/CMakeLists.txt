@@ -14,6 +14,7 @@ if(WIN32)
         PUBLIC
             imm32
             wininet
+            winmm
             ws2_32
             dinput8
             dxguid

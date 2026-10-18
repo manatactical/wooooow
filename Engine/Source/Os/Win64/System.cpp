@@ -7,6 +7,8 @@
 #include <intrin.h>
 #include <windows.h>
 #include <shellapi.h>
+#include <mmsystem.h>
+#include <timeapi.h>
 #include "Engine/Source/Os/OsFile.h"
 #include "Engine/Source/Os/Processor.h"
 #include "Engine/Source/Os/System.h"
@@ -197,6 +199,12 @@ uint32_t OsGetNumberOfProcessors() {
     }
 
     return info.dwNumberOfProcessors;
+}
+
+// Not in the original binary; see System.h. Called once from main(), never restored: the process is
+// short-lived from Windows' point of view and every Sleep() in the frame limiter needs the finer tick.
+void OsApplyTimerResolution() {
+    timeBeginPeriod(1);
 }
 
 // OFFSET: 0x0086B290

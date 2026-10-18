@@ -25,6 +25,7 @@
 #include "Engine/Source/Services/SysMessage.h"
 #include "Engine/Source/Services/Texture.h"
 #include "Engine/Source/ShaderEffect/ShaderEffect.h"
+#include "Engine/Source/UnitOutline/UnitOutline.h"
 #include "Engine/Source/Tempest/C4Vector.h"
 #include "Engine/Source/Tempest/CAaBox.h"
 #include "Engine/Source/Tempest/CImVector.h"
@@ -70,6 +71,7 @@
 #include "WoW/Source/Ui/CommentatorFrame.h"
 #include "WoW/Source/Ui/DressUpModelFrame.h"
 #include "WoW/Source/Ui/GameUI.h"
+#include "WoW/Source/Ui/UnitOutlineGather.h"
 #include "WoW/Source/Ui/MailInfo.h"
 #include "WoW/Source/Ui/MinimapFrame.h"
 #include "WoW/Source/Ui/NamePlateFrame.h"
@@ -1253,6 +1255,9 @@ CGWorldFrame::CGWorldFrame(CSimpleFrame* parent) : CSimpleFrame(parent) {
 
     EventRegisterEx(EVENT_ID_IDLE, CGWorldFrame::Update, this, -1000.0f);
     FFX::Init();
+    // Registers the unitOutline cvar and the device-restored callback. Idempotent, so it is safe for a
+    // world frame to be built more than once.
+    CUnitOutline::Init();
 
     CGWorldFrame::ffxEffectGlow = new (__FILE__, __LINE__) EffectGlow();
     CGWorldFrame::ffxEffectDeath = new (__FILE__, __LINE__) EffectDeath();
@@ -1722,6 +1727,14 @@ void CGWorldFrame::OnWorldRender() {
     }
 
     CShaderEffect::UpdateProjMatrix();
+    // The outline's target list is built here, before any model batch goes by: a target is stamped from the
+    // batches of the frame it is drawn in, so it has to be recorded before that frame's scene draw.
+    CUnitOutlineGather::Update();
+    // Terrain and world objects draw into this depth first, so the unit stamps that follow test against the
+    // frame's real occluders and a wall clips the line instead of dropping the whole outline. It stays bound
+    // across the model passes below, because those are what stamp the units, and is detached at the world ->
+    // interface boundary.
+    CUnitOutline::BeginDepthPass();
     CWorld::Render(this->m_camera->m_position, this->m_elapsedSec);
     CMap::RenderFootprints();
     ClntObjMgrEnumVisibleObjects(UnitPostAnimateProc, this);
@@ -1738,6 +1751,9 @@ void CGWorldFrame::OnWorldRender() {
     CM2Scene* scene = World::s_m2Scene;
 
     if (!scene) {
+        // The depth handed to the 3D pass is given back even on this path, or the interface drawn after the
+        // world would test against it on the way out.
+        CUnitOutline::EndDepthPass();
         return;
     }
 
@@ -1784,6 +1800,11 @@ void CGWorldFrame::OnWorldRender() {
     if (CWorld::enables & 0x20000000) {
         GxMasterEnableSet(GxMasterEnable_PolygonFill, 1);
     }
+
+    // The world -> interface boundary: the outline is composited here so the interface draws over it, and the
+    // shared depth is given back first so nothing past this point tests against the world.
+    CUnitOutline::EndDepthPass();
+    CUnitOutline::Composite();
 
     g_theGxDevicePtr->RsPop();
     SmartScreenRectClearGrid(1);

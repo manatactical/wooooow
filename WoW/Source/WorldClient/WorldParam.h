@@ -42,6 +42,11 @@ class CWorldParam {
     static CVar* cvar_shadowMode;
     static CVar* cvar_cascadedShadows;
     static CVar* cvar_shadowBandRange;
+
+    // Not in the original binary. The unit outline's master switch. Registered here rather than from
+    // CUnitOutline::Init(), which runs once a world frame exists -- the options panel reads the cvar at
+    // login and GetCVarDefault raises on a name that is not registered yet.
+    static CVar* cvar_unitOutline;
     static bool ShadowTextureSizeCallback(CVar* var, const char* oldValue, const char* value, void* arg);
     static bool ShadowModeCallback(CVar* var, const char* oldValue, const char* value, void* arg);
     static bool CascadedShadowsCallback(CVar* var, const char* oldValue, const char* value, void* arg);

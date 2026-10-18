@@ -59,6 +59,8 @@ target_link_libraries(WowClient
         Scrn
         Services
         ShaderEffect
+        # Model2 stamps outlines and Ui drives the list, both below in this order.
+        UnitOutline
         Tempest
         SoundEngine
         SteelseriesMouse

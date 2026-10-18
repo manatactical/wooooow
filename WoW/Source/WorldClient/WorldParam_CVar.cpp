@@ -38,6 +38,9 @@ CVar* CWorldParam::cvar_shadowMode;
 CVar* CWorldParam::cvar_cascadedShadows;
 CVar* CWorldParam::cvar_shadowBandRange;
 
+// Not in the original binary. See CUnitOutline::Enabled.
+CVar* CWorldParam::cvar_unitOutline;
+
 // STATIC: 0x00CD857C
 CVar* CWorldParam::cvar_texLodBias;
 
@@ -810,6 +813,12 @@ void CWorldParam::Initialize() {
     // Not in the original binary. Default "default" leaves s_bandRadius untouched, so the stock tiers and
     // the 12340 constants stay intact for anyone who does not opt in.
     CWorldParam::cvar_shadowBandRange = CVar::Register("shadowBandRange", "Shadow band radii: three multipliers, or 'outer' / 'linear' / 'default'", 1, "default", CWorldParam::ShadowBandRangeCallback, CATEGORY_GRAPHICS, false, nullptr, false);
+
+    // Not in the original binary. The unit outline's master switch, read by CUnitOutline::Enabled from the
+    // render path. It belongs here with the other graphics cvars: the Advanced panel asks for its default
+    // while the login screen is up, which is before any world frame exists, and GetCVarDefault raises on an
+    // unregistered name. CUnitOutline::Init registers it too, so Init order cannot be got wrong.
+    CWorldParam::cvar_unitOutline = CVar::Register("unitOutline", "Outline the mouseover and target units", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
     // Not in the original binary. The panel reads this, nothing may usefully write it - ShadowModeCallback
     // refuses writes, so it is read-only in effect without the CVar flag that would make Lua raise an error.

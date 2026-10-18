@@ -52,6 +52,7 @@ target_link_libraries(Wow
         Scrn
         Services
         ShaderEffect
+        UnitOutline
         Tempest
         SoundEngine
         SteelseriesMouse

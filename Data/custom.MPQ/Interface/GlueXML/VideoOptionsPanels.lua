@@ -383,8 +383,10 @@ end
 -- changes the cadence. Advanced holds the cursor pair, which is not part of any quality preset.
 
 ADVANCED_LABEL = "Advanced";
-ADVANCED_SUBTEXT = "Cursor settings that are not part of a graphics quality preset.";
+ADVANCED_SUBTEXT = "Extra rendering options that are not part of a graphics quality preset: the cursor pair, and the reaction-coloured outline drawn on the mouseover and target units.";
 CURSOR_LABEL = "Cursor";
+UNIT_OUTLINE = "Unit Outline";
+OPTION_TOOLTIP_UNIT_OUTLINE = "Draws a reaction-coloured outline around the unit under the cursor and your current target. A unit hidden behind terrain or a building has no outline.";
 SHADOWS_LABEL = "Shadows";
 SHADOWS_SUBTEXT = "Shadow quality sets the method and how often shadows update, and shadow resolution how sharp the edges are. Hardware cursor draws the cursor through the GPU; Fix Lag adds a per-frame GPU sync that can reduce cursor lag at a frame rate cost.";
 OPTION_TOOLTIP_SHADOW_RESOLUTION = "Resolution of the shadow maps. Lower values give softer, blockier shadow edges and restore some frame rate. How often shadows update is not affected.";
@@ -411,6 +413,7 @@ ShadowsPanelOptions = {
 AdvancedPanelOptions = {
 	gxCursor = { text = "HARDWARE_CURSOR" },
 	gxFixLag = { text = "FIX_LAG" },
+	unitOutline = { text = "UNIT_OUTLINE", tooltip = OPTION_TOOLTIP_UNIT_OUTLINE },
 };
 
 local function VideoOptionsShadowsPanel_Level (value, maxValue)

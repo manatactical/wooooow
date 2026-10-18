@@ -876,7 +876,7 @@
 		</Scripts>	
 		<Frames>
 			<Frame name="$parentCursor" inherits="OptionsBoxTemplate">
-				<Size x="380" y="120"/>
+				<Size x="380" y="175"/>
 				<Anchors>
 					<Anchor point="TOPLEFT" relativeTo="$parentSubText" relativePoint="BOTTOMLEFT">
 						<Offset x="8" y="-24"/>
@@ -916,6 +916,20 @@
 						self.type = CONTROLTYPE_CHECKBOX;
 						self.cvar = "gxFixLag";
 						self.restart = true;
+						BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
+					</OnLoad>
+				</Scripts>
+			</CheckButton>
+			<CheckButton name="$parentUnitOutline" inherits="VideoOptionsSmallCheckButtonTemplate">
+				<Anchors>
+					<Anchor point="TOPLEFT" relativeTo="$parentFixInputLag" relativePoint="BOTTOMLEFT">
+						<Offset x="0" y="-4"/>
+					</Anchor>
+				</Anchors>
+				<Scripts>
+					<OnLoad>
+						self.type = CONTROLTYPE_CHECKBOX;
+						self.cvar = "unitOutline";
 						BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
 					</OnLoad>
 				</Scripts>

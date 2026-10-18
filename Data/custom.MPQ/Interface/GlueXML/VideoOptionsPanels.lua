@@ -505,6 +505,25 @@ function VideoOptionsAdvancedPanel_OnLoad (self)
 	VideoOptionsPanel_OnLoad(self);
 end
 
+-- [[ Debug Panel ]] --
+-- The overlay itself lives on UIParent and is built in FrameXML's copy of this file; glue only exposes the
+-- checkbox, which is what writes the showPerformance CVar.
+DEBUG_LABEL = "Debug";
+DEBUG_SUBTEXT = "Performance overlay showing frame rate, frame time, draw calls, triangles and process CPU use. The overlay is draggable.";
+PERFORMANCE_LABEL = "Performance";
+PERFORMANCE_TOGGLE = "Show Performance Overlay";
+OPTION_TOOLTIP_PERFORMANCE_TOGGLE = "Draws a small movable overlay with frame rate, milliseconds per frame, draw calls, triangles and CPU use.";
+
+DebugPanelOptions = {
+	showPerformance = { text = "PERFORMANCE_TOGGLE", tooltip = OPTION_TOOLTIP_PERFORMANCE_TOGGLE },
+};
+
+function VideoOptionsDebugPanel_OnLoad (self)
+	self.name = DEBUG_LABEL;
+	self.options = DebugPanelOptions;
+	VideoOptionsPanel_OnLoad(self);
+end
+
 -- particleDensity / environmentDetail were 0.1-1.0 / 0.5-1.5 in 3.3.5, the 4.3.4 world uses percent
 function VideoOptionsEffectsPanel_GetPercentCVar (self)
 	local value = tonumber(GetCVar(self.cvar)) or 100;

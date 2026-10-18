@@ -171,6 +171,10 @@ void CGxDevice::ScenePresent() {
     this->m_frameCount++;
     this->m_scrShotClick = 0;
     this->m_intF5C = 0;
+
+    // NOT IN BINARY: latch the frame's draw/triangle counters for the debug overlay. Every backend ends
+    // its present by calling this, so one place is enough.
+    GxPerfFrameEnd();
 }
 
 // VERIFY: 7c26f822 auto

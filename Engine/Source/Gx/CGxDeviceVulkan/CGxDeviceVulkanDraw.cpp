@@ -12,6 +12,7 @@
 #include "Engine/Source/Gx/CGxBuf.h"
 #include "Engine/Source/Gx/CGxPool.h"
 #include "Engine/Source/Gx/CGxTex.h"
+#include "Engine/Source/Gx/Gx.h"
 
 namespace frame     = gxvk::vk::frame;
 namespace pipelines = gxvk::vk::pipelines;
@@ -238,6 +239,9 @@ void CGxDeviceVulkan::Draw(CGxBatch* batch, int32_t count) {
     if (!pipelines::Record(cmd, frame::RenderPass(), frame::PassGeneration(), frame::Serial(), frame::Slot(), d)) {
         return;
     }
+
+    // NOT IN BINARY: the overlay's counters, on the same rule as the D3D backends' PrimCalcCount.
+    GxPerfCountDraw(batch->m_primType, this->PrimCalcCount(batch->m_primType, batch->m_count));
 
     for (uint32_t stream = 0; stream < d.streamCount; stream++) {
         this->INoteBufDrawn(streamBufs[stream]);

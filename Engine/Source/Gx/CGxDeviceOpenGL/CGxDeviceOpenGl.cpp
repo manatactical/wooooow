@@ -3976,6 +3976,10 @@ void CGxDeviceOpenGl::Draw(CGxBatch* batch, int32_t count) {
 
     this->IStateSync();
 
+    // NOT IN BINARY: the overlay's counters. OpenGL's Draw has no PrimCalcCount call of its own, so the
+    // same helper the other backends use computes the primitive count from the batch.
+    GxPerfCountDraw(batch->m_primType, this->PrimCalcCount(batch->m_primType, batch->m_count));
+
     if (count) {
         if (glExtDrawRangeElements) {
             glDrawRangeElementsEXT(s_glPrim[batch->m_primType], batch->m_minIndex, batch->m_maxIndex, batch->m_count, GL_UNSIGNED_SHORT, reinterpret_cast<const GLvoid*>(this->m_indexPtr + sizeof(uint16_t) * batch->m_start));

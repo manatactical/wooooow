@@ -125,6 +125,9 @@ CVar* s_cvarUIFaster;
 // STATIC: 0x00B2F9FC
 CVar* s_cvTextureCacheSize;
 
+// NOT IN BINARY
+CVar* g_showPerformanceCVar;
+
 // STATIC: 0x00B2FA00
 CVar* s_cvTextureFilteringMode;
 
@@ -640,6 +643,11 @@ bool LocaleCallback(CVar* var, const char* oldValue, const char* value, void* ar
 void ClientRegisterConsoleCommands() {
     ConsoleCommandRegister("reloadUI", CCommand_ReloadUI, CATEGORY_GRAPHICS, nullptr);
     ConsoleCommandRegister("perf", CCommand_Perf, CATEGORY_DEBUG, nullptr);
+
+    // NOT IN BINARY: the Debug video options tab's overlay toggle. Flag 1 matches every other video cvar
+    // (0x10 is account scope and gets deleted when the account loads); CATEGORY_GRAPHICS puts it in
+    // Config.wtf beside the other video options, and the overlay polls it.
+    g_showPerformanceCVar = CVar::Register("showPerformance", "Show the performance overlay (fps, draw calls, cpu)", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
     g_accountNameVar = CVar::Register("accountName", "Saved account name", 0x40, "", nullptr, CATEGORY_GAME, false, nullptr, false);
     g_accountListVar = CVar::Register("accountList", "List of wow accounts for saved Blizzard account", 0, "", nullptr, CATEGORY_GAME, false, nullptr, false);

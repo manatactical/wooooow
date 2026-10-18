@@ -143,6 +143,12 @@ void GxXformViewProj(C44Matrix& matrix);
 void GxXformViewProjNativeTranspose(C44Matrix& matrix);
 int32_t GxApiSupported(EGxApi api);
 EGxApi GxDefaultApi();
+// Performance counters for the debug overlay. Not in the original binary: every backend's Draw() reports
+// its batch here, CGxDevice::ScenePresent() latches the frame's totals, and GetPerformanceStats() reads them.
+void GxPerfCountDraw(EGxPrim primType, uint32_t primCount);
+void GxPerfFrameEnd();
+uint32_t GxPerfDrawCalls();
+uint32_t GxPerfTriangles();
 uint32_t GxCalcTexelStrideInBytes(EGxTexFormat format, uint32_t width);
 uint32_t GxVertexAttribOffset(EGxVertexBufferFormat format, EGxVertexAttrib attrib);
 uint32_t GxVertexSize(EGxVertexBufferFormat format);

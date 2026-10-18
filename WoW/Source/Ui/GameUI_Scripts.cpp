@@ -22,9 +22,11 @@
 #include "Engine/Source/FrameXML/FrameXML.h"
 #include "Engine/Source/FrameXML/LoadXML.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
+#include "Engine/Source/Gx/Gx.h"
 #include "Engine/Source/lua-5.1/src/lauxlib.h"
 #include "Engine/Source/lua-5.1/src/lua.h"
 #include "Engine/Source/Os/OsFile.h"
+#include "Engine/Source/Os/System.h"
 #include "Engine/Source/Os/Time.h"
 #include "Engine/Source/Os/TimeManager.h"
 #include "Engine/Source/Scrn/Scrn.h"
@@ -2554,6 +2556,65 @@ static int32_t Script_GetMirrorTimerInfo(lua_State* L) {
 static int32_t Script_GetFramerate(lua_State* L) {
     lua_pushnumber(L, World::GetFramerate());
     return 1;
+}
+
+// NOT IN BINARY: the Debug video options tab's overlay data source. One call per overlay update returns
+// everything, so the overlay never sees a frame split across two reads.
+//
+// cpuPercent is the process's CPU use over the interval since the previous call, as a share of the whole
+// machine (all cores): kernel+user time delta / wall delta / core count. The first call has no previous
+// sample, so it reports 0. The counters restart whenever the client reloads the UI, which only costs one
+// bad first frame.
+static int32_t Script_GetPerformanceStats(lua_State* L) {
+    static bool haveSample = false;
+    static uint64_t lastCpu100ns = 0;
+    static uint32_t lastSampleMs = 0;
+    static float lastCpuPercent = 0.0f;
+
+    uint64_t cpu100ns = 0;
+    FILETIME creation;
+    FILETIME exit;
+    FILETIME kernel;
+    FILETIME user;
+
+    // Only advance the baseline on a successful sample: after a failure, cpu100ns stays 0 and the next
+    // delta would be the process's whole lifetime of CPU time, reporting a wild percentage.
+    bool sampled = GetProcessTimes(GetCurrentProcess(), &creation, &exit, &kernel, &user) != 0;
+
+    if (sampled) {
+        cpu100ns = (static_cast<uint64_t>(kernel.dwHighDateTime) << 32 | kernel.dwLowDateTime) +
+                   (static_cast<uint64_t>(user.dwHighDateTime) << 32 | user.dwLowDateTime);
+    }
+
+    uint32_t nowMs = OsGetAsyncTimeMs();
+
+    if (haveSample && sampled && nowMs > lastSampleMs) {
+        uint32_t cores = OsGetNumberOfProcessors();
+
+        if (cores) {
+            double cpuMs = static_cast<double>(cpu100ns - lastCpu100ns) * 0.0001;
+            lastCpuPercent = static_cast<float>(cpuMs / static_cast<double>(nowMs - lastSampleMs) * 100.0 / static_cast<double>(cores));
+        }
+
+        lastCpu100ns = cpu100ns;
+        lastSampleMs = nowMs;
+    } else if (!haveSample && sampled) {
+        lastCpu100ns = cpu100ns;
+        lastSampleMs = nowMs;
+    }
+
+    haveSample = sampled;
+
+    // World::GetFramerate() is a 30-frame average, which is the number the overlay wants.
+    double framerate = World::GetFramerate();
+
+    lua_pushnumber(L, framerate);
+    lua_pushnumber(L, framerate > 0.0 ? 1000.0 / framerate : 0.0);
+    lua_pushnumber(L, static_cast<double>(GxPerfDrawCalls()));
+    lua_pushnumber(L, static_cast<double>(GxPerfTriangles()));
+    lua_pushnumber(L, static_cast<double>(lastCpuPercent));
+
+    return 5;
 }
 
 // VERIFY: ee32b2a0 auto
@@ -6195,6 +6256,7 @@ static FrameScript_Method s_ScriptFunctions[] = {
     { "SetConsoleKey", &Script_SetConsoleKey },
     { "Screenshot", &Script_Screenshot },
     { "GetFramerate", &Script_GetFramerate },
+    { "GetPerformanceStats", &Script_GetPerformanceStats },
     { "TogglePerformanceDisplay", &Script_TogglePerformanceDisplay },
     { "TogglePerformancePause", &Script_TogglePerformancePause },
     { "TogglePerformanceValues", &Script_TogglePerformanceValues },

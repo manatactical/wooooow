@@ -511,6 +511,127 @@ function VideoOptionsAdvancedPanel_OnLoad (self)
 	VideoOptionsPanel_OnLoad(self);
 end
 
+-- [[ Debug Panel ]] --
+-- The overlay itself is created here rather than in XML so it can live on the UIParent instead of inside
+-- the options frame; the checkbox only flips the showPerformance CVar.
+DEBUG_LABEL = "Debug";
+DEBUG_SUBTEXT = "Performance overlay showing frame rate, frame time, draw calls, triangles and process CPU use. The overlay is draggable.";
+PERFORMANCE_LABEL = "Performance";
+PERFORMANCE_TOGGLE = "Show Performance Overlay";
+OPTION_TOOLTIP_PERFORMANCE_TOGGLE = "Draws a small movable overlay with frame rate, milliseconds per frame, draw calls, triangles and CPU use.";
+
+DebugPanelOptions = {
+	showPerformance = { text = "PERFORMANCE_TOGGLE", tooltip = OPTION_TOOLTIP_PERFORMANCE_TOGGLE },
+};
+
+function VideoOptionsDebugPanel_OnLoad (self)
+	self.name = DEBUG_LABEL;
+	self.options = DebugPanelOptions;
+	VideoOptionsPanel_OnLoad(self);
+	PerformanceOverlay_Initialize();
+end
+
+-- Not in the original client. One FontString refreshed four times a second. The frame itself is never
+-- hidden - a hidden frame stops running OnUpdate and would never notice the CVar going back on - so the
+-- overlay is faded out and made click-through instead.
+function PerformanceOverlay_Initialize ()
+	if ( PerformanceOverlay or not UIParent ) then
+		return;
+	end
+
+	local frame = CreateFrame("Frame", "PerformanceOverlay", UIParent);
+	frame:SetFrameStrata("LOW");
+	frame:SetWidth(190);
+	frame:SetHeight(62);
+	frame:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -8, -8);
+	frame:SetMovable(true);
+	frame:SetClampedToScreen(true);
+	frame:RegisterForDrag("LeftButton");
+	frame:SetScript("OnDragStart", function (self) self:StartMoving(); end);
+	frame:SetScript("OnDragStop", function (self) self:StopMovingOrSizing(); end);
+	frame:SetBackdrop({
+		bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+		edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+		tile = true,
+		tileSize = 16,
+		edgeSize = 16,
+		insets = { left = 4, right = 4, top = 4, bottom = 4 },
+	});
+	frame:SetBackdropColor(0, 0, 0, 0.6);
+	frame:SetBackdropBorderColor(1, 1, 1, 0.4);
+
+	local text = frame:CreateFontString("PerformanceOverlayText", "ARTWORK", "GameFontHighlightSmall");
+	text:SetPoint("TOPLEFT", frame, "TOPLEFT", 6, -6);
+	text:SetJustifyH("LEFT");
+	frame.text = text;
+
+	frame.elapsed = 0;
+	frame:SetScript("OnUpdate", function (self, elapsed) PerformanceOverlay_OnUpdate(self, elapsed); end);
+
+	-- The checkbox's CVar is only written when the options panel is applied, and that path raises no event,
+	-- so the overlay polls it once per update instead.
+	PerformanceOverlay_Apply();
+end
+
+function PerformanceOverlay_Apply ()
+	if ( not PerformanceOverlay ) then
+		return;
+	end
+
+	local shown = GetCVar("showPerformance") == "1";
+
+	if ( shown == PerformanceOverlay.shown ) then
+		return;
+	end
+
+	PerformanceOverlay.shown = shown;
+	PerformanceOverlay:SetAlpha(shown and 0.8 or 0);
+	PerformanceOverlay:EnableMouse(shown);
+end
+
+function PerformanceOverlay_OnUpdate (self, elapsed)
+	self.elapsed = self.elapsed + elapsed;
+
+	-- Four updates a second keeps the numbers readable and the overlay's own cost near zero.
+	if ( self.elapsed < 0.25 ) then
+		return;
+	end
+
+	self.elapsed = 0;
+	PerformanceOverlay_Apply();
+
+	if ( not self.shown ) then
+		return;
+	end
+
+	local fps, frameMs, drawCalls, triangles, cpuPercent = GetPerformanceStats();
+
+	self.text:SetFormattedText("%s %.1f  %.2f ms\n%s %d\n%s %s\n%s %.1f%%",
+		PERFORMANCE_FPS, fps, frameMs,
+		PERFORMANCE_DRAW_CALLS, drawCalls,
+		PERFORMANCE_TRIANGLES, PerformanceOverlay_FormatCount(triangles),
+		PERFORMANCE_CPU, cpuPercent);
+end
+
+function PerformanceOverlay_FormatCount (value)
+	if ( value >= 1000000 ) then
+		return string.format("%.2fM", value / 1000000);
+	elseif ( value >= 1000 ) then
+		return string.format("%.1fk", value / 1000);
+	end
+	return string.format("%d", value);
+end
+
+PERFORMANCE_FPS = "FPS";
+PERFORMANCE_DRAW_CALLS = "Draw";
+PERFORMANCE_TRIANGLES = "Tris";
+PERFORMANCE_CPU = "CPU";
+
+-- VideoOptionsPanels.xml can load before UIParent exists, so the overlay is retried at login.
+local performanceOverlayLoader = CreateFrame("Frame");
+performanceOverlayLoader:RegisterEvent("PLAYER_LOGIN");
+performanceOverlayLoader:SetScript("OnEvent", function () PerformanceOverlay_Initialize(); end);
+
 -- particleDensity / environmentDetail were 0.1-1.0 / 0.5-1.5 in 3.3.5, the 4.3.4 world uses percent
 function VideoOptionsEffectsPanel_GetPercentCVar (self)
 	local value = tonumber(GetCVar(self.cvar)) or 100;

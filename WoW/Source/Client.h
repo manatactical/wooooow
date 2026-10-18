@@ -57,6 +57,7 @@ extern CVar* g_readEULAVar;
 extern CVar* g_readScanningVar;
 extern CVar* g_readTerminationWithoutNoticeVar;
 extern CVar* g_readTOSVar;
+extern CVar* g_showPerformanceCVar;
 extern WowClientDB<Startup_StringsRec> g_startup_StringsDB;
 extern CVar* s_cvarUIFaster;
 extern CVar* s_cvExpansionMovie;

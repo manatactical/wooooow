@@ -68,6 +68,13 @@ static TSGrowableArray<void (*)()> s_destroyCallbacks;
 // STATIC: 0x00C5DFA4
 static TSGrowableArray<GxDrawListEntry> s_drawLists[GxuCats_Last];
 
+// NOT IN BINARY: debug overlay counters. s_perfFrame* accumulate during the frame, s_perfLast* hold the
+// finished frame's totals so a reader (the Lua overlay) never sees a half-counted frame.
+static uint32_t s_perfFrameDrawCalls;
+static uint32_t s_perfFrameTriangles;
+static uint32_t s_perfLastDrawCalls;
+static uint32_t s_perfLastTriangles;
+
 // VERIFY: 39e42562 auto
 // OFFSET: 0x00681310
 static void DrawListPreprocessB2F(GxDrawListEntry* entry, const C3Vector& viewPos) {
@@ -440,6 +447,36 @@ void GxSetMaxFPS(uint32_t maxFPS) {
 // OFFSET: 0x00681780
 uint32_t GxGetMaxFPS() {
     return s_maxFPS;
+}
+
+// NOT IN BINARY
+void GxPerfCountDraw(EGxPrim primType, uint32_t primCount) {
+    s_perfFrameDrawCalls++;
+
+    // Only the triangle primitives contribute triangles; points and lines have no triangle count.
+    // PrimCalcCount subtracts a constant from an unsigned count, so a degenerate batch underflows to a huge
+    // value; anything beyond this cap is that underflow, not a real batch.
+    if ((primType == GxPrim_Triangles || primType == GxPrim_TriangleStrip || primType == GxPrim_TriangleFan) && primCount < 0x10000000) {
+        s_perfFrameTriangles += primCount;
+    }
+}
+
+// NOT IN BINARY
+void GxPerfFrameEnd() {
+    s_perfLastDrawCalls = s_perfFrameDrawCalls;
+    s_perfLastTriangles = s_perfFrameTriangles;
+    s_perfFrameDrawCalls = 0;
+    s_perfFrameTriangles = 0;
+}
+
+// NOT IN BINARY
+uint32_t GxPerfDrawCalls() {
+    return s_perfLastDrawCalls;
+}
+
+// NOT IN BINARY
+uint32_t GxPerfTriangles() {
+    return s_perfLastTriangles;
 }
 
 // VERIFY: 07048e1b auto

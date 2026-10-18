@@ -652,7 +652,7 @@ EffectsPanelOptions = {
 	particleDensity = { text = "PARTICLE_DENSITY", minValue = 10, maxValue = 100, valueStep = 10},
 	environmentDetail = { text = "ENVIRONMENT_DETAIL", minValue = 50, maxValue = 150, valueStep = 25},
 	groundEffectDensity = { text = "GROUND_DENSITY", minValue = 16, maxValue = 128, valueStep = 8},
-	groundEffectDist = { text = "GROUND_RADIUS", minValue = 70, maxValue = 260, valueStep = 10 },
+	groundEffectDist = { text = "GROUND_RADIUS", minValue = 70, maxValue = 140, valueStep = 10 },
 	BaseMip = { text = "TEXTURE_DETAIL", minValue = 0, maxValue = 1, valueStep = 1, tooltipOwnerPoint = "TOPLEFT", },
 	textureFilteringMode = { text = "ANISOTROPIC", minValue = 0, maxValue = 5, valueStep = 1, gameRestart = 1, tooltipOwnerPoint = "TOPLEFT", tooltipRequirement = OPTION_RESTART_REQUIREMENT, },
 	weatherDensity = { text = "WEATHER_DETAIL", minValue = 0, maxValue = 3, valueStep = 1, tooltipOwnerPoint = "TOPLEFT", },

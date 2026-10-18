@@ -377,8 +377,9 @@ namespace gxvk::vk::manifest
         }
         delete[] text;
 
-        LinkCompanions();
+        // ByMd5 refuses while !s.loaded, and LinkCompanions resolves companions through it.
         s.loaded = s.recordCount > 0;
+        LinkCompanions();
         Write(s.loaded ? Info : Warn, "vulkan: manifest: \"%s\": %u record(s) (%u vertex, %u pixel of which %u generated), %u name(s), %u companion(s) (%u unresolved), %u line(s) skipped, %u ignored, %u truncated",
               path, s.stats.records, s.stats.vertex, s.stats.pixel, s.stats.ff, s.stats.names, s.stats.companions,
               s.stats.companionsUnresolved, s.stats.skipped, s.stats.ignored, s.stats.truncated);

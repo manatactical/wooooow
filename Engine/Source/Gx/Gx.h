@@ -143,8 +143,13 @@ void GxXformViewProj(C44Matrix& matrix);
 void GxXformViewProjNativeTranspose(C44Matrix& matrix);
 int32_t GxApiSupported(EGxApi api);
 EGxApi GxDefaultApi();
-// Performance counters for the debug overlay. Not in the original binary: every backend's Draw() reports
-// its batch here, CGxDevice::ScenePresent() latches the frame's totals, and GetPerformanceStats() reads them.
+// Performance counters for the debug overlay. Not in the original binary. Counting stays off until the
+// overlay asks for it: g_gxPerfEnabled is read (not called) by the inline guard in every backend's Draw, so
+// a disabled overlay costs one predictable load per batch and no call at all. CGxDevice::ScenePresent()
+// latches the frame's totals and GetPerformanceStats() reads them.
+extern bool g_gxPerfEnabled;
+inline bool GxPerfEnabled() { return g_gxPerfEnabled; }
+void GxPerfSetEnabled(bool enabled);
 void GxPerfCountDraw(EGxPrim primType, uint32_t primCount);
 void GxPerfFrameEnd();
 uint32_t GxPerfDrawCalls();

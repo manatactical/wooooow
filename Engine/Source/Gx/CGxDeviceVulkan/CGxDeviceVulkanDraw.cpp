@@ -241,7 +241,9 @@ void CGxDeviceVulkan::Draw(CGxBatch* batch, int32_t count) {
     }
 
     // NOT IN BINARY: the overlay's counters, on the same rule as the D3D backends' PrimCalcCount.
-    GxPerfCountDraw(batch->m_primType, this->PrimCalcCount(batch->m_primType, batch->m_count));
+    if (GxPerfEnabled()) {
+        GxPerfCountDraw(batch->m_primType, this->PrimCalcCount(batch->m_primType, batch->m_count));
+    }
 
     for (uint32_t stream = 0; stream < d.streamCount; stream++) {
         this->INoteBufDrawn(streamBufs[stream]);

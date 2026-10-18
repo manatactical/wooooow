@@ -69,7 +69,9 @@ static TSGrowableArray<void (*)()> s_destroyCallbacks;
 static TSGrowableArray<GxDrawListEntry> s_drawLists[GxuCats_Last];
 
 // NOT IN BINARY: debug overlay counters. s_perfFrame* accumulate during the frame, s_perfLast* hold the
-// finished frame's totals so a reader (the Lua overlay) never sees a half-counted frame.
+// finished frame's totals so a reader (the Lua overlay) never sees a half-counted frame. Counting is off
+// until Script_GetPerformanceStats sees the cvar on, which is what keeps this off the frame's hot path.
+bool g_gxPerfEnabled = false;
 static uint32_t s_perfFrameDrawCalls;
 static uint32_t s_perfFrameTriangles;
 static uint32_t s_perfLastDrawCalls;
@@ -450,7 +452,24 @@ uint32_t GxGetMaxFPS() {
 }
 
 // NOT IN BINARY
+void GxPerfSetEnabled(bool enabled) {
+    g_gxPerfEnabled = enabled;
+
+    // Drop any partial frame so a stale half-count can never be read back after re-enabling.
+    if (!enabled) {
+        s_perfFrameDrawCalls = 0;
+        s_perfFrameTriangles = 0;
+        s_perfLastDrawCalls = 0;
+        s_perfLastTriangles = 0;
+    }
+}
+
+// NOT IN BINARY
 void GxPerfCountDraw(EGxPrim primType, uint32_t primCount) {
+    if (!g_gxPerfEnabled) {
+        return;
+    }
+
     s_perfFrameDrawCalls++;
 
     // Only the triangle primitives contribute triangles; points and lines have no triangle count.
@@ -463,6 +482,10 @@ void GxPerfCountDraw(EGxPrim primType, uint32_t primCount) {
 
 // NOT IN BINARY
 void GxPerfFrameEnd() {
+    if (!g_gxPerfEnabled) {
+        return;
+    }
+
     s_perfLastDrawCalls = s_perfFrameDrawCalls;
     s_perfLastTriangles = s_perfFrameTriangles;
     s_perfFrameDrawCalls = 0;

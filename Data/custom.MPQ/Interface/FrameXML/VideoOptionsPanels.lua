@@ -600,11 +600,14 @@ function PerformanceOverlay_OnUpdate (self, elapsed)
 	self.elapsed = 0;
 	PerformanceOverlay_Apply();
 
+	-- Read every tick, even while hidden: this call is what keeps the engine's draw-call counters in step
+	-- with the checkbox (they are only worth counting while somebody is reading them), and at four times a
+	-- second it costs nothing next to a frame. Only the text is skipped while hidden.
+	local fps, frameMs, drawCalls, triangles, cpuPercent = GetPerformanceStats();
+
 	if ( not self.shown ) then
 		return;
 	end
-
-	local fps, frameMs, drawCalls, triangles, cpuPercent = GetPerformanceStats();
 
 	self.text:SetFormattedText("%s %.1f  %.2f ms\n%s %d\n%s %s\n%s %.1f%%",
 		PERFORMANCE_FPS, fps, frameMs,

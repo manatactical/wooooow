@@ -174,7 +174,9 @@ void CGxDevice::ScenePresent() {
 
     // NOT IN BINARY: latch the frame's draw/triangle counters for the debug overlay. Every backend ends
     // its present by calling this, so one place is enough.
-    GxPerfFrameEnd();
+    if (GxPerfEnabled()) {
+        GxPerfFrameEnd();
+    }
 }
 
 // VERIFY: 7c26f822 auto

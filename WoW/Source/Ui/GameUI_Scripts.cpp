@@ -2605,6 +2605,15 @@ static int32_t Script_GetPerformanceStats(lua_State* L) {
 
     haveSample = sampled;
 
+    // Counting costs a branch per draw call, so it is only on while the overlay is actually being fed.
+    // The overlay polls at 4Hz and stops calling this once it is off, so a hidden overlay runs with the
+    // counters disabled rather than merely having somebody throw the numbers away.
+    bool enabled = g_showPerformanceCVar && g_showPerformanceCVar->m_intValue != 0;
+
+    if (enabled != GxPerfEnabled()) {
+        GxPerfSetEnabled(enabled);
+    }
+
     // World::GetFramerate() is a 30-frame average, which is the number the overlay wants.
     double framerate = World::GetFramerate();
 

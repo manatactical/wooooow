@@ -709,6 +709,25 @@ void ClientRegisterConsoleCommands() {
 // VERIFY: dd31cf34 auto
 // OFFSET: 0x004026B0
 void AsyncFileReadRegisterCVars() {
+    // NOT IN BINARY. Must be read before AsyncFileReadInitialize, because that is where the worker threads
+    // are created. 0 keeps the original single disk worker; the sandbox default is half the logical cores,
+    // which leaves plenty for the rest of the client and turns an SSD into what it is.
+    uint32_t defaultDiskWorkers = OsGetNumberOfProcessors() / 2;
+
+    if (defaultDiskWorkers < 1) {
+        defaultDiskWorkers = 1;
+    }
+
+    if (defaultDiskWorkers > 12) {
+        defaultDiskWorkers = 12;
+    }
+
+    char workerDefault[16];
+    SStrPrintf(workerDefault, sizeof(workerDefault), "%u", defaultDiskWorkers);
+
+    CVar* diskWorkers = CVar::Register("asyncDiskWorkers", "Engine option: worker threads serving the disk queue (takes effect on restart)", 1, workerDefault, nullptr, CATEGORY_DEBUG, false, nullptr, false);
+    AsyncFileReadSetDiskQueueCount(static_cast<uint32_t>(diskWorkers->m_intValue > 0 ? diskWorkers->m_intValue : 0));
+
     s_cvAsyncThreadSleep = CVar::Register("asyncThreadSleep", "Engine option: Async read thread sleep", 1, "0", AsyncFileReadThreadSleepCallback, CATEGORY_DEBUG, false, nullptr, false);
     s_cvAsyncHandlerTimeout = CVar::Register("asyncHandlerTimeout", "Engine option: Async read main thread timeout", 1, "100", AsyncFileReadHandlerTimeoutCallback, CATEGORY_DEBUG, false, nullptr, false);
     AsyncFileReadInitialize(s_cvAsyncThreadSleep->m_intValue, s_cvAsyncHandlerTimeout->m_intValue);

@@ -41,6 +41,12 @@ void AsyncFileReadIncreasePriority(CAsyncObject* object);
 void AsyncFileReadIngameProgressCallback(void (*startCallback)(), void (*progressCallback)(float, int32_t));
 void AsyncFileReadInitialize(uint32_t threadSleep, uint32_t handlerTimeout);
 
+// NOT IN BINARY. Number of worker threads serving the disk queue. The original creates exactly one outside
+// streaming mode, which is a spinning-disk assumption: one blocking read at a time. Must be set before
+// AsyncFileReadInitialize runs (the threads are created there). 0 keeps the original single worker.
+void AsyncFileReadSetDiskQueueCount(uint32_t count);
+uint32_t AsyncFileReadGetDiskQueueCount();
+
 // NOT IN BINARY. Frame-time budgets for the two uncapped drains in this file. Both default to 0, which
 // means "original behaviour": the poll handlers run without a cap and AsyncFileReadWaitAll blocks until
 // every read has landed. A non-zero value makes each of them return once that many milliseconds have

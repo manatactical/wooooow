@@ -422,10 +422,16 @@ int32_t NetQueuePromoteLocalFiles(const void* data, void* param) {
         g_queueLock.Enter();
 
         for (int32_t i = 1; i < 3; i++) {
-            CAsyncObject* object = s_asyncQueues[i]->m_readList.Head();
+            const uint32_t netBase = s_diskQueueCount ? s_diskQueueCount : 1;
 
-            while (!s_asyncQueues[i]->m_readList.IsEnd(object)) {
-                CAsyncObject* next = s_asyncQueues[i]->m_readList.RawNext(object);
+            if (!s_asyncQueues[netBase + i - 1]) {
+                continue;
+            }
+
+            CAsyncObject* object = s_asyncQueues[netBase + i - 1]->m_readList.Head();
+
+            while (!s_asyncQueues[netBase + i - 1]->m_readList.IsEnd(object)) {
+                CAsyncObject* next = s_asyncQueues[netBase + i - 1]->m_readList.RawNext(object);
 
                 if (SFile::FileIsLocal(object->m_file, 6) == 1) {
                     s_asyncQueues[0]->m_readList.LinkToTail(object);
@@ -730,14 +736,24 @@ void AsyncFileReadInitialize(uint32_t threadSleep, uint32_t handlerTimeout) {
 // VERIFY: 35423985 auto
 // OFFSET: 0x004BAB50
 void AsyncFileReadObject(CAsyncObject* object, int32_t urgent) {
+    // NOT IN BINARY. Spread reads across the disk workers instead of stacking every one on slot 0. The
+    // ring is only used when more than one worker exists, so the single-worker build behaves exactly as
+    // before, including the frame stamping below.
     CAsyncQueue* queue = s_asyncQueues[0];
+
+    if (s_diskQueueCount > 1) {
+        queue = s_asyncQueues[s_diskQueueNext % s_diskQueueCount];
+        s_diskQueueNext++;
+    }
 
     if (SFile::IsStreamingMode()) {
         int32_t local = SFile::FileIsLocal(object->m_file, 6);
 
         if (!local || local == 2) {
+            const uint32_t netBase = s_diskQueueCount ? s_diskQueueCount : 1;
+
             object->m_char24 = 1;
-            queue = object->m_priority > 127 ? s_asyncQueues[2] : s_asyncQueues[1];
+            queue = object->m_priority > 127 ? s_asyncQueues[netBase + 1] : s_asyncQueues[netBase];
         }
     }
 
@@ -787,9 +803,12 @@ void AsyncFileReadDestroy() {
     }
 
     s_asyncQueueList.Clear();
-    s_asyncQueues[0] = nullptr;
-    s_asyncQueues[1] = nullptr;
-    s_asyncQueues[2] = nullptr;
+
+    for (uint32_t i = 0; i < sizeof(s_asyncQueues) / sizeof(s_asyncQueues[0]); i++) {
+        s_asyncQueues[i] = nullptr;
+    }
+
+    s_diskQueueNext = 0;
 
     for (CAsyncThread* thread = s_asyncThreadList.Head(); !s_asyncThreadList.IsEnd(thread); thread = s_asyncThreadList.RawNext(thread)) {
     }
@@ -847,7 +866,7 @@ void AsyncFileReadDumpPending(const char* where, uint32_t waitedMs, int32_t tota
 
     g_queueLock.Enter();
 
-    for (uint32_t q = 0; q < 3; q++) {
+    for (uint32_t q = 0; q < sizeof(s_asyncQueues) / sizeof(s_asyncQueues[0]); q++) {
         CAsyncQueue* queue = s_asyncQueues[q];
 
         if (!queue) {

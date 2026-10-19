@@ -59,6 +59,17 @@ if (EXISTS ${CMAKE_SOURCE_DIR}/ThirdParty/CMakeLists.txt)
     add_subdirectory(ThirdParty)
 endif ()
 
+# NOT IN BINARY, build-only. Full PDBs so the in-tree crash logger can turn a fault address into a named
+# frame. Tools/WowClient/crash_log.cpp already walks the stack with SymFromAddr and SymGetLineFromAddr64,
+# but SymInitialize finds nothing without a PDB, which is why every crash so far reports only "module+0xNNN".
+# add_compile_options/add_link_options append to the existing flags, so the CRT defaults and /MD stay intact
+# (assigning CMAKE_CXX_FLAGS_RELEASE directly does not, and breaks XvidDecoder's linkage).
+option(WOWDECOMP_DEBUG_SYMBOLS "Build with PDBs and /Zi so in-tree crash stacks can be symbolised" OFF)
+if (WOWDECOMP_DEBUG_SYMBOLS)
+    add_compile_options(/Zi)
+    add_link_options(/DEBUG /DEBUGTYPE:CV)
+endif ()
+
 add_subdirectory(Engine/Source/BLPFile)
 add_subdirectory(Engine/Source/Base)
 add_subdirectory(Engine/Source/BlizzardCore)

@@ -1642,8 +1642,19 @@ int32_t CM2Shared::LoadSkinProfile(uint32_t profile) {
 
 // INLINED
 uint32_t CM2Shared::GetSkinProfileIndex(uint32_t maxBones) {
+    // NOT IN BINARY: m_numSkinProfiles comes straight from the file with no range check, and 4 minus it is
+    // unsigned -- a model with 6 skin profiles (creature\ent2\ent2.m2 has 6) wraps 4 - 6 to 0xFFFFFFFE and
+    // indexes s_skinProfileBoneCounts 16GB out of bounds. That read is the crash while loading models in
+    // Eversong Woods. The table only holds the last 4 thresholds, so profiles before the first that fits are
+    // not selectable and are skipped instead of read. Valid 1..4 stays exactly as it was.
     for (uint32_t i = 0; i < this->m_data->m_numSkinProfiles; i++) {
-        if (s_skinProfileBoneCounts[4 - this->m_data->m_numSkinProfiles + i] <= maxBones) {
+        int32_t tableIndex = 4 - static_cast<int32_t>(this->m_data->m_numSkinProfiles) + static_cast<int32_t>(i);
+
+        if (tableIndex < 0) {
+            continue;
+        }
+
+        if (s_skinProfileBoneCounts[tableIndex] <= maxBones) {
             return i;
         }
     }

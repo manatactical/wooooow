@@ -36,7 +36,9 @@ target_include_directories(WowClient
         ${CMAKE_SOURCE_DIR}
 )
 
-target_link_options(WowClient PRIVATE "/INCREMENTAL:NO" "/ENTRY:start")
+# NOT IN BINARY, build-only. The crash handler prints a fault RVA ("0001:00121827") and there is no PDB, so
+# symbolising a dump needs the linker's map: it is the only record of which function each RVA belongs to.
+target_link_options(WowClient PRIVATE "/INCREMENTAL:NO" "/ENTRY:start" "/MAP:${CMAKE_SOURCE_DIR}/build/WowClient.map")
 
 target_link_libraries(WowClient
     PRIVATE

@@ -50,6 +50,12 @@ void SynthesizeIdle(EvtContext* context, uint32_t currTime, float elapsedSec);
 int32_t SynthesizeInitialize(EvtContext* context);
 void SynthesizePaint(EvtContext* context);
 void SynthesizePoll(EvtContext* context);
+void SpikeLogStageEvent(uint32_t id);
+
+// NOT IN BINARY: the seam between "WoW drew the scene" and "the driver took the frame". Paint is one event,
+// so the spike logger can only say `event 23` for a frame spent anywhere inside it; this marks the end of the
+// layer paint, so that frame is attributed to the scene or to the present instead of to the event as a whole.
+void SpikeLogPaintEnd();
 uint32_t STORMAPI WaitPumpingNetwork(void* param);
 
 #endif

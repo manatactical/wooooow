@@ -18,6 +18,7 @@ class C2Vector;
 class CTextureAtlas;
 class CTextureBlobTexture;
 class CTgaFile;
+struct MipBits;
 
 enum TEXFILETYPE {
     TEXFILE_UNKNOWN = 0,
@@ -59,6 +60,11 @@ class CTexture : public CHandleObject, public TSHashObject<CTexture, HASHKEY_TEX
     /* 005C */ CTextureAtlas* m_atlas;
     /* 0060 */ int32_t m_atlasBlockIndex;
     /* 0064 */ TSLink<CTexture> m_link;
+    // NOT IN BINARY: the mip images loaded for this texture. LoadBlpWithAlias hands TextureLoadBlpMips the
+    // address of the global scratch pointer, which repoints it at the allocation it made, so the result was
+    // only reachable through that global -- and the next texture's load overwrote it. This keeps it on the
+    // texture it belongs to, which is also what lets the shared pointer go back to the scratch.
+    /* xxxxxx */ MipBits* m_mipBits;
     /* 006C */ char m_filename[260];
 
     virtual ~CTexture();

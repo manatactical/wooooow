@@ -208,13 +208,45 @@ int32_t TextureBuildAliasPath(char* buffer, const char* fileName) {
 // OFFSET: 0x004B5280
 MipBits* GetDefaultTexture(uint32_t width, uint32_t height) {
     MipBits* images = s_mipBits;
-    MipBits* level = images;
+
+    // NOT IN BINARY. s_mipBits is the shared scratch buffer, but LoadBlpWithAlias hands its address to
+    // TextureLoadBlpMips, which repoints it at the loaded texture's own allocation. A failed load then leaves
+    // s_mipBits pointing into that texture's buffer, and this function laid out the mip table in it again for
+    // the new dimensions and filled 4*height*width bytes per level through the pointers it had just written.
+    // Those pointers sit inside the other buffer, sized for that texture, so a larger replacement dimension ran
+    // off its end -- the write that crashed in memmove during shadow-map texturing. Nothing here can know how
+    // big the buffer s_mipBits points at is, so the scratch is re-allocated for this size when it is not already
+    // the one TextureInitialize made. The 1024x1024 buffer is kept as that buffer and is never freed here.
+    static MipBits* s_defaultTextureScratch;
+
+    if (!s_defaultTextureScratch) {
+        s_defaultTextureScratch = static_cast<MipBits*>(SMemAlloc(MippedImgCalcSize(PIXEL_ARGB8888, 1024, 1024), __FILE__, __LINE__, 0));
+    }
+
+    images = s_defaultTextureScratch;
+
+    if (!images) {
+        return nullptr;
+    }
 
     MippedImgSet(PIXEL_ARGB8888, width, height, images);
 
-    while (width > 1 || height > 1) {
-        memset(level->m_mip[0], 0xFF, 4 * height * width);
-        level++;
+    // The table is laid out over the whole scratch buffer, so a level's pointer can be handed back to wherever
+    // the buffer ends -- writing to it out of bounds instead of through a stale pointer. Any level that lands
+    // outside is left alone, which costs a mip some bytes of the default fill and nothing else.
+    uint8_t* scratch = reinterpret_cast<uint8_t*>(images);
+    uint8_t* scratchEnd = scratch + MippedImgCalcSize(PIXEL_ARGB8888, 1024, 1024);
+
+    for (uint32_t level = 0; width > 1 || height > 1; level++) {
+        uint32_t bytes = 4 * height * width;
+        uint8_t* pixels = reinterpret_cast<uint8_t*>(images[level].m_mip[0]);
+
+        if (pixels < scratch || pixels + bytes > scratchEnd) {
+            break;
+        }
+
+        memset(pixels, 0xFF, bytes);
+
         width = width >> 1 ? width >> 1 : 1;
         height >>= 1;
 
@@ -768,7 +800,11 @@ void UpdateBlpTextureAsync(EGxTexCommand command, uint32_t width, uint32_t heigh
                 }
             }
 
-            const uint8_t* bits = reinterpret_cast<const uint8_t*>(s_mipBits[level].m_mip[0]);
+            // NOT IN BINARY: the pumping path loads straight into s_mipBits and never sets m_mipBits, so the
+            // global is the fallback there; the async path sets m_mipBits because s_mipBits has gone back to
+            // being the default-texture scratch by the time this runs.
+            MipBits* mips = texture->m_mipBits ? texture->m_mipBits : s_mipBits;
+            const uint8_t* bits = reinterpret_cast<const uint8_t*>(mips[level].m_mip[0]);
             texels = bits;
 
             if (texture->m_gxTexTarget == GxTex_CubeMap) {
@@ -1720,7 +1756,8 @@ void UpdateTgaTexture(EGxTexCommand command, uint32_t width, uint32_t height, ui
         case GxTex_Latch: {
             texelStrideInBytes = 4 * width;
 
-            const uint8_t* bits = reinterpret_cast<const uint8_t*>(s_mipBits[level].m_mip[0]);
+            MipBits* mips = texture->m_mipBits ? texture->m_mipBits : s_mipBits;
+            const uint8_t* bits = reinterpret_cast<const uint8_t*>(mips[level].m_mip[0]);
             texels = bits;
 
             if (texture->m_gxTexTarget == GxTex_CubeMap) {
@@ -2088,6 +2125,8 @@ CTexture::CTexture() {
     this->m_dataFormat = GxTex_Unknown;
     this->m_atlas = nullptr;
     this->m_atlasBlockIndex = 0;
+    // NOT IN BINARY: see the field. Null until a load succeeds, which is what UpdateBlpTextureAsync checks.
+    this->m_mipBits = nullptr;
     this->m_filename[0] = '\0';
     s_textureList.LinkToTail(this);
 }

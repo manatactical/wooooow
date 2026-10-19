@@ -181,6 +181,10 @@ void IEvtQueueDispatch(EvtContext* context, EVENTID id, const void* data) {
         return;
     }
 
+    // NOT IN BINARY: tells the frame-spike logger in EvtSched which event's handlers are about to run, so a
+    // long tick lands in its log naming the event instead of just being long.
+    SpikeLogStageEvent(static_cast<uint32_t>(id));
+
     UpdateSyncState(context, id, data);
 
     if (SErrIsDisplayingError()) {

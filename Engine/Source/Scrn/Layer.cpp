@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <new>
 #include "Engine/Source/Event/Event.h"
+#include "Engine/Source/Event/EvtSched.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/Gx.h"
 #include "Engine/Source/Gxu/Gxu.h"
@@ -210,6 +211,10 @@ static int32_t OnPaint(const void* data, void* param) {
 
         GxXformSetViewport(minX, maxX, minY, maxY, minZ, maxZ);
         GxuFontUpdate();
+
+        // NOT IN BINARY: closes the "wow-render" phase before the present begins, so the spike logger can
+        // attribute a long paint frame to the scene or to the driver wait rather than to event 23 as a whole.
+        SpikeLogPaintEnd();
 
         if (!s_noPresent) {
             if (s_screenshotCallback) {

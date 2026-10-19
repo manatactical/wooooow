@@ -176,10 +176,6 @@ int32_t TextureOnAtlas(CTexture* texture);
 TEXFILETYPE TexturePickAlternateFilename(const char* fileName, TEXFILETYPE type, char* buffer, uint32_t size);
 EGxTexFormat TexturePixelFormatToGxTexFormat(PIXEL_FORMAT format);
 void TextureReportLoadError(const char* type, const char* fileName, CStatus* status);
-// NOT IN BINARY. The async texture upload budget in bytes, 0 meaning the original 4 MiB.
-// Set from the `asyncLoadBudget` cvar; read on the frame thread by the async upload poll.
-void TextureSetAsyncLoadBudget(uint32_t bytes);
-uint32_t TextureGetAsyncLoadBudget();
 void TextureSetCacheSize(int32_t size);
 void TextureSetFilterMode(EGxTexFilter filter);
 void TextureSetMaxAnisotropy(uint32_t maxAnisotropy);

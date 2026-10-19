@@ -63,18 +63,6 @@ CM2SceneRender::CM2SceneRender(CM2Scene* scene) {
     this->m_projectedModAddUnlitEffect = CShaderEffectManager::GetEffect("Projected_ModAdd_Unlit");
 }
 
-// NOT IN BINARY. Whether a model batch's texture may block the frame thread when it is not resident yet.
-// The stock call passes wait=1, which in TextureGetGxTex means "do not defer, load it now", so rotating
-// the camera pulls every newly visible model's textures in on the render thread, one batch at a time. That
-// is invisible in phase timers because each wait is a few ms and the time is spent inside OsSleep(1).
-// 0 keeps the stock behaviour; 1 uses whatever is already resident and lets the async path fill the rest.
-bool g_gxBatchTextureSyncLoad = true;
-
-// NOT IN BINARY. See the comment on g_gxBatchTextureSyncLoad.
-void GxSetBatchTextureSyncLoad(bool enabled) {
-    g_gxBatchTextureSyncLoad = enabled;
-}
-
 // VERIFY: 43a75437 manual
 // OFFSET: 0x0081F450
 void CM2SceneRender::SetupTextures() {
@@ -112,7 +100,10 @@ void CM2SceneRender::SetupTextures() {
             CTexture* texture;
 
             if (combo < this->m_data->m_textures.m_count && (texture = this->m_curModel->m_textures[combo]) != nullptr) {
-                gxTex = TextureGetGxTex(texture, g_gxBatchTextureSyncLoad ? 1 : 0, nullptr);
+                // NOT IN BINARY note: the second argument is the stock 1. Passing 0 (defer to the async
+                // path) was measured and made things worse: present-d3d's worst case went 430 -> 885 ms,
+                // because deferred loads then landed in bursts. Kept at 1 deliberately.
+                gxTex = TextureGetGxTex(texture, 1, nullptr);
 
                 if (gxTex) {
                     uint32_t flags = this->m_data->m_textures[combo].m_flags;

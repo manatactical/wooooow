@@ -241,9 +241,13 @@ void WriteSummaryLocked() {
     uint32_t p99 = Percentile(0.99);
     uint32_t average = s_windowWorkTotal / s_windowFrames;
 
-    fprintf(file, "# summary %8u ms  frames=%u  frame p50=%u p95=%u p99=%u max=%u  work avg=%u ms  spikes=%u\n",
-            OsGetAsyncTimeMs() - s_startMs, s_windowFrames, p50, p95, p99, s_windowWorstMs, average,
-            s_windowSpikes);
+    fprintf(file, "# summary %8u ms  frames=%u  fps=%.1f  fps_low1=%.1f  frame p50=%u p95=%u p99=%u max=%u  work avg=%u ms  spikes=%u\n",
+            OsGetAsyncTimeMs() - s_startMs, s_windowFrames,
+            // NOT IN BINARY. Average and worst-1% frame rate, derived from the same histogram the
+            // percentiles come from, so a fps claim can be checked against the frame times beside it.
+            (p50 || s_windowWorstMs) ? 1000.0f / static_cast<float>(p50 ? p50 : s_windowWorstMs) : 0.0f,
+            p99 ? 1000.0f / static_cast<float>(p99) : 0.0f,
+            p50, p95, p99, s_windowWorstMs, average, s_windowSpikes);
 
     for (uint32_t i = 0; i < s_windowSpanCount; i++) {
         fprintf(file, "#   span  %-24s total=%7u ms  max=%5u ms  count=%u\n", s_windowSpans[i].name,

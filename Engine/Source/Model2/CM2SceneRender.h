@@ -11,10 +11,6 @@
 class C3Vector;
 class CM2Cache;
 
-// NOT IN BINARY. See CM2SceneRender.cpp: whether a batch may block the render thread on a texture that is
-// not resident yet. Off means newly visible models use whatever has loaded and pop in a frame or two later.
-extern bool g_gxBatchTextureSyncLoad;
-void GxSetBatchTextureSyncLoad(bool enabled);
 class CM2Lighting;
 class CM2Model;
 class CM2Scene;

@@ -47,13 +47,10 @@ void AsyncFileReadInitialize(uint32_t threadSleep, uint32_t handlerTimeout);
 void AsyncFileReadSetDiskQueueCount(uint32_t count);
 uint32_t AsyncFileReadGetDiskQueueCount();
 
-// NOT IN BINARY. Frame-time budgets for the two uncapped drains in this file. Both default to 0, which
-// means "original behaviour": the poll handlers run without a cap and AsyncFileReadWaitAll blocks until
-// every read has landed. A non-zero value makes each of them return once that many milliseconds have
-// been spent, leaving the rest queued for the next pass.
-void AsyncFileReadSetPollHandlerBudget(uint32_t budgetMs);
+// NOT IN BINARY. Frame-time budget for the AsyncFileReadWaitAll drain. Left at 0 (block until empty,
+// original behaviour) after measuring: capping it made the worst case worse, because map load simply
+// calls it again. Kept as a seam for later work rather than exercised today.
 void AsyncFileReadSetWaitAllBudget(uint32_t budgetMs);
-uint32_t AsyncFileReadGetPollHandlerBudget();
 uint32_t AsyncFileReadGetWaitAllBudget();
 bool AsyncFileReadIsReading();
 void AsyncFileReadLinkObject(CAsyncObject* object, int32_t urgent);

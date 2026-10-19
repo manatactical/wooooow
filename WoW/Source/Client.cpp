@@ -1087,18 +1087,8 @@ int32_t InitializeEngineCallback(const void* data, void* param) {
 
     s_cvTextureFilteringMode = CVar::Register("textureFilteringMode", "Texture filtering mode", 1, "1", CWorldParam::TextureFilteringCallback, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvarUIFaster = CVar::Register("UIFaster", "UI acceleration option", 0, "3", UIFasterCallback, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_cvTextureCacheSize = CVar::Register("textureCacheSize", "Texture cache size in bytes", 1, "32", TextureCacheSizeCallback, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvTextureCacheSize = CVar::Register("textureCacheSize", "Texture cache size in bytes", 1, "128", TextureCacheSizeCallback, CATEGORY_GRAPHICS, false, nullptr, false);
     TextureSetCacheSize(s_cvTextureCacheSize->m_intValue << 20);
-
-    // NOT IN BINARY. How many bytes of async texture reads may be in flight at once. The original constant
-    // is 4 MiB, and a background drain that fills that budget is what makes the next foreground texture
-    // load sleep on the disk for a whole frame. Raising it trades peak load time for fewer paint stalls;
-    // 0 restores the original. See Logs\spikes.<pid>.log, "tex-budget-full" and "async-wait".
-    CVar* asyncLoadBudget = CVar::Register("asyncLoadBudget", "Engine option: async texture upload budget in MiB (0 = 4 MiB original)", 1, "0", AsyncLoadBudgetCallback, CATEGORY_DEBUG, false, nullptr, false);
-
-    if (asyncLoadBudget->m_intValue > 0) {
-        TextureSetAsyncLoadBudget(static_cast<uint32_t>(asyncLoadBudget->m_intValue) << 20);
-    }
 
     uint32_t m2Flags = GetM2CvarFlags();
     AddConsoleDeviceDefaultCallback(SetDefaults);

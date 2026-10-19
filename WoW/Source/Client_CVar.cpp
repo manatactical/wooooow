@@ -540,20 +540,6 @@ bool TextureCacheSizeCallback(CVar* var, const char* oldValue, const char* value
     return true;
 }
 
-// NOT IN BINARY. Keeps `asyncLoadBudget` live: the value is an integer count of MiB, and 0 restores the
-// original 4 MiB budget. Engine/Source/Services/Texture.cpp owns the actual number.
-bool AsyncLoadBudgetCallback(CVar* var, const char* oldValue, const char* value, void* arg) {
-    int32_t megabytes = SStrToInt(value);
-
-    if (megabytes < 0) {
-        return false;
-    }
-
-    TextureSetAsyncLoadBudget(static_cast<uint32_t>(megabytes) << 20);
-
-    return true;
-}
-
 // VERIFY: d4af3a76 manual
 // OFFSET: 0x00402410
 static bool BatchDoodadsCallback(CVar* var, const char* oldValue, const char* value, void* arg) {
@@ -709,46 +695,29 @@ void ClientRegisterConsoleCommands() {
 // VERIFY: dd31cf34 auto
 // OFFSET: 0x004026B0
 void AsyncFileReadRegisterCVars() {
-    // NOT IN BINARY. Must be read before AsyncFileReadInitialize, because that is where the worker threads
-    // are created. 0 keeps the original single disk worker; the sandbox default is half the logical cores,
-    // which leaves plenty for the rest of the client and turns an SSD into what it is.
-    uint32_t defaultDiskWorkers = OsGetNumberOfProcessors() / 2;
+    // NOT IN BINARY. The disk queue is hardcoded to 8 workers. Measured on this SSD: 1 -> 8 workers cut
+    // AsyncFileReadWaitAll's worst case from 852 ms to 314 ms, and more workers did not help further
+    // (8x threads gave 2.7x, i.e. the disk was no longer the serial part). It is half the logical cores,
+    // clamped to 12, so it still behaves on a smaller machine.
+    {
+        uint32_t workers = OsGetNumberOfProcessors() / 2;
 
-    if (defaultDiskWorkers < 1) {
-        defaultDiskWorkers = 1;
+        if (workers < 1) {
+            workers = 1;
+        } else if (workers > 8) {
+            workers = 8;
+        }
+
+        AsyncFileReadSetDiskQueueCount(workers);
     }
-
-    if (defaultDiskWorkers > 12) {
-        defaultDiskWorkers = 12;
-    }
-
-    char workerDefault[16];
-    SStrPrintf(workerDefault, sizeof(workerDefault), "%u", defaultDiskWorkers);
-
-    CVar* diskWorkers = CVar::Register("asyncDiskWorkers", "Engine option: worker threads serving the disk queue (takes effect on restart)", 1, workerDefault, nullptr, CATEGORY_DEBUG, false, nullptr, false);
-    AsyncFileReadSetDiskQueueCount(static_cast<uint32_t>(diskWorkers->m_intValue > 0 ? diskWorkers->m_intValue : 0));
 
     s_cvAsyncThreadSleep = CVar::Register("asyncThreadSleep", "Engine option: Async read thread sleep", 1, "0", AsyncFileReadThreadSleepCallback, CATEGORY_DEBUG, false, nullptr, false);
     s_cvAsyncHandlerTimeout = CVar::Register("asyncHandlerTimeout", "Engine option: Async read main thread timeout", 1, "100", AsyncFileReadHandlerTimeoutCallback, CATEGORY_DEBUG, false, nullptr, false);
     AsyncFileReadInitialize(s_cvAsyncThreadSleep->m_intValue, s_cvAsyncHandlerTimeout->m_intValue);
 
-    // NOT IN BINARY. Caps the poll-handler phase of one async poll tick, which previously had no limit and
-    // was measured spending 1007 ms on the frame thread draining texture uploads (worst=event 7). Set it
-    // back to 0 to restore the original uncapped behaviour when comparing.
-    CVar* pollBudget = CVar::Register("asyncPollBudget", "Engine option: max ms one async poll tick may spend in its handlers (0 = uncapped)", 1, "0", nullptr, CATEGORY_DEBUG, false, nullptr, false);
-    AsyncFileReadSetPollHandlerBudget(static_cast<uint32_t>(pollBudget->m_intValue > 0 ? pollBudget->m_intValue : 0));
-
-    // NOT IN BINARY. Same, for AsyncFileReadWaitAll, which otherwise blocks until every queued read lands
-    // (measured 2301 ms total, 751 ms worst, 374 reads pending). 0 keeps the original block-until-empty.
-    CVar* waitAllBudget = CVar::Register("asyncWaitAllBudget", "Engine option: max ms AsyncFileReadWaitAll may block (0 = until empty)", 1, "0", nullptr, CATEGORY_DEBUG, false, nullptr, false);
-    AsyncFileReadSetWaitAllBudget(static_cast<uint32_t>(waitAllBudget->m_intValue > 0 ? waitAllBudget->m_intValue : 0));
-
-    // NOT IN BINARY. Model batches ask for their texture with wait=1, which loads it on the render thread
-    // instead of deferring. Rotating the camera then pulls every newly visible model's textures in
-    // synchronously, one batch per draw. 1 restores the stock behaviour; 0 uses whatever is resident and
-    // lets the async path catch up, which trades a frame of pop-in for a flat frame time.
-    CVar* batchTexture = CVar::Register("m2BatchTextureSyncLoad", "Engine option: load model textures synchronously during a draw (1 = stock, 0 = defer)", 1, "1", nullptr, CATEGORY_DEBUG, false, nullptr, false);
-    GxSetBatchTextureSyncLoad(batchTexture->m_intValue != 0);
+    // The two drain budgets and the batch-texture switch measured as either neutral or harmful, so they are
+    // left at their stock values and no longer registered: draining the poll handlers early and deferring
+    // texture loads both made present-d3d worse (430 -> 885 ms max) without moving the stutter.
 }
 
 // VERIFY: 8ac33977 auto

@@ -98,22 +98,10 @@ static int32_t s_gxTexCacheMaxSize;
 // STATIC: 0x00B49CA0
 static uint32_t s_asyncLoadBufferUsed;
 
-// NOT IN BINARY. The async upload budget, as a byte count. Both the drain loop (AsyncTextureHandler) and
-// the gate before a texture is handed to the read queue use it, so raising it lets more textures be in
-// flight -- at the cost of the frame thread spending longer in the handler. 0 keeps the original 4 MiB.
-// Written from a cvar callback (frame thread) and read from the poll handler (also frame thread); nothing
-// else touches it, so it needs no atomic.
-static uint32_t s_asyncLoadBudget = 0x400000;
-
-// NOT IN BINARY. See Texture.h.
-void TextureSetAsyncLoadBudget(uint32_t bytes) {
-    s_asyncLoadBudget = bytes ? bytes : 0x400000;
-}
-
-// NOT IN BINARY. See Texture.h.
-uint32_t TextureGetAsyncLoadBudget() {
-    return s_asyncLoadBudget;
-}
+// NOT IN BINARY. The async upload budget, as a byte count. Left at the original 4 MiB: raising it was
+// offered as a cvar and never showed a benefit worth the extra frame-thread time in the drain, so it is
+// a constant again rather than a knob.
+static constexpr uint32_t s_asyncLoadBudget = 0x400000;
 
 // STATIC: 0x00B49CA4
 static TSHashTableReuse<CTexture, HASHKEY_TEXTUREFILE> s_textureCache;
@@ -1279,7 +1267,7 @@ void AsyncTextureHandler() {
     // over budget it reads as a huge `available`, which is what makes the drain work through the backlog.
     // Clamping it to 0 instead stalls the queue -- textures never leave s_asyncTextureList, foreground
     // loads keep getting a placeholder, and the models that needed them draw nothing.
-    const uint32_t budget = TextureGetAsyncLoadBudget();
+    const uint32_t budget = s_asyncLoadBudget;
     uint32_t available = budget - s_asyncLoadBufferUsed;
     const uint32_t startAvailable = available;
 
@@ -2344,7 +2332,7 @@ CTexture* CreateBlpAsync(char* extension, const char* fileName, uint32_t flags, 
     // The original comparison, kept as it was. `0x400000 - used` wrapping to a huge value is what sends
     // an over-budget texture straight to AsyncTextureProcess; adding a `used > budget` guard here parks it
     // on s_asyncTextureList instead, and with the drain also clamped the list never moves again.
-    if (TextureGetAsyncLoadBudget() - s_asyncLoadBufferUsed < object->m_size) {
+    if (s_asyncLoadBudget - s_asyncLoadBufferUsed < object->m_size) {
         s_asyncTextureList.LinkNode(object, 2, nullptr);
     } else {
         AsyncTextureProcess(object, 0);

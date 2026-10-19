@@ -18,30 +18,19 @@ static const char* s_asyncQueueNames[3] = { "Disk Queue", "Net Geometry Queue", 
 // STATIC: 0x00AC3444
 static uint32_t s_handlerTimeout = 100;
 
-// NOT IN BINARY. Wall-clock budget for the poll-handler phase of AsyncFileReadPollHandler. The postload
-// loop above already honours s_handlerTimeout, but the poll handlers it then runs had no cap at all: a
-// single tick could spend a second draining texture uploads on the frame thread (measured: work=1021 ms,
-// worst=event 7). 0 restores the original uncapped behaviour.
+// NOT IN BINARY. Wall-clock budget for the poll-handler phase of AsyncFileReadPollHandler. Left at 0
+// (uncapped, original behaviour) after measuring: bounding the drain only moved the cost into repeated
+// passes and did not remove it.
 static uint32_t s_pollHandlerBudgetMs = 0;
 
 // NOT IN BINARY. Budget for AsyncFileReadWaitAll. That function spins until every outstanding read has
 // landed, which is correct under a loading screen and wrong during play: a run measured 4 waits totalling
 // 2301 ms with 374 reads queued. With a budget it drains for that long and returns, and the caller's own
 // retry (map load runs it repeatedly) finishes the rest. 0 restores the original block-until-empty.
+//
+// Left at 0 (uncapped / original) after measuring: capping it moved the cost into repeated calls and made
+// the worst case worse (751 -> 1024 ms), so the budget machinery stays but is not exercised.
 static uint32_t s_waitAllBudgetMs = 0;
-
-// NOT IN BINARY. See AsyncFile.h.
-void AsyncFileReadSetPollHandlerBudget(uint32_t budgetMs) {
-    s_pollHandlerBudgetMs = budgetMs;
-}
-
-void AsyncFileReadSetWaitAllBudget(uint32_t budgetMs) {
-    s_waitAllBudgetMs = budgetMs;
-}
-
-uint32_t AsyncFileReadGetPollHandlerBudget() {
-    return s_pollHandlerBudgetMs;
-}
 
 uint32_t AsyncFileReadGetWaitAllBudget() {
     return s_waitAllBudgetMs;
@@ -256,13 +245,6 @@ int32_t AsyncFileReadPollHandler(const void* data, void* param) {
     }
 
     for (uint32_t i = 0; i < s_asyncPollHandlers.Count(); i++) {
-        // NOT IN BINARY. Bounded by the same kind of budget the postload loop uses, so one poll tick can
-        // no longer sit in a texture-upload drain for a second. Only applies when a budget is configured;
-        // the default of 0 leaves the original behaviour exactly as it was.
-        if (s_pollHandlerBudgetMs && OsGetAsyncTimeMs() - start > s_pollHandlerBudgetMs) {
-            break;
-        }
-
         const uint32_t handlerStart = OsGetAsyncTimeMs();
 
         s_asyncPollHandlers[i]();

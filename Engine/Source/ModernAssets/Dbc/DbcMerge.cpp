@@ -1,5 +1,6 @@
 #include "Engine/Source/ModernAssets/Dbc/DbcMerge.h"
 
+#include "Engine/Source/ModernAssets/Dbc/DbcStringFields.h"
 #include "Engine/Source/ModernAssets/ModernAssetsFile.h"
 #include "Engine/Source/ModernAssets/ModernAssetsLog.h"
 
@@ -84,27 +85,20 @@ namespace modern::dbc
             return true;
         }
 
-        /**
-         * @brief Byte offsets of the fields that hold a string-block offset, per table.
-         *
-         * A record's string fields are offsets into that file's own string block, so an appended row
-         * has to have them re-based into the base table's block. A table not listed here is treated as
-         * having none, which is correct for the numeric-only tables and harmless for the rest: the
-         * offset bytes are copied through, and an out-of-range offset reads as an empty string.
-         */
+        /// Byte offsets of the fields that hold a string-block offset, per table.
+        ///
+        /// A record's string fields are offsets into that file's own string block, so an appended row
+        /// has to have them re-based into the base table's block. The table is generated from each
+        /// table's own Read() and covers every table the client ships (see DbcStringFields.h) -- an
+        /// incomplete list is not a harmless omission: an unre-based offset is then read as an index
+        /// into the base block and prints whatever bytes happen to sit there, which is exactly how
+        /// garbage reached item and spell tooltips.
         const std::vector<uint32_t>* StringFields(const char* tableName)
         {
-            static const std::unordered_map<std::string, std::vector<uint32_t>> kFields = {
-                { "CreatureDisplayInfo", { 24, 28, 32, 36 } },
-                { "CreatureModelData",   { 8 } },
-                { "ItemDisplayInfo",     { 4, 8, 12, 16, 20, 24, 60, 64, 68, 72, 76, 80, 84, 88 } },
-                { "SpellIcon",           { 4 } },
-                { "AnimationData",       { 4 } },
-            };
-
             static const std::vector<uint32_t> kNone;
-            const auto it = kFields.find(tableName ? tableName : "");
-            return it == kFields.end() ? &kNone : &it->second;
+            const auto& fields = StringFieldTable();
+            const auto it = fields.find(tableName ? tableName : "");
+            return it == fields.end() ? &kNone : &it->second;
         }
 
         std::string BaseNameFromPath(const char* path)
@@ -127,7 +121,7 @@ namespace modern::dbc
         /// Copies one record's string fields into the destination block, returning the new offsets.
         void RemapStrings(uint8_t* row, uint32_t recordSize, const std::vector<uint32_t>& fields,
                           const std::vector<uint8_t>& fromBlock, std::vector<uint8_t>& toBlock,
-                          std::unordered_map<uint32_t, uint32_t>& cache)
+                          std::unordered_map<uint32_t, uint32_t>& cache, uint32_t emptyAt)
         {
             for (uint32_t fieldOffset : fields)
             {
@@ -137,8 +131,7 @@ namespace modern::dbc
                 std::memcpy(&offset, row + fieldOffset, 4);
                 if (offset >= fromBlock.size())
                 {
-                    const uint32_t zero = 0;
-                    std::memcpy(row + fieldOffset, &zero, 4);
+                    std::memcpy(row + fieldOffset, &emptyAt, 4);
                     continue;
                 }
 
@@ -147,7 +140,16 @@ namespace modern::dbc
                 const char* text = reinterpret_cast<const char*>(fromBlock.data()) + offset;
                 const size_t room = fromBlock.size() - offset;
                 const char* end = static_cast<const char*>(std::memchr(text, '\0', room));
-                const size_t length = end ? static_cast<size_t>(end - text) + 1 : room;
+
+                // A field pointing at a string that is not terminated before the end of the block is
+                // as broken as one pointing outside it; treat it as empty rather than copy the tail.
+                if (!end)
+                {
+                    std::memcpy(row + fieldOffset, &emptyAt, 4);
+                    continue;
+                }
+
+                const size_t length = static_cast<size_t>(end - text) + 1;
 
                 const uint32_t key = offset;
                 auto found = cache.find(key);
@@ -194,14 +196,12 @@ namespace modern::dbc
         return found;
     }
 
-    bool MergeInto(const char* tableName, const uint8_t* base, uint32_t baseSize,
-                   std::vector<uint8_t>& out, uint32_t* appended, uint32_t* replaced)
+    bool MergeBytes(const char* tableName, const uint8_t* base, uint32_t baseSize,
+                    const std::vector<std::vector<uint8_t>>& continuations, std::vector<uint8_t>& out,
+                    uint32_t* appended, uint32_t* replaced)
     {
         if (appended) *appended = 0;
         if (replaced) *replaced = 0;
-
-        std::vector<Continuation> continuations = DiscoverContinuations(
-            (std::string("DBFilesClient\\") + (tableName ? tableName : "") + ".dbc").c_str());
         if (continuations.empty()) return false;
 
         DbcFile merged{};
@@ -209,25 +209,39 @@ namespace modern::dbc
 
         const uint32_t recordSize = merged.header.recordSize;
         if (!recordSize) return false;
+
+        // A table the generated list does not know cannot be merged safely: its string offsets would
+        // stay pointed at the add-on file's own block. Say so once instead of loading garbage.
+        if (!tableName || !StringFieldTable().count(tableName))
+        {
+            MODERN_ASSETS_LOG_WARN("dbc: '%s' has no string-field map; add-on rows skipped",
+                                   tableName ? tableName : "<null>");
+            return false;
+        }
+
         const std::vector<uint32_t>* stringFields = StringFields(tableName);
+
+        // A field whose source offset is unusable has to become an empty string. Offset 0 is only
+        // empty if the base block happens to start with a NUL, so point those at a byte this code
+        // owns instead of trusting the base table's first byte.
+        uint32_t emptyAt = 0;
+        if (merged.stringBlock.empty() || merged.stringBlock[0] != 0)
+        {
+            emptyAt = static_cast<uint32_t>(merged.stringBlock.size());
+            merged.stringBlock.push_back(0);
+        }
 
         uint32_t totalAppended = 0;
         uint32_t totalReplaced = 0;
         bool anyApplied = false;
 
-        for (const Continuation& entry : continuations)
+        for (const std::vector<uint8_t>& bytes : continuations)
         {
-            std::vector<uint8_t> bytes;
-            if (!modern::assets::ReadWholeFile(entry.path.c_str(), bytes))
-            {
-                MODERN_ASSETS_LOG_WARN("dbc: cannot read continuation '%s'", entry.path.c_str());
-                continue;
-            }
-
             DbcFile cont{};
             if (!ParseDbc(bytes.data(), static_cast<uint32_t>(bytes.size()), cont))
             {
-                MODERN_ASSETS_LOG_WARN("dbc: '%s' is not a valid WDBC table", entry.path.c_str());
+                MODERN_ASSETS_LOG_WARN("dbc: '%s' add-on file is not a valid WDBC table",
+                                       tableName ? tableName : "<null>");
                 continue;
             }
 
@@ -237,7 +251,7 @@ namespace modern::dbc
                 cont.header.recordSize != merged.header.recordSize)
             {
                 MODERN_ASSETS_LOG_WARN("dbc: '%s' schema mismatch (fields %u/%u, row %u/%u); skipped",
-                                       entry.path.c_str(), cont.header.fieldCount,
+                                       tableName ? tableName : "<null>", cont.header.fieldCount,
                                        merged.header.fieldCount, cont.header.recordSize, recordSize);
                 continue;
             }
@@ -252,7 +266,6 @@ namespace modern::dbc
             }
 
             std::unordered_map<uint32_t, uint32_t> stringCache;
-            stringCache.emplace(0, 0);
 
             for (uint32_t i = 0; i < cont.header.recordCount; ++i)
             {
@@ -262,7 +275,7 @@ namespace modern::dbc
 
                 std::vector<uint8_t> row(srcRow, srcRow + recordSize);
                 RemapStrings(row.data(), recordSize, *stringFields, cont.stringBlock,
-                             merged.stringBlock, stringCache);
+                             merged.stringBlock, stringCache, emptyAt);
 
                 const auto existing = idToIndex.find(id);
                 if (existing != idToIndex.end())
@@ -293,5 +306,28 @@ namespace modern::dbc
         if (appended) *appended = totalAppended;
         if (replaced) *replaced = totalReplaced;
         return true;
+    }
+
+    bool MergeInto(const char* tableName, const uint8_t* base, uint32_t baseSize,
+                   std::vector<uint8_t>& out, uint32_t* appended, uint32_t* replaced)
+    {
+        const std::vector<Continuation> found = DiscoverContinuations(
+            (std::string("DBFilesClient\\") + (tableName ? tableName : "") + ".dbc").c_str());
+
+        std::vector<std::vector<uint8_t>> continuations;
+        continuations.reserve(found.size());
+
+        for (const Continuation& entry : found)
+        {
+            std::vector<uint8_t> bytes;
+            if (!modern::assets::ReadWholeFile(entry.path.c_str(), bytes))
+            {
+                MODERN_ASSETS_LOG_WARN("dbc: cannot read continuation '%s'", entry.path.c_str());
+                continue;
+            }
+            continuations.push_back(std::move(bytes));
+        }
+
+        return MergeBytes(tableName, base, baseSize, continuations, out, appended, replaced);
     }
 }

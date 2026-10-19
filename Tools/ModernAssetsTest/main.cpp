@@ -23,6 +23,8 @@
 #include "Engine/Source/ModernAssets/Db2/Db2Table.h"
 #include "Engine/Source/ModernAssets/Db2/LightTables.h"
 #include "Engine/Source/ModernAssets/Db2/Wdc5.h"
+#include "Engine/Source/ModernAssets/Dbc/DbcMerge.h"
+#include "Engine/Source/ModernAssets/Dbc/DbcStringFields.h"
 #include "Engine/Source/ModernAssets/M2/M2Modern.h"
 #include "Engine/Source/ModernAssets/ModernAssetsFile.h"
 
@@ -405,6 +407,154 @@ namespace
               "unknown magic is rejected");
         Check(!modern::db2::DecodeDB2(nullptr, 0, out, nullptr, 0), "null input is rejected");
     }
+
+    // ---- DBC add-on merge ------------------------------------------------------------------------
+    // The merge re-bases each add-on row's string-block offsets into the base table's block. A field
+    // the string-field map does not know is copied through verbatim and then indexes the base block at
+    // the wrong place, which is what printed garbage into item and spell tooltips. These checks build
+    // a two-string table by hand and assert where the offsets land.
+
+    std::vector<uint8_t> BuildWdbc(uint32_t fieldCount, uint32_t recordSize,
+                                  const std::vector<std::vector<uint8_t>>& rows,
+                                  const std::string& strings)
+    {
+        Writer w;
+        w.Add<uint32_t>(0x43424457u); // 'WDBC'
+        w.Add<uint32_t>(static_cast<uint32_t>(rows.size()));
+        w.Add<uint32_t>(fieldCount);
+        w.Add<uint32_t>(recordSize);
+        w.Add<uint32_t>(static_cast<uint32_t>(strings.size()));
+        for (const std::vector<uint8_t>& row : rows) w.Blob(row.data(), row.size());
+        w.Blob(strings.data(), strings.size());
+        return w.bytes;
+    }
+
+    std::vector<uint8_t> Row32(std::initializer_list<uint32_t> values)
+    {
+        std::vector<uint8_t> row;
+        for (uint32_t value : values)
+        {
+            uint8_t raw[4];
+            std::memcpy(raw, &value, 4);
+            row.insert(row.end(), raw, raw + 4);
+        }
+        return row;
+    }
+
+    void CheckStringAt(const std::vector<uint8_t>& dbc, uint32_t rowIndex, uint32_t fieldOffset,
+                       const char* expected, const char* what)
+    {
+        const uint32_t recordCount = Read<uint32_t>(dbc, 4);
+        const uint32_t recordSize = Read<uint32_t>(dbc, 12);
+        const uint32_t stringSize = Read<uint32_t>(dbc, 16);
+
+        if (recordCount * recordSize + 20 + stringSize > dbc.size())
+        {
+            Check(false, what);
+            return;
+        }
+
+        const size_t rowAt = 20 + static_cast<size_t>(rowIndex) * recordSize;
+        const uint32_t offset = Read<uint32_t>(dbc, rowAt + fieldOffset);
+        const size_t blockAt = 20 + static_cast<size_t>(recordCount) * recordSize;
+
+        if (offset >= stringSize)
+        {
+            Check(false, what);
+            return;
+        }
+
+        const char* text = reinterpret_cast<const char*>(dbc.data()) + blockAt + offset;
+        Check(std::strcmp(text, expected) == 0, what);
+    }
+
+    void TestDbcMerge()
+    {
+        // Spell-shaped rows: id, a numeric field, then (for the purpose of the check) treat the map's
+        // own entry as authoritative. Using the real table keeps the test honest about which offsets
+        // the generated map actually carries.
+        const std::vector<uint32_t>* spellFields = nullptr;
+        for (const auto& entry : modern::dbc::StringFieldTable())
+            if (entry.first == "Spell") spellFields = &entry.second;
+
+        Check(spellFields != nullptr, "the generated map knows the Spell table");
+        if (!spellFields) return;
+        Check(spellFields->size() == 64, "Spell carries 4 strings x 16 locales");
+
+        const uint32_t rowSize = 936;
+        Check(static_cast<uint32_t>(spellFields->back()) + 4 <= rowSize, "Spell string fields fit the row");
+
+        // Base table: one row, and a string block whose byte 0 is deliberately NOT a NUL, so an empty
+        // field cannot get away with pointing there.
+        std::vector<uint8_t> baseRow(rowSize, 0);
+        const uint32_t baseId = 1;
+        std::memcpy(baseRow.data(), &baseId, 4);
+        const uint32_t baseName = 0; // the base block's first string
+        std::memcpy(baseRow.data() + (*spellFields)[0], &baseName, 4);
+
+        std::vector<uint8_t> base = BuildWdbc(234, rowSize, { baseRow }, std::string("Base\0", 5));
+
+        // Add-on table: a new row whose strings live in its own block, plus a field pointing outside it.
+        std::vector<uint8_t> contRow(rowSize, 0);
+        const uint32_t id = 2;
+        std::memcpy(contRow.data(), &id, 4);
+
+        // The map holds four string groups of 16 locales each, in the record's field order:
+        // name, nameSubtext, description, auraDescription. Locale 0 of each starts a group.
+        const uint32_t nameField = (*spellFields)[0];
+        const uint32_t subtextField = (*spellFields)[16];
+        const uint32_t descriptionField = (*spellFields)[32];
+        const uint32_t auraField = (*spellFields)[48];
+        Check((*spellFields)[15] + 4 <= subtextField && subtextField < (*spellFields)[31],
+              "the map's string groups are contiguous per locale");
+
+        // "Add\0" then "Subtext\0" then "Describe\0": offsets 0, 4 and 12.
+        const uint32_t name = 0, subtext = 4, description = 12, aura = 30; // aura is out of range
+        std::memcpy(contRow.data() + nameField, &name, 4);
+        std::memcpy(contRow.data() + subtextField, &subtext, 4);
+        std::memcpy(contRow.data() + descriptionField, &description, 4);
+        std::memcpy(contRow.data() + auraField, &aura, 4);
+
+        std::vector<uint8_t> cont = BuildWdbc(234, rowSize, { contRow },
+                                              std::string("Add\0Subtext\0Describe\0", 21));
+
+        std::vector<uint8_t> merged;
+        uint32_t appended = 0, replaced = 0;
+        Check(modern::dbc::MergeBytes("Spell", base.data(), static_cast<uint32_t>(base.size()),
+                                      { cont }, merged, &appended, &replaced),
+              "an add-on row is merged");
+        Check(appended == 1 && replaced == 0, "one row appended, none replaced");
+        Check(Read<uint32_t>(merged, 4) == 2, "merged table has both rows");
+
+        CheckStringAt(merged, 1, nameField, "Add", "the add-on name is re-based");
+        CheckStringAt(merged, 1, subtextField, "Subtext", "the add-on subtext is re-based");
+        CheckStringAt(merged, 1, descriptionField, "Describe", "the add-on description is re-based");
+
+        // An offset past the add-on block must become an empty string that actually reads as empty.
+        const uint32_t recordCount = Read<uint32_t>(merged, 4);
+        const uint32_t rowAt = 20 + 1 * rowSize;
+        const uint32_t auraOffset = Read<uint32_t>(merged, rowAt + auraField);
+        const size_t blockAt = 20 + static_cast<size_t>(recordCount) * rowSize;
+        const uint32_t stringSize = Read<uint32_t>(merged, 16);
+        Check(auraOffset < stringSize, "an out-of-range source offset is replaced with a real offset");
+        Check(std::strcmp(reinterpret_cast<const char*>(merged.data()) + blockAt + auraOffset, "") == 0,
+              "an out-of-range source offset reads as an empty string");
+
+        // The base row's own string must still resolve, untouched by the merge.
+        CheckStringAt(merged, 0, nameField, "Base", "the base row's string is unchanged");
+
+        // An unknown table is refused rather than merged with un-based offsets.
+        Check(!modern::dbc::MergeBytes("NotARealTable", base.data(), static_cast<uint32_t>(base.size()),
+                                       { cont }, merged, &appended, &replaced),
+              "a table without a string-field map is refused");
+
+        // Junk add-on bytes are skipped, not trusted.
+        Check(!modern::dbc::MergeBytes("Spell", base.data(), static_cast<uint32_t>(base.size()),
+                                       { std::vector<uint8_t>(32, 0x5A) }, merged, &appended, &replaced),
+              "a malformed add-on file is skipped");
+    }
+
+
 
     // ---- WDC5 ----------------------------------------------------------------------------------
     // Three columns covering the compression modes a retail table actually uses, plus an inline id:
@@ -931,6 +1081,7 @@ int main(int argc, char** argv)
     TestTruncated();
     TestHostileCounts();
     TestGarbage();
+    TestDbcMerge();
 
     if (s_failures)
     {

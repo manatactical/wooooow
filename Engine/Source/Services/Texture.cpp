@@ -4,6 +4,7 @@
 #include "Engine/Source/BlizzardCore/SFile2-Core.h"
 #include "Engine/Source/BLPFile/blp.h"
 #include "Engine/Source/Event/Event.h"
+#include "Engine/Source/Event/PerfLog.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/Gx.h"
 #include "Engine/Source/Gxu/Gxu.h"
@@ -96,6 +97,23 @@ static int32_t s_gxTexCacheMaxSize;
 
 // STATIC: 0x00B49CA0
 static uint32_t s_asyncLoadBufferUsed;
+
+// NOT IN BINARY. The async upload budget, as a byte count. Both the drain loop (AsyncTextureHandler) and
+// the gate before a texture is handed to the read queue use it, so raising it lets more textures be in
+// flight -- at the cost of the frame thread spending longer in the handler. 0 keeps the original 4 MiB.
+// Written from a cvar callback (frame thread) and read from the poll handler (also frame thread); nothing
+// else touches it, so it needs no atomic.
+static uint32_t s_asyncLoadBudget = 0x400000;
+
+// NOT IN BINARY. See Texture.h.
+void TextureSetAsyncLoadBudget(uint32_t bytes) {
+    s_asyncLoadBudget = bytes ? bytes : 0x400000;
+}
+
+// NOT IN BINARY. See Texture.h.
+uint32_t TextureGetAsyncLoadBudget() {
+    return s_asyncLoadBudget;
+}
 
 // STATIC: 0x00B49CA4
 static TSHashTableReuse<CTexture, HASHKEY_TEXTUREFILE> s_textureCache;
@@ -1243,7 +1261,17 @@ void FillInSolidTexture(const CImVector& color, CTexture* texture) {
 // VERIFY: f77dd4dd manual
 // OFFSET: 0x004B69E0
 void AsyncTextureHandler() {
-    uint32_t available = 0x400000 - s_asyncLoadBufferUsed;
+    const uint32_t start = OsGetAsyncTimeMs();
+    uint32_t queued = 0;
+    uint32_t bytes = 0;
+
+    // Deliberately the original subtraction, wrap and all. The wrap is load-bearing: when the buffer is
+    // over budget it reads as a huge `available`, which is what makes the drain work through the backlog.
+    // Clamping it to 0 instead stalls the queue -- textures never leave s_asyncTextureList, foreground
+    // loads keep getting a placeholder, and the models that needed them draw nothing.
+    const uint32_t budget = TextureGetAsyncLoadBudget();
+    uint32_t available = budget - s_asyncLoadBufferUsed;
+    const uint32_t startAvailable = available;
 
     for (CAsyncObject* object = s_asyncLoadList.Head(); !s_asyncLoadList.IsEnd(object); ) {
         CAsyncObject* next = s_asyncLoadList.RawNext(object);
@@ -1251,6 +1279,7 @@ void AsyncTextureHandler() {
         if (available >= object->m_size) {
             AsyncTextureProcess(object, 0);
             available -= object->m_size;
+            queued++;
         }
 
         object = next;
@@ -1262,9 +1291,22 @@ void AsyncTextureHandler() {
         if (available >= object->m_size) {
             AsyncTextureProcess(object, 0);
             available -= object->m_size;
+            queued++;
         }
 
         object = next;
+    }
+
+    // NOT IN BINARY. This runs on the frame thread from the poll handler, so its duration is frame time, and
+    // the budget it drains is the reason a background texture can stall a foreground load for a whole frame.
+    bytes = startAvailable >= available ? startAvailable - available : 0;
+    PerfLogCount("tex-queued", queued);
+    PerfLogCount("tex-queued-bytes", bytes);
+    PerfLogSpan("tex-handler", OsGetAsyncTimeMs() - start);
+
+    if (available < 0x10000) {
+        // A full budget means the next foreground wait has to sleep for the disk before it can proceed.
+        PerfLogCount("tex-budget-full", 1);
     }
 }
 
@@ -1286,6 +1328,11 @@ void TextureCacheUpdate() {
 
     int32_t maxDestroyed = pressure > 1 ? 32 : 16;
 
+    // NOT IN BINARY. Eviction destroys GPU textures inline on the frame thread, and a 250 ms frame is what
+    // a burst of these looks like. Counted rather than timed so the number is the same whichever thread it
+    // is read on; the phase timer already says how long the whole frame took.
+    const uint32_t start = OsGetAsyncTimeMs();
+
     for (int32_t x = 0; x < 6 && s_gxTexCacheSize > s_gxTexCacheMaxSize; x++) {
         for (int32_t y = 0; y < 6 && s_gxTexCacheSize > s_gxTexCacheMaxSize; y++) {
             CGxTexCache* entry = s_gxTexCache[x][y].Head();
@@ -1305,6 +1352,9 @@ void TextureCacheUpdate() {
             }
         }
     }
+
+    PerfLogCount("tex-evicted", static_cast<uint32_t>(destroyed));
+    PerfLogSpan("tex-evict", OsGetAsyncTimeMs() - start);
 }
 
 // VERIFY: 04d8356e auto
@@ -2281,7 +2331,10 @@ CTexture* CreateBlpAsync(char* extension, const char* fileName, uint32_t flags, 
 
     CAsyncObject* object = texture->m_asyncObject;
 
-    if (0x400000 - s_asyncLoadBufferUsed < object->m_size) {
+    // The original comparison, kept as it was. `0x400000 - used` wrapping to a huge value is what sends
+    // an over-budget texture straight to AsyncTextureProcess; adding a `used > budget` guard here parks it
+    // on s_asyncTextureList instead, and with the drain also clamped the list never moves again.
+    if (TextureGetAsyncLoadBudget() - s_asyncLoadBufferUsed < object->m_size) {
         s_asyncTextureList.LinkNode(object, 2, nullptr);
     } else {
         AsyncTextureProcess(object, 0);

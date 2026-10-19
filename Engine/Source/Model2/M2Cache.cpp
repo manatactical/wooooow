@@ -5,6 +5,7 @@
 #include "Engine/Source/Model2/M2Cache.h"
 #include "Engine/Source/Base/ObjectAlloc.h"
 #include "Engine/Source/BlizzardCore/SFile2-Core.h"
+#include "Engine/Source/Event/PerfLog.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Model2/M2Model.h"
 #include "Engine/Source/Model2/M2Scene.h"
@@ -177,6 +178,11 @@ int32_t CM2Cache::Initialize(uint32_t flags) {
 void CM2Cache::GarbageCollect(int32_t force) {
     uint32_t now = OsGetAsyncTimeMs();
 
+    // NOT IN BINARY. Freeing a model tears down textures, GPU buffers and its skin data, all on whichever
+    // thread called this. Timed because a GC that lands inside a frame is a candidate for a 250 ms hitch.
+    const uint32_t start = now;
+    uint32_t freed = 0;
+
     while (this->m_freeList) {
         CM2Shared* shared = this->m_freeList;
 
@@ -195,6 +201,12 @@ void CM2Cache::GarbageCollect(int32_t force) {
         shared->m_freePrev = nullptr;
         shared->m_freeNext = nullptr;
         delete shared;
+        freed++;
+    }
+
+    if (freed) {
+        PerfLogCount("m2-gc", freed);
+        PerfLogSpan("m2-gc", OsGetAsyncTimeMs() - start);
     }
 }
 

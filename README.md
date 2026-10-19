@@ -94,6 +94,36 @@ logger off in `WowClient` with `-DWOWCLIENT_CRASH_LOG=OFF`.
 2. Point `Data/<locale>/realmlist.wtf` at the server you want to connect to.
 3. Start `bin/Win/WowClient64.exe` (or `Wow64.exe`).
 
+### Diagnosing stutters
+
+Frame instrumentation is built in and off by default. Turn it on either way:
+
+```powershell
+# environment: value is the spike threshold in milliseconds
+$env:WOWLOG_SPIKES = 50; .\bin\Win\WowClient64.exe
+```
+
+```text
+# or at runtime, from the console
+perf on 50      # threshold in ms (default 50)
+perf off        # stop; the running window is summarised first
+perf dump       # write the rolling summary now
+```
+
+Output is `Logs\spikes.<pid>.log`:
+
+- one line per frame at or over the threshold, with the worst phase or event, the worst measured span
+  (`async-wait`, `present-d3d`, `fps-cap`, `m2-gc`, `tex-evict`, ...) and the frame's counters;
+- a rolling summary every 5 s: frame p50/p95/p99/max, average engine work, spike count, per-span totals
+  and the counters (`tex-evicted`, `tex-budget-full`, `m2-gc`, ...).
+
+Read it top-down: `frame` is the wall-clock gap between ticks, `work` is how much of it the engine spent
+running. A spike with `work` close to `frame` is the engine; a spike with `work` small is the process
+waiting (driver, disk, or the Windows message pump).
+
+`asyncLoadBudget` (MiB, `0` = original 4 MiB) raises the async texture upload budget if the log shows
+`tex-budget-full` next to long `async-wait` spans.
+
 ## Layout
 
 | Path | Contents |

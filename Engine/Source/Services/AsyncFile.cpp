@@ -3,6 +3,7 @@
 #include "Engine/Source/Services/AsyncFile.h"
 #include "Engine/Source/Base/Prop.h"
 #include "Engine/Source/BlizzardCore/SFile2-Core.h"
+#include "Engine/Source/Event/PerfLog.h"
 #include "Engine/Source/Event/Event.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Os/TimeManager.h"
@@ -280,12 +281,24 @@ void AsyncFileReadWait(CAsyncObject* object) {
     }
 
     s_waiting++;
+
+    // NOT IN BINARY. AsyncFileReadWait blocks the calling (frame) thread and pumps its own queue until the
+    // read lands, so every millisecond here is a millisecond of frame time. Measured around the whole wait
+    // and named with the file, because a 250 ms hitch with no file name says nothing about where it came from.
+    const uint32_t waitStart = OsGetAsyncTimeMs();
+
     g_queueLock.Enter();
 
     if (object->m_isProcessed) {
         g_queueLock.Leave();
+
+        // Balances the increment above. Without it the next wait trips the s_waiting guard and kills the
+        // client with an app-fatal, so this is a correctness fix and not just accounting.
+        s_waiting--;
+
         return;
     }
+
 
     s_asyncWaitObject = object;
 
@@ -321,6 +334,8 @@ void AsyncFileReadWait(CAsyncObject* object) {
 
         OsSleep(1);
     } while (true);
+
+    PerfLogSpanDetail("async-wait", OsGetAsyncTimeMs() - waitStart, name);
 
     s_waiting--;
 }

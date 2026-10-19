@@ -1,8 +1,10 @@
 #include <cstdint>
+#include <cstdlib>
 #include "Client.h"
 #include "Engine/Source/Base/CDataStore.h"
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
 #include "Engine/Source/ConsoleBase/IConsole.h"
+#include "Engine/Source/Event/PerfLog.h"
 #include "Engine/Source/Os/TimeManager.h"
 #include "Engine/Source/Storm/H/storm.h"
 #include "Engine/Source/Tempest/C3Vector.h"
@@ -29,9 +31,84 @@ int32_t CCommand_ReloadUI(const char* command, const char* arguments) {
 
 // VERIFY: d6492c90 auto
 // OFFSET: 0x008C8DE0
+//
+// NOT IN BINARY body: the original is a stub that returns 1. This one drives the frame instrumentation:
+//
+//   perf                     show what is on and where the log is
+//   perf on [thresholdMs]    start logging (default threshold 50 ms)
+//   perf off                 stop logging, writing the window that is running first
+//   perf dump                write the rolling summary now
+//
+// The numbers land in Logs\spikes.<pid>.log. Nothing is written unless logging is on, so `perf` by itself
+// costs nothing beyond the command.
 int32_t CCommand_Perf(const char* command, const char* arguments) {
+    char option[32];
+    uint32_t length = 0;
+
+    while (arguments && (*arguments == ' ' || *arguments == '\t')) {
+        arguments++;
+    }
+
+    // Whole token, not a prefix: `perf onx` and `perf one` must not take the "on" branch.
+    while (arguments && arguments[length] && arguments[length] != ' ' && arguments[length] != '\t' && length < sizeof(option) - 1) {
+        option[length] = arguments[length];
+        length++;
+    }
+
+    option[length] = '\0';
+
+    if (!length) {
+        ConsolePrintf("perf: %s, threshold %u ms, log Logs\\spikes.%u.log%s",
+                      PerfLogEnabled() ? "on" : "off", PerfLogThreshold(), SGetCurrentProcessId(),
+                      PerfLogOpenFailed() ? " (WRITE FAILED: Logs is not writable)" : "");
+        return 1;
+    }
+
+    if (!SStrCmpI(option, "off", sizeof(option))) {
+        PerfLogSetThreshold(0, 0);
+        ConsolePrintf("perf: off, summary written");
+        return 1;
+    }
+
+    if (!SStrCmpI(option, "dump", sizeof(option))) {
+        PerfLogWriteSummary();
+        ConsolePrintf("perf: summary written%s", PerfLogOpenFailed() ? " -- but the log write FAILED" : "");
+        return 1;
+    }
+
+    if (SStrCmpI(option, "on", sizeof(option)) && SStrCmpI(option, "1", sizeof(option))) {
+        ConsolePrintf("Usage: perf on [thresholdMs] | perf off | perf dump");
+        return 1;
+    }
+
+    const char* value = arguments + length;
+
+    while (*value == ' ' || *value == '\t') {
+        value++;
+    }
+
+    uint32_t threshold = 50;
+
+    if (*value) {
+        char* end = nullptr;
+        long parsed = strtol(value, &end, 10);
+
+        // Rejects "10x" as well as a negative or absurd threshold; a wrapped unsigned threshold would
+        // silently mean "never log a spike".
+        if (end == value || parsed <= 0 || parsed > 0xFFFF) {
+            ConsolePrintf("perf: bad threshold '%s'", value);
+            return 1;
+        }
+
+        threshold = static_cast<uint32_t>(parsed);
+    }
+
+    PerfLogSetThreshold(threshold, 0);
+    ConsolePrintf("perf: on, threshold %u ms, log Logs\\spikes.%u.log%s", threshold, SGetCurrentProcessId(),
+                  PerfLogOpenFailed() ? " (WRITE FAILED: Logs is not writable)" : "");
     return 1;
 }
+
 
 // VERIFY: c68202b2 auto
 // OFFSET: 0x004032A0

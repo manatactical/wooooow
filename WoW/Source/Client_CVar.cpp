@@ -539,6 +539,20 @@ bool TextureCacheSizeCallback(CVar* var, const char* oldValue, const char* value
     return true;
 }
 
+// NOT IN BINARY. Keeps `asyncLoadBudget` live: the value is an integer count of MiB, and 0 restores the
+// original 4 MiB budget. Engine/Source/Services/Texture.cpp owns the actual number.
+bool AsyncLoadBudgetCallback(CVar* var, const char* oldValue, const char* value, void* arg) {
+    int32_t megabytes = SStrToInt(value);
+
+    if (megabytes < 0) {
+        return false;
+    }
+
+    TextureSetAsyncLoadBudget(static_cast<uint32_t>(megabytes) << 20);
+
+    return true;
+}
+
 // VERIFY: d4af3a76 manual
 // OFFSET: 0x00402410
 static bool BatchDoodadsCallback(CVar* var, const char* oldValue, const char* value, void* arg) {

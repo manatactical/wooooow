@@ -36,6 +36,21 @@ namespace modern::dbc
     std::vector<Continuation> DiscoverContinuations(const char* basePath);
 
     /**
+     * @brief Merges add-on file bytes into a base table, without touching the archive set.
+     *
+     * Split out from MergeInto so a test can drive the merge with bytes it built itself.
+     *
+     * @param tableName      base name without extension, e.g. "Spell".
+     * @param base           the base table's bytes.
+     * @param baseSize       their size.
+     * @param continuations  add-on file bytes, in the order they must be applied.
+     * @return true when at least one add-on row was applied.
+     */
+    bool MergeBytes(const char* tableName, const uint8_t* base, uint32_t baseSize,
+                    const std::vector<std::vector<uint8_t>>& continuations, std::vector<uint8_t>& out,
+                    uint32_t* appended, uint32_t* replaced);
+
+    /**
      * @brief Merges every add-on file for this table into the base bytes.
      *
      * @param tableName  base name without extension, e.g. "CreatureDisplayInfo" (used to pick the

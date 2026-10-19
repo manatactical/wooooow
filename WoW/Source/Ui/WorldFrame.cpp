@@ -7,6 +7,7 @@
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
 #include "Engine/Source/Event/CKeyEvent.h"
 #include "Engine/Source/Event/CMouseEvent.h"
+#include "Engine/Source/Event/PerfLog.h"
 #include "Engine/Source/Event/Event.h"
 #include "Engine/Source/FFX/EffectGlow.h"
 #include "Engine/Source/FFX/FFX.h"
@@ -1735,6 +1736,7 @@ void CGWorldFrame::OnWorldRender() {
     // across the model passes below, because those are what stamp the units, and is detached at the world ->
     // interface boundary.
     CUnitOutline::BeginDepthPass();
+    PerfLogStage("world-render");
     CWorld::Render(this->m_camera->m_position, this->m_elapsedSec);
     CMap::RenderFootprints();
     ClntObjMgrEnumVisibleObjects(UnitPostAnimateProc, this);
@@ -1759,15 +1761,19 @@ void CGWorldFrame::OnWorldRender() {
 
     scene->SetFloat18(-CWorld::s_unk_CD7758);
     scene->m_passMask = CWorld::m_M2PassMask;
+    PerfLogStage("m2-pass0");
     scene->Draw(M2PASS_0);
 
     if (s_spellShadowStyle < 2) {
         DrawSpellCursorShadow(0x200122);
     }
 
+    PerfLogStage("drawlist-0");
     GxuSortDrawList(GxuCat_0, GxuSort_VtxStream, *World::GetCamPos());
     GxuFlushDrawList(GxuCat_0, *World::GetCamPos());
     CWorldScene::RenderDetailDoodads();
+
+    PerfLogStage("m2-liquid-weather");
 
     if (World::SceneCamLiquidStatus(nullptr)) {
         CWorldScene::RenderBarriers(this->m_elapsedSec);
@@ -1788,10 +1794,13 @@ void CGWorldFrame::OnWorldRender() {
     }
 
     SpellVisualsTick();
+    PerfLogStage("spellvisuals");
     SpellVisualsRender();
+    PerfLogStage("particulate");
     CGUnit_C::RenderMissileTrajectoryTargetingTexture();
     this->ClearTrackedObjects();
     CWorldScene::RenderParticulate();
+    PerfLogStage("drawlist-1");
     GxuSortDrawList(GxuCat_1, GxuSort_B2F, *World::GetCamPos());
     GxuFlushDrawList(GxuCat_1, *World::GetCamPos());
     DayNight::RenderGlares();
@@ -1804,8 +1813,10 @@ void CGWorldFrame::OnWorldRender() {
     // The world -> interface boundary: the outline is composited here so the interface draws over it, and the
     // shared depth is given back first so nothing past this point tests against the world.
     CUnitOutline::EndDepthPass();
+    PerfLogStage("outline");
     CUnitOutline::Composite();
 
+    PerfLogStage("interface");
     g_theGxDevicePtr->RsPop();
     SmartScreenRectClearGrid(1);
     CGChatBubbleFrame::OnWorldRender(this);

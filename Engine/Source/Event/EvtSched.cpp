@@ -10,6 +10,7 @@
 #include "Engine/Source/Event/EvtSched.h"
 #include "Engine/Source/Event/EvtThread.h"
 #include "Engine/Source/Event/EvtTimer.h"
+#include "Engine/Source/Event/PerfLog.h"
 #include "Engine/Source/Os/OsCall.h"
 #include "Engine/Source/Os/OsTcp.h"
 #include "Engine/Source/Os/System.h"
@@ -555,59 +556,19 @@ void PutContext(uint32_t nextWakeTime, uint32_t newSmoothWeight, EvtContext* con
     }
 }
 
-// NOT IN BINARY. Frame-spike logger, off unless WOWLOG_SPIKES is set in the environment (its value is the
-// threshold in whole milliseconds). It is separate from Blizzard::Log because that one stamps a timestamp,
-// takes a mutex and does an fwrite for every single call -- hundreds of those a second is its own stutter.
-//
-// The thread waits for the frame's next wake time, runs the whole tick, then comes back here, so the gap
-// between two arrivals is one frame. Two numbers go in the file: that gap, and how much of it this pump
-// actually spent running the engine. A hitch the engine caused shows in both; one the process sat out --
-// asleep in the wait, blocked in the driver, or served by the idle-timer pump (OsInputCallEventPollProc in
-// Os/Input.cpp, which runs this same dispatch chain) -- shows in the gap alone. So this says how long a
-// stall was and whether the engine was busy during it, rather than only that one happened.
-//
-// Only frames at or over the threshold reach the file, so a threshold of 50 writes a handful of lines for a
-// session instead of one per frame.
+// NOT IN BINARY. The frame instrumentation itself lives in PerfLog.cpp; these names are the call sites
+// the scheduler and the queue already use, kept so the rest of the engine does not have to know the new
+// module's shape. It is off unless WOWLOG_SPIKES is set (value = threshold in whole milliseconds); the
+// `perf` console command turns it on or off afterwards. See PerfLog.h for what is recorded.
 namespace {
-char s_spikePath[512];
-bool s_spikeEnabled;
-uint32_t s_spikeThresholdMs = 0xFFFFFFFF;
-uint32_t s_spikeStartMs;
-uint32_t s_spikeLastTickStart;
-bool s_spikeStarted;
+bool s_spikeEnvChecked;
 
-// The dispatch phase that is currently running, and the longest one this tick has seen. A tick runs several
-// phases back to back, so the last one to start is not the one that took the time -- the worst one is, and
-// that is what the log names. EvtQueue reports the event id too, so a slow dispatch says which event it was.
-const char* s_spikeStage;
-uint32_t s_spikeStageEvent = 0xFFFFFFFF;
-uint32_t s_spikeStageStartMs;
-const char* s_spikeWorstStage;
-uint32_t s_spikeWorstEvent = 0xFFFFFFFF;
-uint32_t s_spikeWorstMs;
-
-// Closes out the phase that is ending and keeps it if it is the longest so far. Public: the paint path marks
-// its own phases with it so a frame spent in a layer and a frame spent inside the driver are told apart.
-void SpikeLogStage(const char* stage) {
-    if (s_spikeStage) {
-        uint32_t elapsed = OsGetAsyncTimeMs() - s_spikeStageStartMs;
-
-        if (elapsed > s_spikeWorstMs) {
-            s_spikeWorstMs = elapsed;
-            s_spikeWorstStage = s_spikeStage;
-            s_spikeWorstEvent = s_spikeStageEvent;
-        }
+void SpikeLogCheckEnv() {
+    if (s_spikeEnvChecked) {
+        return;
     }
 
-    s_spikeStage = stage;
-    s_spikeStageEvent = 0xFFFFFFFF;
-    s_spikeStageStartMs = OsGetAsyncTimeMs();
-}
-
-
-void SpikeLogInit(uint32_t now) {
-    s_spikeStartMs = now;
-    s_spikeLastTickStart = now;
+    s_spikeEnvChecked = true;
 
     const char* value = getenv("WOWLOG_SPIKES");
 
@@ -615,93 +576,35 @@ void SpikeLogInit(uint32_t now) {
         return;
     }
 
-    // One file per process, so restarting the client beside a running one does not interleave two runs.
-    // Logs already exists -- every other diagnostic in the client writes there -- so a failure to open it is
-    // only ever the directory being read-only, and then there is simply nothing to log to.
-    sprintf(s_spikePath, "Logs\\spikes.%u.log", SGetCurrentProcessId());
-    s_spikeThresholdMs = static_cast<uint32_t>(atoi(value));
-    s_spikeEnabled = true;
+    // Explicit 0 means off, like an unset variable, and anything outside the sane range is rejected rather
+    // than wrapped: a wrapped threshold would silently mean "never log a spike".
+    const long threshold = atol(value);
 
-    // Written with the file closed again straight after: a handle held open for the life of the process
-    // cannot be read while the game is still running, which is exactly when the log is wanted.
-    FILE* file = nullptr;
-
-    if (fopen_s(&file, s_spikePath, "w") || !file) {
-        s_spikeEnabled = false;
-        return;
+    if (threshold > 0 && threshold <= 0xFFFF) {
+        PerfLogSetThreshold(static_cast<uint32_t>(threshold), 0);
     }
-
-    fprintf(file, "# frame spikes for process %u, threshold %u ms\n", SGetCurrentProcessId(), s_spikeThresholdMs);
-    fclose(file);
-}
-
-// Measured entirely inside one tick of this pump: frame is the wall-clock gap between two ticks, work is
-// how much of that gap this pump spent running them.
-void SpikeLogFrame(uint32_t tickStart, uint32_t now) {
-    if (!s_spikeStarted) {
-        s_spikeStarted = true;
-        SpikeLogInit(tickStart);
-    }
-    if (!s_spikeEnabled) {
-        return;
-    }
-
-    uint32_t frameMs = tickStart - s_spikeLastTickStart;
-    uint32_t workMs = now - tickStart;
-
-    s_spikeLastTickStart = tickStart;
-
-    if (frameMs < s_spikeThresholdMs) {
-        return;
-    }
-
-    char label[40];
-
-    if (s_spikeWorstEvent != 0xFFFFFFFF) {
-        sprintf(label, "event %u", s_spikeWorstEvent);
-    } else {
-        sprintf(label, "%s", s_spikeWorstStage ? s_spikeWorstStage : "(none)");
-    }
-
-    FILE* file = nullptr;
-
-    // No locking: exactly one thread ever runs a tick on this context, so the append is already serialised.
-    if (!fopen_s(&file, s_spikePath, "a") && file) {
-        fprintf(file, "%8u ms  frame=%5u  work=%5u  idle=%5u  worst=%-24s %5u ms\n", tickStart - s_spikeStartMs, frameMs, workMs, frameMs - workMs, label, s_spikeWorstMs);
-        fclose(file);
-    }
-
-    s_spikeStage = nullptr;
-    s_spikeStageEvent = 0xFFFFFFFF;
-    s_spikeWorstStage = nullptr;
-    s_spikeWorstEvent = 0xFFFFFFFF;
-    s_spikeWorstMs = 0;
 }
 }  // namespace
 
 // NOT IN BINARY. Marks the end of the layer paint and the start of the present, so a slow frame inside event
 // 23 is attributed to "wow-render" or "present" rather than just to the event. Called from ScrnLayerPaint.
 void SpikeLogPaintEnd() {
-    SpikeLogStage("present");
+    PerfLogPaintEnd();
 }
 
 // Starts a tick's stage accounting. Called at the top of every tick, including the ones that are too fast to
 // be logged, so a phase that overran is never attributed to the frame after it.
 void SpikeLogTickStart() {
-    s_spikeStage = nullptr;
-    s_spikeStageEvent = 0xFFFFFFFF;
-    s_spikeWorstStage = nullptr;
-    s_spikeWorstEvent = 0xFFFFFFFF;
-    s_spikeWorstMs = 0;
+    SpikeLogCheckEnv();
+    PerfLogTickStart();
 }
 
 // Called by IEvtQueueDispatch as it starts each event's handlers. Outside the anonymous namespace above so
-// EvtQueue.cpp can reach it; the state it touches is still file-local.
+// EvtQueue.cpp can reach it; the state it touches is still file-local to PerfLog.cpp.
 void SpikeLogStageEvent(uint32_t id) {
-    s_spikeStage = "handler";
-    s_spikeStageEvent = id;
-    s_spikeStageStartMs = OsGetAsyncTimeMs();
+    PerfLogStageEvent(id);
 }
+
 
 // VERIFY: 6f17c9b6 manual
 // OFFSET: 0x0047EFF0
@@ -752,6 +655,10 @@ int32_t SchedulerThreadProcProcess(uint32_t hThread, int32_t* watchdogStarted) {
         SpikeLogTickStart();
         uint32_t tickStart = OsGetAsyncTimeMs();
 
+        // Opened exactly at tickStart so the gap between the tick boundary and the first phase is not
+        // silently attributed to the previous frame's last stage.
+        PerfLogStage("SynthesizeInitialize");
+
         if (SynthesizeInitialize(context) && context->m_startWatchdog) {
             *watchdogStarted = 1;
         }
@@ -759,14 +666,14 @@ int32_t SchedulerThreadProcProcess(uint32_t hThread, int32_t* watchdogStarted) {
         float elapsedSec = static_cast<float>(static_cast<int32_t>(currTime - context->m_schedLastIdle)) * 0.001f;
         context->m_schedLastIdle = currTime;
 
-        SpikeLogStage("IEvtDispatchUpdate");
+        PerfLogStage("IEvtDispatchUpdate");
         IEvtDispatchUpdate(context, currTime, elapsedSec);
-        SpikeLogStage("IEvtTimerDispatch");
+        PerfLogStage("IEvtTimerDispatch");
         IEvtTimerDispatch(context);
 
         if (context->m_schedFlags & 2) {
             int32_t shutdown = 0;
-            SpikeLogStage("IEvtInputProcess");
+            PerfLogStage("IEvtInputProcess");
             IEvtInputProcess(context, &shutdown);
 
             if (shutdown) {
@@ -775,15 +682,15 @@ int32_t SchedulerThreadProcProcess(uint32_t hThread, int32_t* watchdogStarted) {
             }
         }
 
-        SpikeLogStage("IEvtQueueDispatchAll");
+        PerfLogStage("IEvtQueueDispatchAll");
         SynthesizePoll(context);
         IEvtQueueDispatchAll(context);
-        SpikeLogStage("SynthesizeIdle");
+        PerfLogStage("SynthesizeIdle");
         SynthesizeIdle(context, currTime, elapsedSec);
-        SpikeLogStage("SynthesizePaint");
+        PerfLogStage("SynthesizePaint");
         SynthesizePaint(context);
-        SpikeLogStage("frame-end");
-        SpikeLogFrame(tickStart, OsGetAsyncTimeMs());
+        PerfLogStage("frame-end");
+        PerfLogTickEnd(tickStart, OsGetAsyncTimeMs());
     }
 
     if (hThread == Event::s_mainThread) {

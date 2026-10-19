@@ -9,6 +9,7 @@
 #include "Engine/Source/Gx/CGxPool.h"
 #include "Engine/Source/Gx/CGxTex.h"
 #include "Engine/Source/Gx/Gx.h"
+#include "Engine/Source/Event/PerfLog.h"
 #include "Engine/Source/Os/Error.h"
 #include "Engine/Source/Os/TimeManager.h"
 #include "Engine/Source/Storm/H/storm.h"
@@ -3060,10 +3061,27 @@ void CGxDeviceD3d9Ex::ScenePresent() {
             this->DeviceScreenShot();
         }
 
-        this->WaitForFPSCap();
+        // NOT IN BINARY. See CGxDeviceD3d::ScenePresent: the cap is a Sleep() and Present() is where the
+        // driver blocks, so the two are timed apart, and only while the logger is on.
+        if (PerfLogEnabled()) {
+            const uint32_t capStart = OsGetAsyncTimeMs();
 
-        if (FAILED(this->m_d3dDevice->Present(nullptr, nullptr, nullptr, nullptr))) {
-            this->m_context = 0;
+            this->WaitForFPSCap();
+            PerfLogSpan("fps-cap", OsGetAsyncTimeMs() - capStart);
+
+            const uint32_t presentStart = OsGetAsyncTimeMs();
+
+            if (FAILED(this->m_d3dDevice->Present(nullptr, nullptr, nullptr, nullptr))) {
+                this->m_context = 0;
+            }
+
+            PerfLogSpan("present-d3d", OsGetAsyncTimeMs() - presentStart);
+        } else {
+            this->WaitForFPSCap();
+
+            if (FAILED(this->m_d3dDevice->Present(nullptr, nullptr, nullptr, nullptr))) {
+                this->m_context = 0;
+            }
         }
 
         if (this->m_d3dStereoHandle && this->m_d3dStereoDirty) {

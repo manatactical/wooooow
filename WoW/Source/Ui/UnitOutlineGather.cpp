@@ -25,9 +25,9 @@
 
 namespace {
 
-// The look, matching the WXL module's defaults. Its INI and overlay panel are not ported: the video
-// options tab carries the master switch only.
-const float kHostile[3]        = { 0.765f, 0.0f, 1.0f };
+// The look. The WXL module had these in an INI and an overlay panel; the video options tab carries the
+// master switch only, so they are constants here. Values match WXL's defaults except where noted.
+const float kHostile[3]        = { 0.545f, 0.0f, 0.0f };  // darkened blood red, not the WXL purple
 const float kNeutral[3]        = { 1.0f, 1.0f, 0.0f };
 const float kFriendly[3]       = { 0.0f, 0.784f, 0.0f };
 const float kFriendlyPlayer[3] = { 0.275f, 0.353f, 1.0f };
@@ -267,11 +267,9 @@ void CUnitOutlineGather::Update() {
     AddSelection(CGGameUI::m_currentObjectTrack, viewer, true);
 
     // The cursor can equally be over a chest, a door or a chair, and those are the same mouseover selection
-    // answering to a different type. A GameObject's GUID is the one whose high dword is the 0xF110 entry;
-    // anything else was already handled above, and the type check inside rejects a decorative one.
-    if ((CGGameUI::m_currentObjectTrack.m_guid >> 32) == 0xF110) {
-        AddDoodadSelection(CGGameUI::m_currentObjectTrack);
-    }
+    // answering to a different type. No GUID test here: the object manager's own type mask is the
+    // authoritative answer, and AddDoodadSelection asks for it and rejects a decorative object too.
+    AddDoodadSelection(CGGameUI::m_currentObjectTrack);
 
     // Every found quest giver is recorded every frame, whether or not it is selected, so a marker cannot
     // blink off between walks. Only the walk that finds them is on the timer.

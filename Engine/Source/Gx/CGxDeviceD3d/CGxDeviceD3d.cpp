@@ -4141,6 +4141,9 @@ void CGxDeviceD3d::ICreateDepthStencilSurface(uint32_t width, uint32_t height) {
         }
 
         this->m_defDepthStencilSurface->Release();
+        // The format loop below breaks on a non-null pointer, so a released-but-not-nulled member would make it
+        // exit on the freed surface if the first candidate format is rejected.
+        this->m_defDepthStencilSurface = nullptr;
     }
 
     D3DFORMAT formats[3] = { D3DFMT_D24S8, D3DFMT_D24X8, D3DFMT_D32 };

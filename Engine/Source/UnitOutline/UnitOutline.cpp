@@ -354,11 +354,16 @@ bool CUnitOutline::Enabled() {
 // Not in the original binary. A device reset frees every default-pool texture and the shader objects with
 // them. The mask textures have their render-target bit set, so the device has already had them re-created
 // by the time this runs; only the cached gx pointers need refreshing.
+//
+// The shader pointers can still be null here: this callback is registered from Init(), which runs from the
+// CGWorldFrame constructor, while the shaders are not compiled until EnsureResources() -- so any reset before
+// the first composite would otherwise dereference null. ShaderDestroy re-nulls the pointer it is given, so
+// the call still has to happen for the ones that are not null.
 void CUnitOutline::OnDeviceRestored() {
-    g_theGxDevicePtr->ShaderDestroy(s_colorPS);
-    g_theGxDevicePtr->ShaderDestroy(s_cutoutPS);
-    g_theGxDevicePtr->ShaderDestroy(s_edgePS);
-    g_theGxDevicePtr->ShaderDestroy(s_blurPS);
+    if (s_colorPS)  { g_theGxDevicePtr->ShaderDestroy(s_colorPS); }
+    if (s_cutoutPS) { g_theGxDevicePtr->ShaderDestroy(s_cutoutPS); }
+    if (s_edgePS)   { g_theGxDevicePtr->ShaderDestroy(s_edgePS); }
+    if (s_blurPS)   { g_theGxDevicePtr->ShaderDestroy(s_blurPS); }
 
     RefreshGxTexture(s_maskTex, s_mask);
     RefreshGxTexture(s_playerMaskTex, s_playerMask);

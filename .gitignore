@@ -414,7 +414,6 @@ FodyWeavers.xsd
 # Local Visual Studio CMake settings (absolute paths to re/tools)
 CMakeSettings.json
 /graphify-out/
-*.md
 .claude/skills/graphify/.graphify_version
 .claude/settings.json
 WoW/graphify-out/cache/stat-index.json

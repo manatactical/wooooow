@@ -73,11 +73,16 @@ const char* const kColorHLSL =
     "}\n";
 
 // Writes alpha-tested batches into the mask, following the real cutouts (wings, hair cards, drapes).
+// The cutoff is the batch's own alpha reference, not a fixed 0.5: hair and cloth use 0.878, and clipping
+// lower would put the line around pixels the scene never draws.
+//   c0 = { r, g, b, a }
+//   c1 = { alpha cutoff, unused, unused, unused }
 const char* const kCutoutColorHLSL =
     "sampler2D s0 : register(s0);\n"
     "float4 c0 : register(c0);\n"
+    "float4 c1 : register(c1);\n"
     "float4 main(float2 uv : TEXCOORD0) : COLOR0 {\n"
-    "  clip(tex2D(s0, uv).a - 0.5);\n"
+    "  clip(tex2D(s0, uv).a - c1.x);\n"
     "  return c0;\n"
     "}\n";
 
@@ -787,15 +792,18 @@ void CUnitOutline::StampMask(const CGxBatch& batch, const float color[4], CGxTex
 
     // The blend state says what the batch is. An opaque batch is filled flat. An alpha-tested one follows
     // its real cutout, and keeps the test in the stamp so wings and hair cards do not become solid slabs.
+    // Alpha key is the engine's name for a model material with blendMode 1, and that is what hair, robes
+    // and drapes use, so it has to be in here or the silhouette stops at the hairless body.
     // Anything else -- additive effects, attachments, glows -- is left out: those broad billboard quads
     // would otherwise be outlined as if they were the unit's own mesh.
     int32_t blend = g_theGxDevicePtr->m_appRenderStates[GxRs_BlendingMode].m_value.m_data.i[0];
 
-    if (blend != GxBlend_Opaque && blend != GxBlend_Alpha) {
+    if (blend != GxBlend_Opaque && blend != GxBlend_AlphaKey && blend != GxBlend_Alpha) {
         return;
     }
 
-    bool cutout = blend == GxBlend_Alpha && g_theGxDevicePtr->m_appRenderStates[GxRs_AlphaRef].m_value.m_data.i[0] > 0;
+    int32_t alphaRef = g_theGxDevicePtr->m_appRenderStates[GxRs_AlphaRef].m_value.m_data.i[0];
+    bool cutout = blend != GxBlend_Opaque && alphaRef > 0;
 
     // The world may be drawing through a scaled or offset viewport (FFX::Start shrinks it when the glow
     // buffer is smaller than the screen). The mask has to end up in the pixel space the composite later
@@ -852,6 +860,11 @@ void CUnitOutline::StampMask(const CGxBatch& batch, const float color[4], CGxTex
     GxRsSet(GxRs_ColorWrite, 15);
     GxRsSet(GxRs_PixelShader, cutout ? s_cutoutPS : s_colorPS);
     GxShaderConstantsSet(GxSh_Pixel, 0, color, 1);
+
+    if (cutout) {
+        float cutoff[4] = { static_cast<float>(alphaRef) * (1.0f / 255.0f), 0.0f, 0.0f, 0.0f };
+        GxShaderConstantsSet(GxSh_Pixel, 1, cutoff, 1);
+    }
 
     g_theGxDevicePtr->Draw(const_cast<CGxBatch*>(&batch), 1);
 

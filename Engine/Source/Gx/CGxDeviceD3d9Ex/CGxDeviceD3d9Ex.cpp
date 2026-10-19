@@ -3554,6 +3554,59 @@ void CGxDeviceD3d9Ex::DeviceSetRenderTarget(EGxBuffer buffer, CGxTex* texture, u
     this->m_scissorRectDirty = 1;
 }
 
+// Not in the original binary. The depth surface actually bound, for identity comparison only: the driver
+// silently refuses a depth bind that does not pair with the current colour target, and the HRESULT is not
+// checked (see DeviceSetRenderTarget), so a caller that needs the test to be real has to look. The reference
+// GetDepthStencilSurface takes is released immediately -- the caller only compares the pointer.
+void* CGxDeviceD3d9Ex::DeviceGetBoundDepthSurface() {
+    if (!this->m_d3dDevice) {
+        return nullptr;
+    }
+
+    LPDIRECT3DSURFACE9 surface = nullptr;
+
+    if (FAILED(this->m_d3dDevice->GetDepthStencilSurface(&surface))) {
+        return nullptr;
+    }
+
+    if (surface) {
+        surface->Release();
+    }
+
+    return surface;
+}
+
+// Not in the original binary. The level-0 surface of a texture, without the reference GetSurfaceLevel takes,
+// so a caller can ask whether that texture is the one currently bound.
+void* CGxDeviceD3d9Ex::DeviceGetTexSurface(CGxTex* texture) {
+    if (!texture || texture->m_target == GxTex_CubeMap) {
+        return nullptr;
+    }
+
+    if (texture->m_needsCreation || (!texture->m_apiSpecificData && !texture->m_apiSpecificData2)) {
+        this->ITexCreate(texture);
+    }
+
+    // Only m_apiSpecificData holds the D3D texture: m_apiSpecificData2 is a plain CPU buffer on the textures
+    // that use one (this device keeps the lock buffer there), so a texture carrying only that has no surface
+    // to compare -- and the cast below would dereference null.
+    if (!texture->m_apiSpecificData) {
+        return nullptr;
+    }
+
+    LPDIRECT3DSURFACE9 surface = nullptr;
+
+    if (FAILED(static_cast<IDirect3DTexture9*>(texture->m_apiSpecificData)->GetSurfaceLevel(0, &surface))) {
+        return nullptr;
+    }
+
+    // The device owns the surface for as long as the texture lives; the reference is only needed to answer
+    // the question, so it is dropped again. The pointer stays valid to compare against.
+    surface->Release();
+
+    return surface;
+}
+
 // VERIFY: b2b2eee4 auto
 // OFFSET: 0x006A1530
 void CGxDeviceD3d9Ex::DeviceResolveDepthBuffer(CGxTex* texture) {

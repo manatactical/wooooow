@@ -46,7 +46,8 @@ parts of FMOD Ex).
 
 ## Building
 
-From a Developer PowerShell or any shell with `cmake` on `PATH`:
+From a Developer PowerShell or any shell with `cmake` on `PATH`. The wrapper builds and **fails loudly** — a
+raw piped `cmake --build` swallows the error lines and the exit code, so a broken build looks green:
 
 ```powershell
 git clone https://github.com/SatyPardus/wowdecomp.git
@@ -54,12 +55,17 @@ cd wowdecomp
 
 # x64 (main target)
 cmake -S . -B build/x64 -G "Visual Studio 17 2022" -A x64
-cmake --build build/x64 --config Release --target WowClient --parallel
+powershell -NoProfile -ExecutionPolicy Bypass -File Tools/build.ps1
 
 # Win32 (optional, needs NASM)
 cmake -S . -B build/win32 -G "Visual Studio 17 2022" -A Win32
-cmake --build build/win32 --config Release --target WowClient --parallel
+powershell -NoProfile -ExecutionPolicy Bypass -File Tools/build.ps1 -Target WowClient -BuildDir build/win32
 ```
+
+`Tools/build.ps1` defaults to WowClient / Release / `build/x64`, tees the full log to
+`<buildDir>/<Target>-<Config>-build.log`, scans it for the failure markers above and exits non-zero on any
+error or a missing binary (`0` built, `1` cmake failed, `2` errors in the log, `3` no binary / unknown target).
+Without the wrapper, run cmake directly and check `$LASTEXITCODE` **before** any pipe. See AGENTS.md.
 
 In-source builds are refused, so keep the build directory separate (`build/` above).
 

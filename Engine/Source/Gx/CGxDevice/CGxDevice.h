@@ -243,6 +243,13 @@ class CGxDevice {
     virtual void DeviceUnk82() = 0;
     virtual void DeviceUnk83(uint32_t a, uint32_t b) = 0;
 
+    // Not in the original binary. The depth surface the device has bound right now, and the level-0 surface
+    // of a texture, both only for identity comparison: DeviceSetRenderTarget ignores SetDepthStencilSurface's
+    // HRESULT, so a bind that the driver refused is otherwise invisible -- the caller would keep depth testing
+    // against whatever was already there. Both return a borrowed pointer; nothing is AddRef'd.
+    virtual void* DeviceGetBoundDepthSurface();
+    virtual void* DeviceGetTexSurface(CGxTex* texture);
+
     static HSLOG m_log;
     static C2iVector s_clientAdjust;
     static const char* s_pixelShaderTargetNames[14];

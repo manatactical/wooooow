@@ -160,6 +160,10 @@ CTexture* s_depthTexture;
 CGxTex* s_depth;
 C2iVector s_depthSize;
 bool s_depthBound;
+// TEMP diagnostic. Whether the device refused the depth bind this frame -- see BeginDepthPass -- and what
+// the stamp saw for its depth test. Delete with the investigation.
+bool s_depthBindMismatch;
+int32_t s_stampDepthTest;
 // The depth target that was bound before this module took over. Null means the device's own surface, which
 // DeviceSetRenderTarget re-derives from the colour target; that is the state CWorld::Render expects back.
 CGxTex* s_savedDepth;
@@ -485,6 +489,25 @@ bool CUnitOutline::IsModel(CM2Model* model, CM2Model* want) {
     return false;
 }
 
+// Not in the original binary. FindTarget already walks the attach chain, so a rider is a target when its
+// mount is, and vice versa -- which is what the sort needs: the whole chain has to land on the same side of
+// the split or the mount would be drawn with the world and stamped over by its own rider.
+bool CUnitOutline::IsTarget(CM2Model* model) {
+    // Enabled() is checked here as well as at the stamp: the gather fills the list whether or not the option
+    // is on, and this answer reorders the model pass, so without it a player who never turned the outline on
+    // would still be drawing their world in a different order.
+    if (!model || s_inComposite || !s_count || !Enabled()) {
+        return false;
+    }
+
+    return FindTarget(model) >= 0;
+}
+
+// Not in the original binary.
+bool CUnitOutline::HasTargets() {
+    return !s_inComposite && s_count > 0 && Enabled();
+}
+
 // Not in the original binary. Called for every model batch the scene is about to draw.
 void CUnitOutline::StampBatch(const CGxBatch& batch, CM2Model* model) {
     // The first guard is what keeps the module a pure pass-through while the option is off: no mask is
@@ -651,6 +674,8 @@ bool CUnitOutline::EnsureDepthTexture() {
 // against exactly the depth the frame has already accumulated.
 void CUnitOutline::BeginDepthPass() {
     s_depthBound = false;
+    s_depthBindMismatch = false;
+    s_stampDepthTest = -1;
 
     // Deliberately not gated on s_count: the targets are picked out while the world draws, and the depth
     // has to be in place before the first batch reaches the stamp, which is well before the composite.
@@ -679,12 +704,52 @@ void CUnitOutline::BeginDepthPass() {
 
     GxRenderTargetSet(GxBuffers_Depth, s_depth, 0);
 
+    // The device does not check SetDepthStencilSurface's HRESULT, so a bind the driver refused is silent: the
+    // previous depth would stay bound while this module believed the scene's was. A stamp testing against the
+    // wrong surface then rejects the pixels it covers -- which erases the whole line rather than clipping it,
+    // the failure this module was ported to avoid. So the bind is not trusted until the device reports the
+    // surface as the one bound; when it disagrees the depth test is left off and the line is drawn unclipped.
+    if (g_theGxDevicePtr->DeviceGetBoundDepthSurface() != g_theGxDevicePtr->DeviceGetTexSurface(s_depth)) {
+        s_depthBindMismatch = true;
+
+        // The rejected bind left the device on its old depth but gx's cache naming this texture, and that
+        // cache early-outs on a match (see DeviceSetRenderTarget), so the disagreement would outlive the frame.
+        // Naming the old one back puts both on the same surface again; the bind itself is a no-op.
+        RestoreSavedDepth();
+        return;
+    }
+
     // The world clears the device's own depth, which is not this surface, so this one would otherwise start the
     // frame holding the previous frame's geometry. Cleared to 1.0 -- the far plane -- so whatever the world does
     // not draw reads as open space and no unit is clipped by a stale occluder.
     g_theGxDevicePtr->SceneClear(GxBufferBit_Depth, CImVector(0, 0, 0, 0));
 
     s_depthBound = true;
+}
+
+// Not in the original binary. See the declaration: the one safe way to hand the depth back, because asking
+// for a null depth while a colour *texture* is bound dereferences that texture without checking it.
+void CUnitOutline::RestoreSavedDepth() {
+    if (s_savedDepth) {
+        GxRenderTargetSet(GxBuffers_Depth, s_savedDepth, 0);
+        return;
+    }
+
+    CGxTex* colorTarget = nullptr;
+    g_theGxDevicePtr->DeviceGetRenderTarget(GxBuffers_Color, colorTarget);
+
+    if (colorTarget) {
+        // FFX is drawing into its own buffer, and its depth is one the device derives from that buffer. The
+        // colour binding is cleared first, the depth is dropped while the back buffer is current -- the one
+        // case that is safe -- and the colour texture is bound again, which is what makes the device build the
+        // depth that pairs with it.
+        GxRenderTargetSet(GxBuffers_Color, nullptr, 0);
+        GxRenderTargetSet(GxBuffers_Depth, nullptr, 0);
+        GxRenderTargetSet(GxBuffers_Color, colorTarget, 0);
+        return;
+    }
+
+    GxRenderTargetSet(GxBuffers_Depth, nullptr, 0);
 }
 
 // Not in the original binary. Detaches the shared depth and restores the device's own, so the composite and
@@ -699,27 +764,7 @@ void CUnitOutline::EndDepthPass() {
     // The depth the 3D pass had before this module is put back by name when there was one -- the shadow pass
     // binds its own -- and there is nothing else to do: the colour target is left as it is, which is what keeps
     // FFX's glow buffer intact.
-    if (s_savedDepth) {
-        GxRenderTargetSet(GxBuffers_Depth, s_savedDepth, 0);
-        return;
-    }
-
-    CGxTex* colorTarget = nullptr;
-    g_theGxDevicePtr->DeviceGetRenderTarget(GxBuffers_Color, colorTarget);
-
-    if (colorTarget) {
-        // FFX is drawing into its own buffer, and its depth is one the device derives from that buffer. Asking
-        // for a null depth while a colour *texture* is bound reads the texture's size without checking it (see
-        // CGxDeviceD3d::DeviceSetRenderTarget), which is a crash. So the colour binding is cleared first, the
-        // depth is dropped while the back buffer is current -- the one case that is safe -- and the colour
-        // texture is bound again, which is what makes the device build the depth that pairs with it.
-        GxRenderTargetSet(GxBuffers_Color, nullptr, 0);
-        GxRenderTargetSet(GxBuffers_Depth, nullptr, 0);
-        GxRenderTargetSet(GxBuffers_Color, colorTarget, 0);
-        return;
-    }
-
-    GxRenderTargetSet(GxBuffers_Depth, nullptr, 0);
+    RestoreSavedDepth();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -790,6 +835,7 @@ void CUnitOutline::StampMask(const CGxBatch& batch, const float color[4], CGxTex
     // and the line ends at its edge instead of switching the whole outline off. Writes stay off -- the mask
     // must not add the unit to the depth the later batches of the same unit will test against.
     GxRsSet(GxRs_DepthTest, s_depthBound ? 1 : 0);
+    s_stampDepthTest = s_depthBound ? 1 : 0;
     GxRsSet(GxRs_DepthFunc, 0);
     GxRsSet(GxRs_DepthWrite, 0);
     // Nothing here touches the vertex shader or the vertex stream: the stamp has to redraw the same
@@ -924,7 +970,7 @@ void OutlineDiag(const char* tag) {
 
     fprintf(file,
             "%s api=%d ms=%u rtt24=%d ps=%d/%d/%d/%d on=%d gx=%d/%d/%d tex=%dx%d/%dx%d/%dx%d "
-            "targets=%d maskCleared=%d depthBound=%d depthSize=%dx%d\n",
+            "targets=%d maskCleared=%d depthBound=%d depthSize=%dx%d mismatch=%d stampDepth=%d\n",
             tag,
             static_cast<int>(g_theGxDevicePtr->DeviceApi()),
             g_theGxDevicePtr->m_format.m_multisampleCount,
@@ -935,7 +981,8 @@ void OutlineDiag(const char* tag) {
             s_maskTex.m_size.x, s_maskTex.m_size.y, s_maskTex.m_texSize.x, s_maskTex.m_texSize.y,
             s_blurTex.m_size.x, s_blurTex.m_size.y,
             s_count, s_maskCleared ? 1 : 0, s_depthBound ? 1 : 0,
-            s_depthSize.x, s_depthSize.y);
+            s_depthSize.x, s_depthSize.y,
+            s_depthBindMismatch ? 1 : 0, s_stampDepthTest);
 
     fclose(file);
 }

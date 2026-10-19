@@ -65,6 +65,16 @@ class CUnitOutline {
     // render target are the ones bound, immediately after the world geometry.
     static void Composite();
 
+    // Not in the original binary. Whether a model -- or anything it hangs off, so a rider counts with its
+    // mount -- is one of this frame's outline targets. The model scene's opaque sort asks this to keep those
+    // models at the end of the pass, which is what puts the rest of the world into the depth buffer before
+    // they stamp against it.
+    static bool IsTarget(CM2Model* model);
+
+    // Not in the original binary. Whether this frame recorded anything to outline at all. The model scene
+    // asks this once per pass, so the default render order is left alone whenever the feature is idle.
+    static bool HasTargets();
+
     // Not in the original binary. Binds a frame-sized depth texture for the 3D pass and detaches it again.
     // Everything between the two calls -- terrain, world objects and the units that get stamped -- shares
     // that one depth buffer, which is what lets a stamp test against the scene. Both are no-ops when the
@@ -78,6 +88,12 @@ class CUnitOutline {
     static bool EnsureDepthTexture();
     static bool OcclusionSupported();
     static void OnDeviceRestored();
+
+    // Not in the original binary. Puts the depth the 3D pass had before this module back, safely: the device
+    // derives a depth from a bound colour *texture*, and asking for a null depth while one is bound reads its
+    // size without checking it (see CGxDeviceD3d::DeviceSetRenderTarget). Shared by EndDepthPass and the
+    // failed-bind recovery so both take the same path.
+    static void RestoreSavedDepth();
 
     static void AddEntry(CM2Model* model, const float color[4], bool keepFull);
     static int32_t FindTarget(CM2Model* model);

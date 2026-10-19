@@ -115,6 +115,16 @@ void CGxDevice::DeviceResolveDepthBuffer(CGxTex* texture) {
 void CGxDevice::DeviceCopyTex(CGxTex* source, uint32_t sourcePlane, CGxTex* dest, uint32_t destPlane) {
 }
 
+// Not in the original binary. See the declaration: both are identity checks for callers that cannot trust a
+// silent bind failure. The base device has no surfaces of its own, so it reports none.
+void* CGxDevice::DeviceGetBoundDepthSurface() {
+    return nullptr;
+}
+
+void* CGxDevice::DeviceGetTexSurface(CGxTex* texture) {
+    return nullptr;
+}
+
 void CGxDevice::LogCrashInfo(char* buffer, uint32_t size) {
 }
 

@@ -670,6 +670,14 @@ namespace
                 ++failures;
                 break;
             }
+            // The client's blend switch has no default; a value past its table draws the quad opaque.
+            const uint8_t blend = Read<uint8_t>(body, at + 0x28, bodySize);
+            if (blend > 6)
+            {
+                std::printf("  FAIL: particle %u blend %u is past the client's table\n", i, blend);
+                ++failures;
+                break;
+            }
         }
 
         // Camera field of view has to be a plausible angle now that it is a plain float again.

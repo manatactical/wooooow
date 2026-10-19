@@ -137,6 +137,7 @@ namespace modern::m2
 
         constexpr uint32_t kOffParticleFlags   = 0x004;
         constexpr uint32_t kOffParticleTexture = 0x016;
+        constexpr uint32_t kOffParticleBlend   = 0x028;
         constexpr uint32_t kOffParticleGravity = 0x084;
 
         constexpr uint16_t kPackedTextureIdMask = 0x1F;
@@ -233,6 +234,12 @@ namespace modern::m2
             const uint32_t textureCount = Rd32(ctx.body + kOffTextures);
             if (textureCount && textureId >= textureCount) textureId = 0;
             Wr16(dst + kOffParticleTexture, textureId);
+
+            // The client maps this byte through a switch with no default, so a blend past its
+            // 7-entry table leaves the emitter Opaque: the billboard quad then draws its whole
+            // alpha-masked texture opaque (a black square behind an additive glow). Modern alpha
+            // modes are past that table; AddAlpha is the nearest state the client can express.
+            if (dst[kOffParticleBlend] > 6) dst[kOffParticleBlend] = 3;
 
             if ((flags & kParticleFlagCompressedGravity) && !ExpandGravityKeys(ctx, dst, flags))
                 return false;

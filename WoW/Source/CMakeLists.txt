@@ -78,3 +78,10 @@ target_link_libraries(Wow
         WowServices
         WowSvcs
 )
+
+if (WOWDECOMP_MODERN_ASSETS)
+    target_link_libraries(Wow
+        PRIVATE
+            ModernAssets
+    )
+endif ()

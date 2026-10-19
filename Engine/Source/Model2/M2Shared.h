@@ -59,6 +59,12 @@ class CM2Shared {
     /* 0150 */ M2Data* m_data;
     /* 0154 */ CAaBox m_boundingBox;
     /* 016C */ uint32_t m_fileSize;
+#if defined(WOWDECOMP_MODERN_ASSETS)
+    // NOT IN BINARY, build-only: writable bytes at m_data. A modern model is repacked in place and
+    // appends its resolved texture paths past the body, so the allocation carries a reserve the body
+    // length alone does not show. Stock models leave this equal to m_fileSize.
+    /* ---- */ uint32_t m_allocSize;
+#endif
     /* 0170 */ M2SkinProfile* m_skinData;
     /* 0174 */ CTexture** m_textures;
     /* 0178 */ CGxPool* m_indexPool;
@@ -99,6 +105,11 @@ class CM2Shared {
     int32_t Initialize();
     int32_t InitializeSkinProfile();
     int32_t Load(SFileImpl* file, int32_t flags, CAaBox* boundingBox);
+#if defined(WOWDECOMP_MODERN_ASSETS)
+    // NOT IN BINARY, build-only: repacks an MD21 container in place as a v264 body (see M2Modern.h).
+    void ConvertModernModel();
+    void ConvertModernSkin();
+#endif
     CM2SequenceLoad* LoadLowPrioritySequence(uint16_t sequenceIndex);
     int32_t LoadSkinProfile(uint32_t profile);
     void Release();

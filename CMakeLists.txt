@@ -54,6 +54,14 @@ if (WOWDECOMP_DISABLE_SIGNATURE_CHECKS)
     add_compile_definitions(DISABLE_SIGNATURE_CHECKS=1)
 endif ()
 
+# Reads modern-client content the stock client cannot: .db2 tables (WDC1/2/3), FileDataID -> path
+# resolution, and later the modern M2 model format. Off by default so the stock 3.3.5a build is
+# byte-for-byte the code it was before. See Engine/Source/ModernAssets/README.md.
+option(WOWDECOMP_MODERN_ASSETS "Read modern-client DB2 tables and modern M2 models" OFF)
+if (WOWDECOMP_MODERN_ASSETS)
+    add_compile_definitions(WOWDECOMP_MODERN_ASSETS=1)
+endif ()
+
 # Third-party code is linked, not decompiled, for now.
 if (EXISTS ${CMAKE_SOURCE_DIR}/ThirdParty/CMakeLists.txt)
     add_subdirectory(ThirdParty)
@@ -86,6 +94,9 @@ add_subdirectory(Engine/Source/Images)
 add_subdirectory(Engine/Source/jpeg)
 add_subdirectory(Engine/Source/lua-5.1)
 add_subdirectory(Engine/Source/Model2)
+if (WOWDECOMP_MODERN_ASSETS)
+    add_subdirectory(Engine/Source/ModernAssets)
+endif ()
 add_subdirectory(Engine/Source/Os)
 add_subdirectory(Engine/Source/pcre)
 add_subdirectory(Engine/Source/Scrn)
@@ -122,6 +133,9 @@ if (WIN32)
 endif ()
 if (WOWDECOMP_ARCH_64)
     add_subdirectory(Tools/XvidDecoder)
+endif ()
+if (WOWDECOMP_MODERN_ASSETS)
+    add_subdirectory(Tools/ModernAssetsTest)
 endif ()
 
 foreach (target Wow WowClient MapViewer M2Viewer GxTest MpqTest BlpTest DbcTest AssetCheck)

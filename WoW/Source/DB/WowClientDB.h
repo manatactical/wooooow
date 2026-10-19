@@ -4,9 +4,72 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <vector>
 #include <new>
 #include "Engine/Source/BlizzardCore/SFile2-Core.h"
 #include "Engine/Source/Storm/H/storm.h"
+
+#if defined(WOWDECOMP_MODERN_ASSETS)
+#include "Engine/Source/ModernAssets/Dbc/DbcMerge.h"
+#include "Engine/Source/ModernAssets/ModernAssetsFile.h"
+#include "Engine/Source/ModernAssets/ModernAssetsLog.h"
+#endif
+
+#if defined(WOWDECOMP_MODERN_ASSETS)
+/**
+ * @brief Reads a base table and layers any add-on `.dbcN-project` rows on top of it.
+ *
+ * A pack ships its extra rows beside the table instead of replacing it, so the client has to merge
+ * them at open time. The merged bytes are then served through an SFileImpl that reads from memory,
+ * which keeps the stock streaming loader below completely unchanged -- it still sees one ordinary
+ * WDBC stream.
+ *
+ * @param basePath  the table's path, e.g. "DBFilesClient\CreatureDisplayInfo.dbc".
+ * @param out       receives a memory-backed file over the merged (or base) bytes.
+ * @return true when out is ready to be read.
+ */
+inline bool WowClientDB_OpenMerged(const char* basePath, SFileImpl** out)
+{
+    *out = nullptr;
+
+    std::vector<uint8_t> baseBytes;
+    if (!modern::assets::ReadWholeFile(basePath, baseBytes) || baseBytes.empty())
+        return false;
+
+    // The table name drives which fields hold string offsets during the merge.
+    const char* slash = strrchr(basePath, '\\');
+    char tableName[128];
+    SStrCopy(tableName, slash ? slash + 1 : basePath, sizeof(tableName));
+    char* dot = strrchr(tableName, '.');
+    if (dot) *dot = '\0';
+
+    std::vector<uint8_t> merged;
+    uint32_t appended = 0, replaced = 0;
+    if (modern::dbc::MergeInto(tableName, baseBytes.data(),
+                               static_cast<uint32_t>(baseBytes.size()), merged,
+                               &appended, &replaced))
+    {
+        MODERN_ASSETS_LOG_INFO("dbc: '%s' merged %u appended, %u replaced row(s)",
+                               basePath, appended, replaced);
+        baseBytes.swap(merged);
+    }
+
+    // The memory file owns its bytes: SFileImpl frees m_data on close through the MEMORY path, so the
+    // buffer is allocated once here and handed over rather than copied a second time.
+    const uint32_t size = static_cast<uint32_t>(baseBytes.size());
+    auto* memory = static_cast<uint8_t*>(SMemAlloc(size, __FILE__, __LINE__, 0));
+    if (!memory) return false;
+    memcpy(memory, baseBytes.data(), size);
+
+    SFileImpl* file = new (__FILE__, __LINE__) SFileImpl(SFILE_MEMORY);
+    file->m_size = size;
+    file->m_data = memory;
+    file->m_position = 0;
+
+    *out = file;
+    return true;
+}
+#endif
 
 extern int32_t g_clientDbPerformCompress;
 
@@ -99,11 +162,20 @@ void WowClientDB_Common<T>::Load(const char* file, int32_t line) {
         return;
     }
 
-    SFileImpl* f;
+    SFileImpl* f = nullptr;
 
+#if defined(WOWDECOMP_MODERN_ASSETS)
+    // A pack may ship add-on rows beside this table rather than replacing it; merge them first. When
+    // there are none, this is the stock open (whole-file mode, as the original requested).
+    if (!WowClientDB_OpenMerged(T::GetFilename(), &f) &&
+        !SFile::OpenEx(nullptr, T::GetFilename(), 0x20000, &f)) {
+        SErrDisplayAppFatalCustom(0x85100079, "Unable to open %s", T::GetFilename());
+    }
+#else
     if (!SFile::OpenEx(nullptr, T::GetFilename(), 0x20000, &f)) {
         SErrDisplayAppFatalCustom(0x85100079, "Unable to open %s", T::GetFilename());
     }
+#endif
 
     uint32_t signature;
 

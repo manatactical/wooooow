@@ -89,3 +89,10 @@ target_link_libraries(WowClient
         WowSvcs
         dbghelp
 )
+
+if (WOWDECOMP_MODERN_ASSETS)
+    target_link_libraries(WowClient
+        PRIVATE
+            ModernAssets
+    )
+endif ()

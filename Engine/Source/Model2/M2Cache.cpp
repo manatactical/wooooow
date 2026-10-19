@@ -15,6 +15,9 @@
 #include "Engine/Source/Services/ModelBlob.h"
 #include "Engine/Source/Services/ParticleSystem2.h"
 #include "Engine/Source/Storm/H/storm.h"
+#if defined(WOWDECOMP_MODERN_ASSETS)
+#include "Engine/Source/ModernAssets/ModernAssetsLog.h"
+#endif
 #include "Engine/Source/Tempest/CRandom.h"
 
 // STATIC: 0x00D3FCE8
@@ -317,8 +320,20 @@ CM2Shared* CM2Cache::CreateShared(const char* name, uint32_t flags) {
 
     SFileImpl* file;
 
+#if defined(WOWDECOMP_MODERN_ASSETS)
+    // Recorded before the open: a modern creature that never appears in this log was never asked for,
+    // which is a different bug from one that was asked for and refused.
+    if (SStrStrI(path, "Creature\\")) {
+        MODERN_ASSETS_LOG_INFO("m2: requested '%s'", path);
+    }
+#endif
+
     if (!SFile::OpenEx(nullptr, path, (flags >> 2) & 1, &file)) {
         DebugLog("Model2: File not found: %s\n", path);
+#if defined(WOWDECOMP_MODERN_ASSETS)
+        // DebugLog is compiled out of Release, which is where a missing model has to be explainable.
+        MODERN_ASSETS_LOG_WARN("m2: '%s' not found in the mounted archives", path);
+#endif
         return nullptr;
     }
 
@@ -330,6 +345,9 @@ CM2Shared* CM2Cache::CreateShared(const char* name, uint32_t flags) {
     }
 
     if (!shared->Load(file, flags & 4, &boundingBox)) {
+#if defined(WOWDECOMP_MODERN_ASSETS)
+        MODERN_ASSETS_LOG_WARN("m2: '%s' opened but its load was refused", path);
+#endif
         SFileCloseFile(file);
         delete shared;
         return nullptr;

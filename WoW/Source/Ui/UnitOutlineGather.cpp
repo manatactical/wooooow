@@ -94,6 +94,23 @@ void ColorForReaction(int32_t reaction, float* rgb) {
 
 
 
+// A unit is up to two models: the rider, and the mount it hangs off when mounted. The outline matches
+// models by exact pointer (see CUnitOutline::AddTarget), so both have to be recorded; recording only
+// GetObjectModel() would outline the mount alone and leave the rider bare.
+void AddUnitModels(CGUnit_C* unit, const float rgb[3], bool keepFull) {
+    if (!unit) {
+        return;
+    }
+
+    if (unit->m_mountModel) {
+        CUnitOutline::AddTarget(unit->m_mountModel, rgb, keepFull);
+    }
+
+    if (unit->m_worldModel) {
+        CUnitOutline::AddTarget(unit->m_worldModel, rgb, keepFull);
+    }
+}
+
 // Records one selection. `mouseover` picks the extra brightness the cursor's own target gets. Occlusion is
 // not decided here: the stamp depth tests against the scene, so a wall clips the line where it covers the
 // unit rather than dropping the outline whole.
@@ -155,8 +172,8 @@ void AddSelection(const WOWGUID& guid, CGUnit_C* player, bool mouseover) {
         rgb[2] *= kMouseoverBrightness;
     }
 
-    // The whole M2 chain goes in, so a mounted unit's mount is outlined with the rider's colour.
-    CUnitOutline::AddTarget(model, rgb, false);
+    // Rider and mount, not the attach chain: an effect hung off the unit is not part of its silhouette.
+    AddUnitModels(unit, rgb, false);
 }
 
 // A world object the cursor is over: no reaction colour and no mount chain, so it is recorded on its own
@@ -253,7 +270,7 @@ void CUnitOutlineGather::Update() {
         viewer = player;
     }
 
-    CUnitOutline::SetPlayerModel(player->GetObjectModel());
+    CUnitOutline::SetPlayerModel(player->m_worldModel, player->m_mountModel);
 
     AddSelection(static_cast<CGUnit_C*>(viewer)->m_unit->m_unitFieldTarget, viewer, false);
 
@@ -285,10 +302,9 @@ void CUnitOutlineGather::Update() {
         // Resolved again rather than remembered: a unit that despawned since the last walk answers null
         // here instead of being a dangling model pointer, and is simply left out.
         CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(s_questGiverGuids[i], TYPEMASK_UNIT, __FILE__, __LINE__));
-        CM2Model* model = unit ? unit->GetObjectModel() : nullptr;
 
-        if (model) {
-            CUnitOutline::AddTarget(model, kQuestGiver, true);
+        if (unit) {
+            AddUnitModels(unit, kQuestGiver, true);
         }
     }
 }

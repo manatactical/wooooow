@@ -8,3 +8,12 @@ target_include_directories(Model2
     PUBLIC
         ${CMAKE_SOURCE_DIR}
 )
+
+# NOT IN BINARY, build-only: the modern-M2 repack lives in its own module, which this library calls at
+# load. Conditional so a stock build links exactly the libraries it did before.
+if (WOWDECOMP_MODERN_ASSETS)
+    target_link_libraries(Model2
+        PRIVATE
+            ModernAssets
+    )
+endif ()

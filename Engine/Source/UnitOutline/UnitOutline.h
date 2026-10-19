@@ -45,10 +45,13 @@ class CUnitOutline {
     // this once per frame before it adds this frame's selections.
     static void BeginTargets();
     static void SetPlayerModel(CM2Model* model);
+    // Not in the original binary. A mounted player is two models; both go into the occluder mask.
+    static void SetPlayerModel(CM2Model* model, CM2Model* mount);
 
-    // Not in the original binary. Records a target's model chain with the reaction colour; the chain is
-    // walked so a mount is outlined with the same colour as the unit riding it. Occlusion is not decided
-    // here: the stamp depth tests against the scene, so a wall clips the line where it covers the unit.
+    // Not in the original binary. Records one model with the reaction colour. Exact pointer, no attach chain:
+    // an effect hung off a unit must not be outlined with it. A mounted unit is two models, recorded
+    // separately by the caller. Occlusion is not decided here: the stamp depth tests against the scene, so a
+    // wall clips the line where it covers the unit.
     static void AddTarget(CM2Model* model, const float rgb[3], bool keepFull);
 
     // Not in the original binary. A world object the cursor is over: no reaction colour and no mount
@@ -65,10 +68,10 @@ class CUnitOutline {
     // render target are the ones bound, immediately after the world geometry.
     static void Composite();
 
-    // Not in the original binary. Whether a model -- or anything it hangs off, so a rider counts with its
-    // mount -- is one of this frame's outline targets. The model scene's opaque sort asks this to keep those
-    // models at the end of the pass, which is what puts the rest of the world into the depth buffer before
-    // they stamp against it.
+    // Not in the original binary. Whether a model is one of this frame's outline targets. Exact match, so an
+    // attached effect is not a target. The model scene's opaque sort asks this to keep those models at the
+    // end of the pass, which is what puts the rest of the world into the depth buffer before they stamp
+    // against it.
     static bool IsTarget(CM2Model* model);
 
     // Not in the original binary. Whether this frame recorded anything to outline at all. The model scene
@@ -97,7 +100,6 @@ class CUnitOutline {
 
     static void AddEntry(CM2Model* model, const float color[4], bool keepFull);
     static int32_t FindTarget(CM2Model* model);
-    static bool IsModel(CM2Model* model, CM2Model* want);
 
     static void StampSilhouette(const CGxBatch& batch, int32_t index);
     static void StampOccluder(const CGxBatch& batch);

@@ -24,6 +24,11 @@
 #include "Engine/Source/Storm/H/storm.h"
 #include "Engine/Source/Tempest/CImVector.h"
 #include "Engine/Source/Os/OsMemory.h"
+#include "Engine/Source/ModernAssets/M2/M2Modern.h"
+#if defined(WOWDECOMP_MODERN_ASSETS)
+#include "Engine/Source/ModernAssets/ModernAssetsLog.h"
+#include "Engine/Source/ModernAssets/M2/M2SkinContract.h"
+#endif
 
 // STATIC: 0x00A45644
 static const uint32_t s_skinProfileBoneCounts[4] = { 256, 64, 53, 21 };
@@ -42,6 +47,18 @@ static uint8_t* s_sequenceData;
 
 // STATIC: 0x00D4125C
 static uint32_t s_sequenceSize;
+
+#if defined(WOWDECOMP_MODERN_ASSETS)
+// NOT IN BINARY, build-only. Room past a modern model's body for the client paths its TXID textures
+// resolve to, appended by the repack. No retail model approaches this.
+static constexpr uint32_t kModernTextureReserve = 0x4000;
+
+// NOT IN BINARY, build-only: a spare bit in CM2Shared::m_flags marking a model that went through the
+// modern repack, so the skin-load path knows its batches are still in the modern encoding. The stock
+// flag word uses 0x1, 0x2, 0x4, 0x8, 0x10, 0x20, 0x40 and 0x400/0x800 (cache state), so this bit is
+// free. It is never set on a stock model, and nothing in the stock code tests it.
+static constexpr uint32_t kFlagModernRepacked = 0x20000000;
+#endif
 
 // VERIFY: eb5cb8e9 auto
 // OFFSET: 0x00835950
@@ -641,10 +658,21 @@ void CM2Shared::SubstituteSimpleShaders() {
             continue;
         }
 
-        M2Material* material = &this->m_data->m_materials[batch->m_materialIndex];
+        // A batch names its material by index. A skin whose index runs past the model's material
+        // array would make every read below dereference outside it, so a miss falls back to the first
+        // material (an absent array means no material to apply at all).
+        M2Material* material = this->m_data->m_materials.m_count
+            ? &this->m_data->m_materials[batch->m_materialIndex < this->m_data->m_materials.m_count
+                                        ? batch->m_materialIndex : 0]
+            : nullptr;
+
+        if (!material) {
+            continue;
+        }
 
         if (!(this->m_data->m_flags & 8)) {
-            uint16_t coord = this->m_data->m_textureCoordCombos[batch->m_textureCoordComboIndex];
+            uint16_t coord = batch->m_textureCoordComboIndex < this->m_data->m_textureCoordCombos.m_count
+                           ? this->m_data->m_textureCoordCombos[batch->m_textureCoordComboIndex] : 0;
             uint16_t op = material->m_blendMode != 0;
 
             if (coord > 2) {
@@ -658,17 +686,31 @@ void CM2Shared::SubstituteSimpleShaders() {
             }
         } else {
             uint16_t combiner = batch->m_shader;
-            uint32_t ops[2] = { 0, 0 };
+
+            // NOT IN BINARY: the original indexes a two-entry stack array with the batch's texture
+            // count. A batch with more than two textures writes past it, which Debug builds catch as
+            // stack corruption and Release builds corrupt silently. Modern skins routinely carry a
+            // third texture layer, so the array is sized for the widest batch a skin can declare and
+            // the loop is bounded to it.
+            uint32_t ops[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
             batch->m_shader = 0;
 
-            for (uint32_t j = 0; j < batch->m_textureCount; j++) {
-                uint32_t op = this->m_data->m_textureCombinerCombos[combiner + j];
+            const uint32_t layers = batch->m_textureCount < 8 ? batch->m_textureCount : 8;
+
+            for (uint32_t j = 0; j < layers; j++) {
+                // Both tables are read with a running index; clamp so a corrupt or unusual skin names
+                // a real entry instead of reading past the array.
+                const uint32_t combinerAt = static_cast<uint32_t>(combiner) + j;
+                uint32_t op = combinerAt < this->m_data->m_textureCombinerCombos.m_count
+                            ? this->m_data->m_textureCombinerCombos[combinerAt] : 0;
 
                 if (j == 0 && !material->m_blendMode) {
                     op = 0;
                 }
 
-                uint16_t coord = this->m_data->m_textureCoordCombos[batch->m_textureCoordComboIndex + j];
+                const uint32_t coordAt = static_cast<uint32_t>(batch->m_textureCoordComboIndex) + j;
+                uint16_t coord = coordAt < this->m_data->m_textureCoordCombos.m_count
+                               ? this->m_data->m_textureCoordCombos[coordAt] : 0;
                 ops[j] = op;
 
                 if (coord > 2) {
@@ -741,6 +783,17 @@ CShaderEffect* CM2Shared::GetEffect(M2Batch* batch) {
                 alphaOp = static_cast<EGxTexOp>(3);
                 break;
             default:
+                // NOT IN BINARY: a packed shaderId whose low 15 bits are past the three effects listed
+                // above leaves both names null, and the strcpy below then faults on real content.
+                // Rather than dropping the batch (which is what leaves a modern model invisible),
+                // fall back to the combiner pair the client does implement: two textures, additive
+                // alpha. That is the nearest state the client can express for the modern additive
+                // overlay ids (0x8015 / 0x8021 / 0x8023), and it is what upstream's down-converter
+                // maps them onto as well.
+                pixelShader = "Combiners_Opaque_AddAlpha";
+                vertexShader = "Diffuse_T1_Env";
+                colorOp = static_cast<EGxTexOp>(0);
+                alphaOp = static_cast<EGxTexOp>(3);
                 break;
         }
 
@@ -755,6 +808,9 @@ CShaderEffect* CM2Shared::GetEffect(M2Batch* batch) {
         }
 
         effect = CShaderEffectManager::CreateEffect(effectName);
+        if (!effect) {
+            return nullptr;
+        }
         effect->InitEffect(vertexShader, pixelShader);
         effect->InitFixedFuncPass(&colorOp, &alphaOp, 1);
     }
@@ -1130,6 +1186,29 @@ void CM2Shared::SubstituteSpecializedShaders() {
 
 // VERIFY: 6736c39f manual
 // OFFSET: 0x00837A40
+#if defined(WOWDECOMP_MODERN_ASSETS)
+// NOT IN BINARY, build-only: rewrites a modern skin's batches into the contract the client's effect
+// builder understands. See ModernAssets/M2/M2SkinContract.h for why this is needed at all.
+void CM2Shared::ConvertModernSkin() {
+    if (!this->m_skinData || !this->m_asyncObject) {
+        return;
+    }
+
+    // Only a model that went through the repack can carry a modern skin. A stock model's batches are
+    // already in the client's own encoding and must not be touched.
+    if (!(this->m_flags & kFlagModernRepacked)) {
+        return;
+    }
+
+    const modern::m2::SkinContractResult result = modern::m2::RebuildSkinBatches(
+        reinterpret_cast<uint8_t*>(this->m_skinData), this->m_asyncObject->m_size);
+    if (result.batchesRewritten) {
+        MODERN_ASSETS_LOG_INFO("m2: '%s' skin batches rewritten=%u parked=%u",
+                               this->m_fileName, result.batchesRewritten, result.batchesParked);
+    }
+}
+#endif
+
 int32_t CM2Shared::InitializeSkinProfile() {
     M2SkinProfile* skinData = this->m_skinData;
 
@@ -1322,6 +1401,14 @@ int32_t CM2Shared::FinishLoadingSkinProfile(uint32_t size) {
 
     this->m_flags |= 2;
 
+#if defined(WOWDECOMP_MODERN_ASSETS)
+    MODERN_ASSETS_LOG_INFO("m2: '%s' skin attached: sections=%u batches=%u indices=%u",
+                           this->m_fileName,
+                           this->m_skinData->m_skinSections.m_count,
+                           this->m_skinData->m_batches.m_count,
+                           this->m_skinData->m_indices.m_count);
+#endif
+
     while (this->m_callbackList) {
         CM2Model* model = this->m_callbackList;
         model->UnlinkFromCallbackList();
@@ -1496,7 +1583,14 @@ int32_t M2Init<M2Particle>(uint8_t* base, uint32_t size, const M2Data& data, M2A
 // VERIFY: 95d98bd6 manual
 // OFFSET: 0x0083C5F0
 CM2Shared::CM2Shared(CM2Cache* cache) {
+    // NOT IN BINARY: the original only clears the low 7 bits, which is safe for the flags it owns
+    // because they are all down there. Any bit ABOVE that survives as whatever was in the freshly
+    // allocated memory, so a build-only flag tested by this source has to be cleared explicitly --
+    // otherwise it is random, and the code that trusts it acts on models it must not touch.
     this->m_flags &= ~0x7Fu;
+#if defined(WOWDECOMP_MODERN_ASSETS)
+    this->m_flags &= ~kFlagModernRepacked;
+#endif
     this->m_cache = cache;
     this->m_callbackList = nullptr;
     this->m_refCount = 1;
@@ -1549,6 +1643,19 @@ int32_t M2Init(uint8_t* base, uint32_t size, M2Data& data) {
 // VERIFY: 8000b812 manual
 // OFFSET: 0x0083C6E0
 int32_t CM2Shared::FinishLoadingLowPrioritySequence(uint32_t sequenceIndex, uint8_t* buffer, uint32_t size) {
+#if defined(WOWDECOMP_MODERN_ASSETS)
+    // A modern companion animation file puts the same flat track blob behind a one-chunk 'AFM2'
+    // wrapper. The bytes are resident and nothing has looked at them yet, so the payload slides down
+    // onto the buffer base -- the allocation keeps its identity and only the counted length changes.
+    if (buffer && size >= 8 && *reinterpret_cast<const uint32_t*>(buffer) == 0x324D4641) {
+        const uint32_t payload = *reinterpret_cast<const uint32_t*>(buffer + 4);
+        if (static_cast<uint64_t>(payload) + 8 <= size) {
+            memmove(buffer, buffer + 8, payload);
+            size = payload;
+        }
+    }
+#endif
+
     s_sequenceIndex = sequenceIndex;
     s_sequenceData = buffer;
 
@@ -1591,6 +1698,11 @@ int32_t CM2Shared::FinishLoadingLowPrioritySequence(uint32_t sequenceIndex, CAsy
 // OFFSET: 0x0083CB10
 void CM2Shared::SkinProfileLoadedCallback(void* param) {
     CM2Shared* shared = static_cast<CM2Shared*>(param);
+#if defined(WOWDECOMP_MODERN_ASSETS)
+    // The skin's bytes are fully resident here and nothing has walked them yet, which is the only
+    // point at which the batches can still be rewritten as raw data.
+    shared->ConvertModernSkin();
+#endif
     shared->FinishLoadingSkinProfile(shared->m_asyncObject->m_size);
     AsyncFileReadDestroyObject(shared->m_asyncObject);
     shared->m_asyncObject = nullptr;
@@ -1682,11 +1794,20 @@ int32_t CM2Shared::Initialize() {
 
     if (profile == 0xFFFFFFFF) {
         DebugLog("Failed to choose skin profile: %s", this->m_fileName);
+#if defined(WOWDECOMP_MODERN_ASSETS)
+        // NOT IN BINARY, build-only: the stock path only says "failed". A modern model that reaches
+        // here is one whose skin the chooser could not pick, and the numbers say which half is wrong.
+        MODERN_ASSETS_LOG_WARN("m2: '%s' no skin profile: profiles=%u maxBones=%u",
+                               this->m_fileName, this->m_data->m_numSkinProfiles, maxBones);
+#endif
         return 0;
     }
 
     if (!this->LoadSkinProfile(profile)) {
         DebugLog("Failed to load skin profile: %s", this->m_fileName);
+#if defined(WOWDECOMP_MODERN_ASSETS)
+        MODERN_ASSETS_LOG_WARN("m2: '%s' could not open skin profile %u", this->m_fileName, profile);
+#endif
         return 0;
     }
 
@@ -1742,8 +1863,18 @@ int32_t CM2Shared::FinishLoading() {
         return 1;
     }
 
+#if defined(WOWDECOMP_MODERN_ASSETS)
+    ConvertModernModel();
+#endif
+
     if (!M2Init(reinterpret_cast<uint8_t*>(this->m_data), this->m_fileSize, *this->m_data)) {
         DebugLog("Corrupt model data: %s", this->m_fileName);
+#if defined(WOWDECOMP_MODERN_ASSETS)
+        // DebugLog is compiled out of Release; a model that fails to parse has to be explainable there.
+        MODERN_ASSETS_LOG_WARN("m2: '%s' M2Init rejected the body: magic=0x%08x version=%u size=%u",
+                               this->m_fileName, this->m_data->m_magic,
+                               this->m_data->m_version, this->m_fileSize);
+#endif
         return 0;
     }
 
@@ -1751,6 +1882,12 @@ int32_t CM2Shared::FinishLoading() {
 
     if (!this->Initialize()) {
         DebugLog("Failed to initialize model: %s", this->m_fileName);
+#if defined(WOWDECOMP_MODERN_ASSETS)
+        MODERN_ASSETS_LOG_WARN("m2: '%s' Initialize failed: textures=%u materials=%u profiles=%u",
+                               this->m_fileName, this->m_data->m_textures.m_count,
+                               this->m_data->m_materials.m_count,
+                               this->m_data->m_numSkinProfiles);
+#endif
         return 0;
     }
 
@@ -1769,6 +1906,33 @@ int32_t CM2Shared::FinishLoading() {
 
     return 1;
 }
+
+#if defined(WOWDECOMP_MODERN_ASSETS)
+// NOT IN BINARY, build-only: reads a model authored for a newer build and repacks it into the v264
+// layout the rest of this file already understands. A stock v264 model costs one magic compare.
+void CM2Shared::ConvertModernModel() {
+    if (!modern::m2::IsModernContainer(reinterpret_cast<const uint8_t*>(this->m_data), this->m_fileSize)) {
+        return;
+    }
+
+    auto* bytes = reinterpret_cast<uint8_t*>(this->m_data);
+    uint32_t size = this->m_fileSize;
+    const char* why = nullptr;
+
+    if (!modern::m2::Convert(bytes, this->m_allocSize, size, &why)) {
+        // A refused model must not continue into the stock parser: it would read the container as if
+        // it were an MD20 body. Leaving m_data as it is makes M2Init fail cleanly instead.
+        DebugLog("Modern model refused: %s (%s)", this->m_fileName, why ? why : "unknown");
+        return;
+    }
+
+    this->m_fileSize = size;
+
+    // Marks the model as one whose skin batches are still in the modern encoding, so the skin-load
+    // path knows to rewrite them. A stock model never sets this.
+    this->m_flags |= kFlagModernRepacked;
+}
+#endif
 
 // VERIFY: 77f453a0 manual
 // OFFSET: 0x0083D340
@@ -1802,7 +1966,16 @@ CM2SequenceLoad::~CM2SequenceLoad() {
 int32_t CM2Shared::Load(SFileImpl* file, int32_t flags, CAaBox* boundingBox) {
     this->m_flags = (this->m_flags & ~4u) | (flags ? 4 : 0);
     this->m_fileSize = SFileGetFileSize(file, nullptr);
+
+#if defined(WOWDECOMP_MODERN_ASSETS)
+    // A modern model is repacked in this buffer, and the client paths its textures resolve to are
+    // appended past the end of the body, so the allocation carries a reserve for them. A stock model
+    // simply never uses it.
+    this->m_allocSize = this->m_fileSize + kModernTextureReserve;
+    this->m_data = static_cast<M2Data*>(SIMD::AllocA16(this->m_allocSize, __FILE__, __LINE__));
+#else
     this->m_data = static_cast<M2Data*>(SIMD::AllocA16(this->m_fileSize, __FILE__, __LINE__));
+#endif
 
     if (!this->m_data) {
         return 0;

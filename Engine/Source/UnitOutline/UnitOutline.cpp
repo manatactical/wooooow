@@ -50,8 +50,7 @@ constexpr float kThreshold = 0.0f;    // clip cutoff; trims faint pixels
 // off a spike or a shoulder without visibly fattening the line.
 constexpr float kSoftnessScale = 2.0f;
 
-constexpr int32_t kMaxTargets   = 16;  // 2 selections, each plus its mount chain
-constexpr int32_t kMaxModelHops = 6;   // attachment-chain depth
+constexpr int32_t kMaxTargets   = 16;  // selections and quest givers, each up to two models
 constexpr uint32_t kFadeMs         = 400;
 constexpr float    kFadeEndOpacity = 0.5f;
 
@@ -193,7 +192,11 @@ int32_t s_count;
 OutlineTarget s_prevTargets[kMaxTargets];
 int32_t s_prevCount;
 
-CM2Model* s_playerModel;
+// The local player's own models: the rider, and its mount when mounted. Both are subtracted from the
+// outline so the line never draws across the player's body, and they are held separately because the
+// target lookups no longer walk the attach chain.
+CM2Model* s_playerModels[2];
+int32_t s_playerCount;
 
 // Re-entry guard. A stamp reached from inside the composite would write into the mask the passes are
 // reading; nothing in the engine does that today, and the guard is what keeps it harmless if something
@@ -391,30 +394,43 @@ void CUnitOutline::OnDeviceRestored() {
 // Not in the original binary.
 void CUnitOutline::BeginTargets() {
     s_count = 0;
-    s_playerModel = nullptr;
+    s_playerCount = 0;
 }
 
 // Not in the original binary.
 void CUnitOutline::SetPlayerModel(CM2Model* model) {
-    s_playerModel = model;
+    SetPlayerModel(model, nullptr);
 }
 
-// Not in the original binary. The chain is walked because a mounted unit is drawn as more than one M2
-// instance: the rider hangs off the mount in the attachment tree, so recording the whole chain is what
-// puts the mount on the same side of the line as the rider.
+// Not in the original binary. A mounted player is drawn as a rider hung off the mount, so both models are
+// needed for the occluder mask to cover the whole body.
+void CUnitOutline::SetPlayerModel(CM2Model* model, CM2Model* mount) {
+    s_playerModels[0] = model;
+    s_playerModels[1] = mount;
+    s_playerCount = 0;
+
+    if (model) {
+        s_playerCount = 1;
+    }
+
+    if (mount) {
+        s_playerCount = model ? 2 : 1;
+        s_playerModels[model ? 1 : 0] = mount;
+    }
+}
+
+// Not in the original binary. Exactly one model is recorded, and FindTarget matches exactly that pointer.
+// The attach chain is deliberately not followed: an M2 hung off a unit -- a quest icon, a spell effect, a
+// weapon glow -- shares the unit's chain, and walking it put every one of those in the silhouette along
+// with the body. A mounted unit is two models rather than a chain, so the game records both from the
+// gather side.
 void CUnitOutline::AddTarget(CM2Model* model, const float rgb[3], bool keepFull) {
     if (!model || s_count >= kMaxTargets) {
         return;
     }
 
     const float color[4] = { rgb[0], rgb[1], rgb[2], 1.0f };
-
-    // Bounded by kMaxModelHops like the lookups below, so every recorded entry is reachable by FindTarget
-    // and IsModel; one more here would spend a target slot on a model nothing could ever stamp.
-    for (int32_t hop = 0; model && hop < kMaxModelHops; ++hop) {
-        AddEntry(model, color, keepFull);
-        model = model->m_attachParent;
-    }
+    AddEntry(model, color, keepFull);
 }
 
 // Not in the original binary.
@@ -474,34 +490,17 @@ void CUnitOutline::AddEntry(CM2Model* model, const float color[4], bool keepFull
 // ---------------------------------------------------------------------------------------------
 
 int32_t CUnitOutline::FindTarget(CM2Model* model) {
-    for (int32_t hop = 0; model && hop < kMaxModelHops; ++hop, model = model->m_attachParent) {
-        for (int32_t i = 0; i < s_count; i++) {
-            if (s_targets[i].m_model == model) {
-                return i;
-            }
+    for (int32_t i = 0; i < s_count; i++) {
+        if (s_targets[i].m_model == model) {
+            return i;
         }
     }
 
     return -1;
 }
 
-bool CUnitOutline::IsModel(CM2Model* model, CM2Model* want) {
-    if (!want) {
-        return false;
-    }
-
-    for (int32_t hop = 0; model && hop < kMaxModelHops; ++hop, model = model->m_attachParent) {
-        if (model == want) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-// Not in the original binary. FindTarget already walks the attach chain, so a rider is a target when its
-// mount is, and vice versa -- which is what the sort needs: the whole chain has to land on the same side of
-// the split or the mount would be drawn with the world and stamped over by its own rider.
+// Not in the original binary. Exact match, like FindTarget: a rider and its mount are recorded separately
+// by the game, so both land on the same side of the sort without dragging an attached effect along.
 bool CUnitOutline::IsTarget(CM2Model* model) {
     // Enabled() is checked here as well as at the stamp: the gather fills the list whether or not the option
     // is on, and this answer reorders the model pass, so without it a player who never turned the outline on
@@ -536,8 +535,11 @@ void CUnitOutline::StampBatch(const CGxBatch& batch, CM2Model* model) {
     // The player is not a target. Its exact silhouette is collected into its own mask so the edge pass can
     // subtract it, which makes the result order-independent: it does not matter whether the player draws
     // before or after the unit it covers.
-    if (IsModel(model, s_playerModel)) {
-        StampOccluder(batch);
+    for (int32_t i = 0; i < s_playerCount; i++) {
+        if (model == s_playerModels[i]) {
+            StampOccluder(batch);
+            return;
+        }
     }
 }
 

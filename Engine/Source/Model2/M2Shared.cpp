@@ -24,6 +24,7 @@
 #include "Engine/Source/Storm/H/storm.h"
 #include "Engine/Source/Tempest/CImVector.h"
 #include "Engine/Source/Os/OsMemory.h"
+#include "Engine/Source/Event/PerfLog.h"
 #include "Engine/Source/ModernAssets/M2/M2Modern.h"
 #if defined(WOWDECOMP_MODERN_ASSETS)
 #include "Engine/Source/ModernAssets/ModernAssetsLog.h"
@@ -1698,12 +1699,27 @@ int32_t CM2Shared::FinishLoadingLowPrioritySequence(uint32_t sequenceIndex, CAsy
 // OFFSET: 0x0083CB10
 void CM2Shared::SkinProfileLoadedCallback(void* param) {
     CM2Shared* shared = static_cast<CM2Shared*>(param);
+
+    // NOT IN BINARY. This one callback measured 913 ms for a 78 KB skin, and neither half is obviously
+    // expensive by inspection: the batch rewrite is O(batches) over tiny cached tables, and the attach is a
+    // handful of relocations. So the two halves are timed apart, along with the model-init fan-out inside
+    // FinishLoadingSkinProfile, which initialises every model queued against this shared skin.
+    const uint32_t convertStart = OsGetAsyncTimeMs();
+
 #if defined(WOWDECOMP_MODERN_ASSETS)
     // The skin's bytes are fully resident here and nothing has walked them yet, which is the only
     // point at which the batches can still be rewritten as raw data.
     shared->ConvertModernSkin();
 #endif
+
+    PerfLogSpan("skin-convert", OsGetAsyncTimeMs() - convertStart);
+
+    const uint32_t attachStart = OsGetAsyncTimeMs();
+
     shared->FinishLoadingSkinProfile(shared->m_asyncObject->m_size);
+
+    PerfLogSpan("skin-attach", OsGetAsyncTimeMs() - attachStart);
+
     AsyncFileReadDestroyObject(shared->m_asyncObject);
     shared->m_asyncObject = nullptr;
 }

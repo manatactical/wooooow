@@ -1067,16 +1067,36 @@ int32_t CM2Model::HasSequence(const M2Data* data, uint32_t id) {
         return data->m_sequences.m_count > 0xFFFF;
     }
 
-    for (uint32_t step = 1; data->m_sequences[index].m_id != id; step++) {
-        slot = (slot + step * step) % data->m_sequenceIdxHashById.m_count;
+    if (data->m_sequences[index].m_id == id) {
+        return index < data->m_sequences.m_count;
+    }
+
+    // NOT IN BINARY behaviour change. The original probed with step 1,2,3... squared and had exactly two
+    // exits: find the id, or hit an empty slot. A model whose table has no empty slot and does not contain
+    // the id reaches neither, so the loop never ends -- a confirmed hang captured in a minidump, with the
+    // frame thread parked at HasSequence+0xe7 while an SMSG_UPDATE_OBJECT created an animated gameobject
+    // in Eversong. step*step also wraps uint32_t past step 65536, so the walk can cycle indefinitely even
+    // when a free slot does exist.
+    //
+    // The probe is now bounded by the table size, which is the most slots a probe can visit, and the step
+    // arithmetic is done in 64 bits so it cannot wrap. An id that is genuinely absent returns "not
+    // present", which is what the caller is asking.
+    for (uint32_t step = 1; step <= hashCount; step++) {
+        const uint64_t offset = static_cast<uint64_t>(step) * static_cast<uint64_t>(step);
+
+        slot = static_cast<uint32_t>((static_cast<uint64_t>(slot) + offset) % hashCount);
         index = data->m_sequenceIdxHashById[slot];
 
         if (index == 0xFFFF) {
             return data->m_sequences.m_count > 0xFFFF;
         }
+
+        if (data->m_sequences[index].m_id == id) {
+            return index < data->m_sequences.m_count;
+        }
     }
 
-    return index < data->m_sequences.m_count;
+    return 0;
 }
 
 // VERIFY: 73b3e0d6 auto

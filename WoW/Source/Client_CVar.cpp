@@ -11,6 +11,7 @@
 #include "Engine/Source/Frame/CSimpleRender.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Model2/M2Cache.h"
+#include "Engine/Source/Model2/CM2SceneRender.h"
 #include "Engine/Source/Os/Input.h"
 #include "Engine/Source/Os/System.h"
 #include "Engine/Source/Os/TimeManager.h"
@@ -711,6 +712,24 @@ void AsyncFileReadRegisterCVars() {
     s_cvAsyncThreadSleep = CVar::Register("asyncThreadSleep", "Engine option: Async read thread sleep", 1, "0", AsyncFileReadThreadSleepCallback, CATEGORY_DEBUG, false, nullptr, false);
     s_cvAsyncHandlerTimeout = CVar::Register("asyncHandlerTimeout", "Engine option: Async read main thread timeout", 1, "100", AsyncFileReadHandlerTimeoutCallback, CATEGORY_DEBUG, false, nullptr, false);
     AsyncFileReadInitialize(s_cvAsyncThreadSleep->m_intValue, s_cvAsyncHandlerTimeout->m_intValue);
+
+    // NOT IN BINARY. Caps the poll-handler phase of one async poll tick, which previously had no limit and
+    // was measured spending 1007 ms on the frame thread draining texture uploads (worst=event 7). Set it
+    // back to 0 to restore the original uncapped behaviour when comparing.
+    CVar* pollBudget = CVar::Register("asyncPollBudget", "Engine option: max ms one async poll tick may spend in its handlers (0 = uncapped)", 1, "0", nullptr, CATEGORY_DEBUG, false, nullptr, false);
+    AsyncFileReadSetPollHandlerBudget(static_cast<uint32_t>(pollBudget->m_intValue > 0 ? pollBudget->m_intValue : 0));
+
+    // NOT IN BINARY. Same, for AsyncFileReadWaitAll, which otherwise blocks until every queued read lands
+    // (measured 2301 ms total, 751 ms worst, 374 reads pending). 0 keeps the original block-until-empty.
+    CVar* waitAllBudget = CVar::Register("asyncWaitAllBudget", "Engine option: max ms AsyncFileReadWaitAll may block (0 = until empty)", 1, "0", nullptr, CATEGORY_DEBUG, false, nullptr, false);
+    AsyncFileReadSetWaitAllBudget(static_cast<uint32_t>(waitAllBudget->m_intValue > 0 ? waitAllBudget->m_intValue : 0));
+
+    // NOT IN BINARY. Model batches ask for their texture with wait=1, which loads it on the render thread
+    // instead of deferring. Rotating the camera then pulls every newly visible model's textures in
+    // synchronously, one batch per draw. 1 restores the stock behaviour; 0 uses whatever is resident and
+    // lets the async path catch up, which trades a frame of pop-in for a flat frame time.
+    CVar* batchTexture = CVar::Register("m2BatchTextureSyncLoad", "Engine option: load model textures synchronously during a draw (1 = stock, 0 = defer)", 1, "1", nullptr, CATEGORY_DEBUG, false, nullptr, false);
+    GxSetBatchTextureSyncLoad(batchTexture->m_intValue != 0);
 }
 
 // VERIFY: 8ac33977 auto

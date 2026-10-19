@@ -40,6 +40,15 @@ void AsyncFileReadDestroyObject(CAsyncObject* object);
 void AsyncFileReadIncreasePriority(CAsyncObject* object);
 void AsyncFileReadIngameProgressCallback(void (*startCallback)(), void (*progressCallback)(float, int32_t));
 void AsyncFileReadInitialize(uint32_t threadSleep, uint32_t handlerTimeout);
+
+// NOT IN BINARY. Frame-time budgets for the two uncapped drains in this file. Both default to 0, which
+// means "original behaviour": the poll handlers run without a cap and AsyncFileReadWaitAll blocks until
+// every read has landed. A non-zero value makes each of them return once that many milliseconds have
+// been spent, leaving the rest queued for the next pass.
+void AsyncFileReadSetPollHandlerBudget(uint32_t budgetMs);
+void AsyncFileReadSetWaitAllBudget(uint32_t budgetMs);
+uint32_t AsyncFileReadGetPollHandlerBudget();
+uint32_t AsyncFileReadGetWaitAllBudget();
 bool AsyncFileReadIsReading();
 void AsyncFileReadLinkObject(CAsyncObject* object, int32_t urgent);
 void AsyncFileReadLinkStaleObject(CAsyncObject* object, int32_t urgent);

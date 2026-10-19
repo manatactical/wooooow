@@ -1233,7 +1233,17 @@ CGxTex* TextureAllocGxTex(EGxTexTarget target, uint32_t width, uint32_t height, 
     }
 
     CGxTex* gxTex = nullptr;
+
+    // NOT IN BINARY. Creating a GPU texture is a driver call, and on an integrated GPU (shared system RAM)
+    // it can block for tens of milliseconds. Counted and timed here rather than in the device, so the
+    // name the caller asked for is available and a burst is visible as a "tex-create" span beside the
+    // async load that triggered it.
+    const uint32_t createStart = OsGetAsyncTimeMs();
+
     GxTexCreate(parms, gxTex);
+
+    PerfLogCount("tex-create", 1);
+    PerfLogSpanDetail("tex-create", OsGetAsyncTimeMs() - createStart, name);
 
     return gxTex;
 }

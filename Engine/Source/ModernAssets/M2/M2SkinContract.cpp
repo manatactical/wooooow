@@ -163,6 +163,33 @@ namespace modern::m2
                     }
         }
 
+        /// The tables are a fixed function of the decoder above: no input varies between calls, so the
+        /// build is done once and handed out. Rebuilding them per skin was measurable work on a path that
+        /// runs inside a postload callback on the frame thread.
+        const std::vector<int16_t>& FullCoordLookup()
+        {
+            static const std::vector<int16_t> table = [] {
+                std::vector<int16_t> coordLookup;
+                std::vector<uint16_t> unusedBlend;
+                BuildFullTables(coordLookup, unusedBlend);
+                return coordLookup;
+            }();
+
+            return table;
+        }
+
+        const std::vector<uint16_t>& FullBlendOverride()
+        {
+            static const std::vector<uint16_t> table = [] {
+                std::vector<int16_t> unusedCoord;
+                std::vector<uint16_t> blendOverride;
+                BuildFullTables(unusedCoord, blendOverride);
+                return blendOverride;
+            }();
+
+            return table;
+        }
+
         /// Decodes a packed blend-bit shaderId and synthesises the coordinate entries it implies.
         void DecodeBlendBits(Batch& b, uint16_t shaderId, uint16_t textureCount,
                              const std::vector<int16_t>& coordLookup,
@@ -340,10 +367,10 @@ namespace modern::m2
         // body-relative offsets (the model was repacked before any skin was requested). Rebuilding the
         // lookups here keeps the two halves of the contract derived from one place.
         // The exact same tables the model pass wrote, built deterministically so the indices this
-        // pass looks up are the ones the model actually carries.
-        std::vector<int16_t> coordLookup;
-        std::vector<uint16_t> blendOverride;
-        BuildFullTables(coordLookup, blendOverride);
+        // pass looks up are the ones the model actually carries. The tables are constant for the process,
+        // so they are taken from the shared cache rather than rebuilt for every skin that loads.
+        const std::vector<int16_t>& coordLookup = FullCoordLookup();
+        const std::vector<uint16_t>& blendOverride = FullBlendOverride();
 
         for (uint32_t i = 0; i < batchCount; ++i)
         {
@@ -389,12 +416,19 @@ namespace modern::m2
             WriteBatch(at, batch);
             ++result.batchesRewritten;
 
-            // Named in the log so the encoding can be checked rather than assumed: a batch whose
-            // effect is unresolvable is exactly the "model loads but draws nothing" symptom.
-            MODERN_ASSETS_LOG_INFO("m2:   batch %u: 0x%04x -> shader=0x%04x textures=%u coord=%u layer=%u",
-                                   i, shaderId, batch.shaderId, batch.textureCount,
-                                   batch.textureCoordComboIndex, batch.materialLayer);
+            // NOT IN BINARY, build-only. One line per batch was costing most of a second: this whole
+            // function runs inside a postload callback on the frame thread, and LogWrite does an
+            // fopen/fwrite/fflush/fclose per line, so a few hundred batches meant a few hundred file
+            // round trips. A measured attach was 989 ms for a 78 KB skin. Summarised below instead, which
+            // keeps the "model loads but draws nothing" signal without paying for it per batch.
         }
+
+        // The one line worth keeping: how many batches were rewritten or parked. A non-zero parked count is
+        // exactly the "loads and draws nothing" symptom, and it costs a single write per skin.
+        MODERN_ASSETS_LOG_INFO("m2: skin batches rewritten=%u parked=%u coordLookup=%u combinerCombos=%u",
+                               result.batchesRewritten, result.batchesParked,
+                               static_cast<uint32_t>(coordLookup.size()),
+                               static_cast<uint32_t>(blendOverride.size()));
 
         // The lookup tables the batches now index were synthesised into the model body by
         // RebuildSkinContract; the counts must agree with what was actually emitted here.

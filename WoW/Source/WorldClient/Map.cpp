@@ -19,6 +19,10 @@
 #include "Engine/Source/Gx/CGxVertexPC.h"
 #include "Engine/Source/Gxu/GxuLight.h"
 #include "Engine/Source/Model2/M2Light.h"
+#include "Engine/Source/Event/PerfLog.h"
+#if defined(WOWDECOMP_MODERN_ASSETS)
+#include "Engine/Source/ModernAssets/ModernAssetsLog.h"
+#endif
 #include "Engine/Source/Model2/M2Model.h"
 #include "Engine/Source/Model2/M2Scene.h"
 #include "Engine/Source/Os/Processor.h"
@@ -2062,7 +2066,16 @@ void CMap::PreUpdateAreas(bool addToScene) {
         rect.maxY = 16 * area->m_index.y + 15;
 
         if (rect.minX <= CWorld::chunkRect.maxX && rect.minY <= CWorld::chunkRect.maxY && rect.maxX >= CWorld::chunkRect.minX && rect.maxY >= CWorld::chunkRect.minY && waitForLoad && area->m_asyncObject) {
+            // NOT IN BINARY. This is the moving-fast path: crossing a tile boundary queues an .adt read and
+            // then blocks the frame on it. Timed around the wait so the log names the tile instead of
+            // reporting an idle frame, which is what a load stall otherwise looks like.
+            const uint32_t areaWaitStart = OsGetAsyncTimeMs();
+
             AsyncFileReadWait(area->m_asyncObject);
+
+            char areaLabel[64];
+            SStrPrintf(areaLabel, sizeof(areaLabel), "%s_%d_%d.adt", CMap::mapName, area->m_index.x, area->m_index.y);
+            PerfLogSpanDetail("adt-wait", OsGetAsyncTimeMs() - areaWaitStart, areaLabel);
         }
 
         if (area->m_asyncObject) {
@@ -2081,15 +2094,23 @@ void CMap::PreUpdateAreas(bool addToScene) {
     if (CMap::s_isStreamingMode) {
         AsyncFile::EnterQueueLock();
 
+        // NOT IN BINARY. Moving across the map queues every nearby .adt here in one frame, and the frame
+        // then blocks on them. The count is the useful number: a handful of links is normal, dozens means
+        // one frame is absorbing a whole tile transition's worth of streaming work.
+        uint32_t linked = 0;
+
         for (int32_t i = lastPending; i >= 0; i--) {
             CMapArea* area = entries[i].m_area;
 
             if (area->m_asyncObject && (entries[i].m_dist < 1111.1111f || (entries[i].m_dist < 71111.109f && !CWorldScene::FrustumCull(&area->m_bounds)))) {
                 AsyncFileReadLinkObject(area->m_asyncObject, 1);
+                linked++;
             }
         }
 
         AsyncFile::LeaveQueueLock();
+
+        PerfLogCount("area-link", linked);
     }
 
     if (addToScene) {
@@ -3026,6 +3047,12 @@ void CMap::Load(const char* mapName, int32_t zoneID) {
     int32_t streaming = SFile::IsStreamingMode();
     CMap::s_isStreamingMode = SFile::IsTrial() | streaming;
     bool wait = CMap::s_isStreamingMode == 0;
+
+    // NOT IN BINARY. Recorded once per map load so a log can say whether the streaming paths (area linking,
+    // the WMO queue, waitForLoad) run at all in this install. Movement counters that never fire are
+    // otherwise ambiguous: either nothing was streamed, or the code never ran.
+    MODERN_ASSETS_LOG_INFO("map: streaming mode=%d (trial=%d streaming=%d) wait=%d",
+                           CMap::s_isStreamingMode, SFile::IsTrial(), streaming, wait ? 1 : 0);
 
     CMap::s_lowDetail.Load(CMap::mapPath, CMap::mapName);
     CMap::LoadWdt();

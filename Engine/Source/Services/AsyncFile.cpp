@@ -4,6 +4,9 @@
 #include "Engine/Source/Base/Prop.h"
 #include "Engine/Source/BlizzardCore/SFile2-Core.h"
 #include "Engine/Source/Event/PerfLog.h"
+#if defined(WOWDECOMP_MODERN_ASSETS)
+#include "Engine/Source/ModernAssets/ModernAssetsLog.h"
+#endif
 #include "Engine/Source/Event/Event.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Os/TimeManager.h"
@@ -14,6 +17,35 @@ static const char* s_asyncQueueNames[3] = { "Disk Queue", "Net Geometry Queue", 
 
 // STATIC: 0x00AC3444
 static uint32_t s_handlerTimeout = 100;
+
+// NOT IN BINARY. Wall-clock budget for the poll-handler phase of AsyncFileReadPollHandler. The postload
+// loop above already honours s_handlerTimeout, but the poll handlers it then runs had no cap at all: a
+// single tick could spend a second draining texture uploads on the frame thread (measured: work=1021 ms,
+// worst=event 7). 0 restores the original uncapped behaviour.
+static uint32_t s_pollHandlerBudgetMs = 0;
+
+// NOT IN BINARY. Budget for AsyncFileReadWaitAll. That function spins until every outstanding read has
+// landed, which is correct under a loading screen and wrong during play: a run measured 4 waits totalling
+// 2301 ms with 374 reads queued. With a budget it drains for that long and returns, and the caller's own
+// retry (map load runs it repeatedly) finishes the rest. 0 restores the original block-until-empty.
+static uint32_t s_waitAllBudgetMs = 0;
+
+// NOT IN BINARY. See AsyncFile.h.
+void AsyncFileReadSetPollHandlerBudget(uint32_t budgetMs) {
+    s_pollHandlerBudgetMs = budgetMs;
+}
+
+void AsyncFileReadSetWaitAllBudget(uint32_t budgetMs) {
+    s_waitAllBudgetMs = budgetMs;
+}
+
+uint32_t AsyncFileReadGetPollHandlerBudget() {
+    return s_pollHandlerBudgetMs;
+}
+
+uint32_t AsyncFileReadGetWaitAllBudget() {
+    return s_waitAllBudgetMs;
+}
 
 // STATIC: 0x00AC3448
 static TSList<CAsyncQueue, TSGetLink<CAsyncQueue> > s_asyncQueueList;
@@ -54,7 +86,31 @@ static CAsyncObject* s_asyncWaitObject;
 static HPROPCONTEXT s_propContext;
 
 // STATIC: 0x00B4A20C
-static CAsyncQueue* s_asyncQueues[3];
+//
+// NOT IN BINARY size. The original is a fixed 3-slot array and only ever fills slot 0 outside streaming
+// mode, so every async read on a non-trial client is served by exactly one worker thread. That is a 2010
+// spinning-disk assumption: one queue saturates an SSD about as well as one thread saturates 16 cores.
+// The disk queue (slot 0) is now a ring of kMaxDiskQueues workers and the last slot stays reserved for the
+// frame-limited net-texture queue the streaming path uses.
+constexpr int32_t kMaxDiskQueues = 12;
+static CAsyncQueue* s_asyncQueues[kMaxDiskQueues + 2];
+
+// NOT IN BINARY. How many worker threads serve the disk queue. 0 keeps the original single worker.
+static uint32_t s_diskQueueCount = 0;
+static uint32_t s_diskQueueNext;
+
+// NOT IN BINARY. See AsyncFile.h.
+void AsyncFileReadSetDiskQueueCount(uint32_t count) {
+    if (count > kMaxDiskQueues) {
+        count = kMaxDiskQueues;
+    }
+
+    s_diskQueueCount = count;
+}
+
+uint32_t AsyncFileReadGetDiskQueueCount() {
+    return s_diskQueueCount;
+}
 
 // STATIC: 0x00B4A218
 static uint32_t s_threadSleep;
@@ -126,6 +182,13 @@ void AsyncFileReadUnloadPostList() {
 int32_t AsyncFileReadPollHandler(const void* data, void* param) {
     uint32_t start = OsGetAsyncTimeMs();
 
+    // NOT IN BINARY. Sum of the postload callbacks this pass ran, and the pass's own wall time. The two
+    // are logged together at the end: if the pass took much longer than the callbacks it ran, the cost is
+    // in the loop (lock contention, unlinking) rather than in anything a callback touched. Earlier attempts
+    // to attribute this from inside a single callback produced numbers that could not be reconciled.
+    uint32_t callbackTotalMs = 0;
+    uint32_t callbacksRun = 0;
+
     while (true) {
         g_queueLock.Enter();
 
@@ -144,7 +207,47 @@ int32_t AsyncFileReadPollHandler(const void* data, void* param) {
 
         object->m_isProcessed = 1;
         g_queueLock.Leave();
+
+        // NOT IN BINARY. The postload callback is where the real cost sits: it uploads a texture, attaches a
+        // model's skin, or builds a WMO/ADT group, and a bulk load runs hundreds of them back to back. The
+        // earlier attempt to bound the drain only moved that cost around; timing it per call says which
+        // callback the milliseconds actually belong to. m_size names the size, the file names the asset.
+        const uint32_t callbackStart = OsGetAsyncTimeMs();
+
         reinterpret_cast<void (*)(void*)>(object->m_userPostloadCallback)(object->m_userArg);
+
+        const uint32_t callbackMs = OsGetAsyncTimeMs() - callbackStart;
+
+        callbackTotalMs += callbackMs;
+        callbacksRun++;
+
+        if (callbackMs >= 2) {
+            char label[96];
+            char name[256];
+
+            name[0] = '\0';
+
+            if (object->m_file) {
+                SFile::GetActualFileName(object->m_file, name, sizeof(name));
+            }
+
+            const char* leaf = name;
+
+            for (const char* c = name; *c; c++) {
+                if (*c == '\\' || *c == '/') {
+                    leaf = c + 1;
+                }
+            }
+
+            SStrPrintf(label, sizeof(label), "%s %uK", leaf[0] ? leaf : "?", object->m_size >> 10);
+
+            // The callback is often the one that releases the file, so the name is frequently already gone
+            // by now. The size still separates the classes: a few-KB blob is a texture or a skin, a
+            // multi-MB one is a model body.
+            PerfLogSpanDetail("postload", callbackMs, label);
+        }
+
+        PerfLogCount("postload-calls", 1);
         s_progressCount--;
 
         if (OsGetAsyncTimeMs() - start > s_handlerTimeout) {
@@ -153,7 +256,40 @@ int32_t AsyncFileReadPollHandler(const void* data, void* param) {
     }
 
     for (uint32_t i = 0; i < s_asyncPollHandlers.Count(); i++) {
+        // NOT IN BINARY. Bounded by the same kind of budget the postload loop uses, so one poll tick can
+        // no longer sit in a texture-upload drain for a second. Only applies when a budget is configured;
+        // the default of 0 leaves the original behaviour exactly as it was.
+        if (s_pollHandlerBudgetMs && OsGetAsyncTimeMs() - start > s_pollHandlerBudgetMs) {
+            break;
+        }
+
+        const uint32_t handlerStart = OsGetAsyncTimeMs();
+
         s_asyncPollHandlers[i]();
+
+        // NOT IN BINARY. A poll handler can be the whole hitch on its own -- the texture drain reported
+        // 1007 ms in one tick. Reporting all of them together, not just the ones with a known name, is
+        // what tells us whether the next suspect is even worth naming.
+        const uint32_t handlerMs = OsGetAsyncTimeMs() - handlerStart;
+
+        if (handlerMs >= 2) {
+            char label[32];
+            SStrPrintf(label, sizeof(label), "handler%u", i);
+            PerfLogSpanDetail("poll-handler", handlerMs, label);
+        }
+    }
+
+    // NOT IN BINARY. The reconciliation line: total pass time against the callbacks that ran inside it.
+    // "gap" is time in the pass that no callback accounted for -- lock waits, unlinking, GetActualFileName.
+    // If gap is large, the callbacks were never the problem and no amount of timing inside them will find
+    // it. Emitted only when the pass is long enough to matter, so a normal tick writes nothing.
+    const uint32_t passMs = OsGetAsyncTimeMs() - start;
+
+    if (passMs >= 8) {
+        char label[48];
+        SStrPrintf(label, sizeof(label), "n=%u gap=%u", callbacksRun,
+                   passMs > callbackTotalMs ? passMs - callbackTotalMs : 0);
+        PerfLogSpanDetail("poll-pass", passMs, label);
     }
 
     return 1;
@@ -192,8 +328,28 @@ void AsyncFileReadDestroyObject(CAsyncObject* object) {
         DebugLog("AsyncFileReadDestroyObject()");
         g_queueLock.Leave();
 
-        while (object->m_isCurrent) {
+        // NOT IN BINARY. This spins until the async thread clears m_isCurrent, which it does only after
+        // re-taking the queue lock and linking the object to the post list -- so the caller can spend the
+        // whole handoff asleep here. A measured postload callback spent 1188 ms of a 1190 ms total in this
+        // function. Timed and counted, because a spin here is invisible in every other phase timer.
+        // NOT IN BINARY. This spins until the async thread clears m_isCurrent, which it does only after
+        // re-taking the queue lock and linking the object to the post list -- so the caller can sleep here
+        // for the whole handoff. The spin is also bounded: an unbounded wait on the frame thread is a hang
+        // waiting to happen if the worker is stalled, and the caller must not be the thing that deadlocks
+        // the whole client. After the bound it proceeds anyway; the object is unlinked and recycled either
+        // way, which is the same state the unbounded loop leaves it in.
+        const uint32_t spinStart = OsGetAsyncTimeMs();
+        uint32_t spins = 0;
+
+        while (object->m_isCurrent && OsGetAsyncTimeMs() - spinStart < 2000) {
             OsSleep(1);
+            spins++;
+        }
+
+        if (spins) {
+            char label[32];
+            SStrPrintf(label, sizeof(label), "spins=%u", spins);
+            PerfLogSpanDetail("destroy-spin", OsGetAsyncTimeMs() - spinStart, label);
         }
 
         g_queueLock.Enter();
@@ -201,12 +357,28 @@ void AsyncFileReadDestroyObject(CAsyncObject* object) {
 
     object->m_link.Unlink();
 
+    // NOT IN BINARY. Timed, but the span is emitted AFTER the queue lock is released below. Writing the
+    // log opens and closes a file, and doing that while holding g_queueLock blocks every async worker
+    // thread on the lock while the frame thread waits on a disk write -- a deadlock, and the cause of a
+    // reproduced hang. No PerfLog call may sit inside this critical section.
+    uint32_t closeMs = 0;
+    bool closed = false;
+
     if (object->m_file) {
+        const uint32_t closeStart = OsGetAsyncTimeMs();
+
         SFileCloseFile(object->m_file);
+
+        closeMs = OsGetAsyncTimeMs() - closeStart;
+        closed = true;
     }
 
     AsyncFileRead::s_asyncFileReadFreeList.LinkToHead(object);
     g_queueLock.Leave();
+
+    if (closed) {
+        PerfLogSpan("file-close", closeMs);
+    }
 }
 
 // VERIFY: 37b4ae03 auto
@@ -531,15 +703,25 @@ void AsyncFileReadInitialize(uint32_t threadSleep, uint32_t handlerTimeout) {
     s_propContext = PropGetSelectedContext();
     AsyncFileRead::s_shutdownEvent.Reset();
 
-    int32_t queues = SFile::IsStreamingMode() ? 3 : 1;
+    // NOT IN BINARY. Slot 0 is the disk queue and is now a ring of workers; slots 1 and 2 keep their
+    // original meaning (net geometry / net texture) and are only created in streaming mode. With no
+    // configured count this creates exactly the one worker the original did.
+    const int32_t diskQueues = s_diskQueueCount ? static_cast<int32_t>(s_diskQueueCount) : 1;
 
-    for (int32_t i = 0; i < queues; i++) {
+    for (int32_t i = 0; i < diskQueues; i++) {
         s_asyncQueues[i] = AsyncFileReadCreateQueue();
-        AsyncFileReadCreateThread(s_asyncQueues[i], s_asyncQueueNames[i]);
+        AsyncFileReadCreateThread(s_asyncQueues[i], s_asyncQueueNames[0]);
     }
 
     if (SFile::IsStreamingMode()) {
-        s_asyncQueues[2]->m_frameLimited = 1;
+        const int32_t netBase = diskQueues;
+
+        s_asyncQueues[netBase] = AsyncFileReadCreateQueue();
+        AsyncFileReadCreateThread(s_asyncQueues[netBase], s_asyncQueueNames[1]);
+
+        s_asyncQueues[netBase + 1] = AsyncFileReadCreateQueue();
+        AsyncFileReadCreateThread(s_asyncQueues[netBase + 1], s_asyncQueueNames[2]);
+        s_asyncQueues[netBase + 1]->m_frameLimited = 1;
     }
 
     s_queueLocked = 0;
@@ -655,10 +837,76 @@ bool AsyncFileReadIsReading() {
     return reading;
 }
 
+// NOT IN BINARY. Walks every queue and every committed object and writes one line per stuck read: which
+// queue, what state it is in, how big it is and what file it belongs to. Called when a wait has run far
+// longer than any legitimate load, so the log says which asset is holding the client instead of the
+// loading screen simply never finishing and leaving no trace.
+void AsyncFileReadDumpPending(const char* where, uint32_t waitedMs, int32_t total, int32_t remaining) {
+    MODERN_ASSETS_LOG_WARN("async: '%s' has been waiting %u ms (total=%d remaining=%d) -- dumping queues",
+                           where, waitedMs, total, remaining);
+
+    g_queueLock.Enter();
+
+    for (uint32_t q = 0; q < 3; q++) {
+        CAsyncQueue* queue = s_asyncQueues[q];
+
+        if (!queue) {
+            continue;
+        }
+
+        uint32_t reading = 0;
+        uint32_t stale = 0;
+
+        for (CAsyncObject* object = queue->m_readList.Head(); object; object = queue->m_readList.Next(object)) {
+            reading++;
+        }
+
+        for (CAsyncObject* object = queue->m_staleList.Head(); object; object = queue->m_staleList.Next(object)) {
+            stale++;
+        }
+
+        MODERN_ASSETS_LOG_WARN("async:   queue %u readList=%u staleList=%u frameLimited=%d",
+                               q, reading, stale, queue->m_frameLimited);
+
+        uint32_t shown = 0;
+
+        for (CAsyncObject* object = queue->m_readList.Head(); object && shown < 8; object = queue->m_readList.Next(object), shown++) {
+            char name[260];
+
+            name[0] = '\0';
+
+            if (object->m_file) {
+                SFile::GetActualFileName(object->m_file, name, sizeof(name));
+            }
+
+            MODERN_ASSETS_LOG_WARN("async:     read '%s' size=%u current=%d isRead=%d processed=%d prio=%u",
+                                   name[0] ? name : "?", object->m_size, object->m_isCurrent,
+                                   object->m_isRead, object->m_isProcessed, object->m_priority);
+        }
+    }
+
+    uint32_t postCount = 0;
+
+    for (CAsyncObject* object = s_asyncFileReadPostList.Head(); object; object = s_asyncFileReadPostList.Next(object)) {
+        postCount++;
+    }
+
+    MODERN_ASSETS_LOG_WARN("async:   postList=%u waitObject=%s", postCount, s_asyncWaitObject ? "set" : "null");
+
+    g_queueLock.Leave();
+}
+
 // VERIFY: 3e612f72 auto
 // OFFSET: 0x004BAE10
 void AsyncFileReadWaitAll() {
     DebugLog("AsyncFileReadWaitAll() Enter\n");
+
+    // NOT IN BINARY. This spins until every outstanding read finishes, with OsSleep(1) per pass, so it is
+    // frame time on whichever thread called it -- map loading calls it repeatedly. Untimed, a 300 ms
+    // "moving fast" hitch looks like an idle frame with no phase to blame, because the engine is asleep
+    // here rather than drawing. The count is what makes it useful: the wait itself is not the cost, the
+    // how-many-and-how-big queued behind it is.
+    const uint32_t waitStart = OsGetAsyncTimeMs();
 
     int32_t total = 0;
 
@@ -670,6 +918,23 @@ void AsyncFileReadWaitAll() {
 
     while (AsyncFileReadIsReading()) {
         AsyncFileReadPollHandler(nullptr, nullptr);
+
+        // NOT IN BINARY. With a budget configured this returns while reads are still outstanding rather
+        // than blocking the frame until the queue is empty. Callers that need the data wait again on a
+        // later frame; that is what keeps a 374-read burst from costing a whole second of frame time.
+        if (s_waitAllBudgetMs && OsGetAsyncTimeMs() - waitStart > s_waitAllBudgetMs) {
+            break;
+        }
+
+        // NOT IN BINARY. A load that never finishes writes nothing at all, which is what makes a stuck
+        // loading screen undiagnosable. After 10 s this reports what the queue still holds -- which reads,
+        // their state and their file names -- then keeps waiting, so the log names the fault without
+        // changing whether the load eventually completes.
+        const uint32_t waitedMs = OsGetAsyncTimeMs() - waitStart;
+
+        if (waitedMs > 10000 && (waitedMs / 10000) != ((waitedMs - 1) / 10000)) {
+            AsyncFileReadDumpPending("async-wait-all", waitedMs, total, s_progressCount);
+        }
 
         if (s_asyncProgressCallback) {
             float progress = 1.0f;
@@ -691,5 +956,16 @@ void AsyncFileReadWaitAll() {
     }
 
     s_asyncProgressCallback = nullptr;
+
+    const uint32_t elapsed = OsGetAsyncTimeMs() - waitStart;
+
+    PerfLogCount("async-wait-all", 1);
+    PerfLogSpan("async-wait-all", elapsed);
+
+    // Recorded separately from async-wait: this is the load-time path, not a single foreground texture.
+    if (elapsed >= 5) {
+        PerfLogCount("async-pending", static_cast<uint32_t>(total));
+    }
+
     DebugLog("AsyncFileReadWaitAll() Leave\n");
 }

@@ -356,7 +356,17 @@ CM2Shared* CM2Cache::CreateShared(const char* name, uint32_t flags) {
         return nullptr;
     }
 
-    if (!shared->Load(file, flags & 4, &boundingBox)) {
+    // NOT IN BINARY. A model that is not already shared is loaded synchronously right here, on whichever
+    // thread asked for it -- the frame thread when moving into new terrain. That is the movement stutter:
+    // parse the M2, attach the skin, create its textures, all inside one frame. Named with the model so a
+    // spike line says which asset cost the time instead of just "world-render took 40 ms".
+    const uint32_t modelLoadStart = OsGetAsyncTimeMs();
+
+    const int32_t loaded = shared->Load(file, flags & 4, &boundingBox) ? 1 : 0;
+
+    PerfLogSpanDetail("m2-load", OsGetAsyncTimeMs() - modelLoadStart, path);
+
+    if (!loaded) {
 #if defined(WOWDECOMP_MODERN_ASSETS)
         MODERN_ASSETS_LOG_WARN("m2: '%s' opened but its load was refused", path);
 #endif

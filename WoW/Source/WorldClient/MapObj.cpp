@@ -2,6 +2,11 @@
 #include <cstdlib>
 #include <malloc.h>
 #include <new>
+#include "Engine/Source/Event/PerfLog.h"
+#if defined(WOWDECOMP_MODERN_ASSETS)
+#include "Engine/Source/ModernAssets/ModernAssetsLog.h"
+#endif
+#include "Engine/Source/Os/TimeManager.h"
 #include "Engine/Source/Gx/CGxVertexPC.h"
 #include "WoW/Source/WorldClient/PolyClipper.h"
 #include <cstring>
@@ -1828,8 +1833,28 @@ void CMapObj::ReadGroup(uint32_t index) {
 // VERIFY: d92cbc0c auto
 // OFFSET: 0x007AE1C0
 void CMapObj::WaitLoad() {
+    // NOT IN BINARY. Same unbounded pattern as WaitLoadGroup: a lost read hangs the client silently. Logged
+    // and bounded so a stuck WMO body reports itself instead of freezing the loading screen.
+    const uint32_t waitStart = OsGetAsyncTimeMs();
+
     while (this->m_asyncObject) {
         AsyncFileReadWait(this->m_asyncObject);
+
+        if (OsGetAsyncTimeMs() - waitStart > 10000) {
+            char name[260];
+
+            name[0] = '\0';
+
+            if (this->m_asyncObject->m_file) {
+                SFile::GetActualFileName(this->m_asyncObject->m_file, name, sizeof(name));
+            }
+
+            MODERN_ASSETS_LOG_WARN("wmo-wait: CMapObj::WaitLoad stuck on '%s' (isCurrent=%d isRead=%d isProcessed=%d size=%u)",
+                                   name[0] ? name : "?", this->m_asyncObject->m_isCurrent,
+                                   this->m_asyncObject->m_isRead, this->m_asyncObject->m_isProcessed,
+                                   this->m_asyncObject->m_size);
+            break;
+        }
     }
 }
 
@@ -2048,8 +2073,46 @@ CMapObjGroup* CMapObj::GetGroup(int32_t index, int32_t a3) {
 void CMapObj::WaitLoadGroup(uint32_t index) {
     CMapObjGroup* group = this->m_mapObjGroupArray[index];
 
+    // NOT IN BINARY. This was an unbounded `while (m_asyncObjPtr) AsyncFileReadWait(...)`: if the group's
+    // read never lands, the loading screen hangs with no error and no log, which is exactly the reported
+    // symptom (one zone never finishes, other characters load fine, nothing written anywhere). The wait is
+    // now bounded and loud: it names the WMO, the group and its state, so a stuck load says what it is
+    // stuck on instead of freezing silently.
+    const uint32_t waitStart = OsGetAsyncTimeMs();
+    uint32_t passes = 0;
+
     while (group->m_asyncObjPtr) {
         AsyncFileReadWait(group->m_asyncObjPtr);
+        passes++;
+
+        const uint32_t elapsed = OsGetAsyncTimeMs() - waitStart;
+
+        if (elapsed > 10000) {
+            CAsyncObject* object = group->m_asyncObjPtr;
+            char name[260];
+
+            name[0] = '\0';
+
+            if (object && object->m_file) {
+                SFile::GetActualFileName(object->m_file, name, sizeof(name));
+            }
+
+            MODERN_ASSETS_LOG_WARN("wmo-wait: stuck %u ms on '%s' (file '%s') group=%u passes=%u "
+                                   "isCurrent=%d isRead=%d isProcessed=%d size=%u",
+                                   elapsed, this->m_header && this->m_header->m_wmoID ? "wmo" : "?",
+                                   name[0] ? name : "?", index, passes,
+                                   object ? object->m_isCurrent : -1, object ? object->m_isRead : -1,
+                                   object ? object->m_isProcessed : -1, object ? object->m_size : 0);
+
+            // Give up rather than freeze the client forever. The group stays unloaded, which shows as a
+            // missing piece of the building instead of a dead loading screen.
+            break;
+        }
+    }
+
+    if (const uint32_t elapsed = OsGetAsyncTimeMs() - waitStart) {
+        PerfLogCount("wmo-wait", 1);
+        PerfLogSpan("wmo-wait", elapsed);
     }
 }
 
@@ -4092,6 +4155,12 @@ void CMapObj::ProcessAsyncLoadQueue() {
     }
 
     if (count) {
+        // NOT IN BINARY. Walking into a city or a building puts every nearby WMO group on this list at once,
+        // and each one is queued at urgent priority in the loop below. The queued count is what makes a
+        // "moving through a town" hitch explainable instead of just "world-render took 60 ms".
+        const uint32_t queueStart = OsGetAsyncTimeMs();
+        uint32_t linked = 0;
+
         qsort(pending, count, sizeof(void*), CompareGroupDistance);
         AsyncFile::EnterQueueLock();
 
@@ -4106,12 +4175,17 @@ void CMapObj::ProcessAsyncLoadQueue() {
                 }
 
                 AsyncFileReadLinkObject(object, 1);
+                linked++;
             }
 
             group->m_distToCamera = 3.4028235e38f;
         }
 
         AsyncFile::LeaveQueueLock();
+
+        PerfLogCount("wmo-link", linked);
+        PerfLogCount("wmo-pending", count);
+        PerfLogSpan("wmo-queue", OsGetAsyncTimeMs() - queueStart);
     }
 
     count = 0;

@@ -10,6 +10,7 @@
 #include <ddraw.h>
 #include <mmsystem.h>
 #include <dsound.h>
+#include <dbghelp.h>
 #include "Engine/Source/Storm/Source/SOption.h"
 #include "Engine/Source/Storm/H/stpl.h"
 #include "Engine/Source/Storm/H/storm.h"
@@ -918,9 +919,52 @@ void STORMAPI SErrReportNamedResourceLeak(const char* handlename, const char* re
     }
 }
 
+// NOT IN BINARY. Writes a full minidump before anything else in the exception filter runs.
+//
+// The original handler only formats text, and when it dies (see Errors\exception-failed.txt) even that
+// is lost, which is why a reproducible crash left nothing to analyse. A dump captured here is the only
+// reliable record of the faulting thread, its registers and the heap state at the moment of the crash.
+// It is deliberately the first thing done, and it swallows its own failure so a dump problem can never
+// make the crash handler worse.
+static void WriteCrashDump(EXCEPTION_POINTERS* exceptionpointers) {
+    __try {
+        CreateDirectoryA("Errors", nullptr);
+
+        SYSTEMTIME now;
+        GetLocalTime(&now);
+
+        char path[256];
+        SStrPrintf(path, sizeof(path), "Errors\\crash-%04u%02u%02u-%02u%02u%02u.dmp",
+                   now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond);
+
+        HANDLE file = CreateFileA(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+
+        if (file == INVALID_HANDLE_VALUE) {
+            return;
+        }
+
+        // MiniDumpWithFullMemory is what makes the heap walkable, which is the whole point here: the
+        // crash is a corrupted list, not a bad pointer in a local variable.
+        MINIDUMP_EXCEPTION_INFORMATION info;
+        info.ThreadId = GetCurrentThreadId();
+        info.ExceptionPointers = exceptionpointers;
+        info.ClientPointers = FALSE;
+
+        MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), file,
+                          static_cast<MINIDUMP_TYPE>(MiniDumpWithFullMemory),
+                          &info, nullptr, nullptr);
+
+        CloseHandle(file);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        // A failed dump must not disturb the normal error path below.
+    }
+}
+
 // OFFSET: 0x00772760
 static LONG WINAPI ExceptionFilterWin32(EXCEPTION_POINTERS* exceptionpointers) {
     EXCEPTION_RECORD* record = exceptionpointers->ExceptionRecord;
+
+    WriteCrashDump(exceptionpointers);
 
     InternalEnterCriticalSection(&s_exceptioncritsect);
 

@@ -14,4 +14,5 @@ target_link_libraries(Storm
         blast
         bzip2
         zlib
+        dbghelp
 )

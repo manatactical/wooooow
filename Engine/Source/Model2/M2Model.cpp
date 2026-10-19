@@ -2529,10 +2529,12 @@ void CM2Model::AnimateST() {
         if (light->m_enabled && light->m_visibilityTrack.m_currentValue) {
             visible = 1;
 
+            const uint32_t lightBone = lightData->m_bone < data->m_bones.m_count ? lightData->m_bone : 0;
+
             if (lightData->m_type == 1) {
-                light->m_light.SetPosition(lightData->m_position * this->m_boneMatrices[lightData->m_bone] * this->m_scene->m_viewInv);
+                light->m_light.SetPosition(lightData->m_position * this->m_boneMatrices[lightBone] * this->m_scene->m_viewInv);
             } else {
-                C44Matrix& boneMatrix = this->m_boneMatrices[lightData->m_bone];
+                C44Matrix& boneMatrix = this->m_boneMatrices[lightBone];
                 float x = -boneMatrix.c0;
                 float y = -boneMatrix.c1;
                 float z = -boneMatrix.c2;
@@ -2597,7 +2599,8 @@ void CM2Model::AnimateST() {
             emitter->SetTexSlot(ribbon->m_textureSlotTrack.m_currentValue);
         }
 
-        C44Matrix transform = this->m_boneMatrices[ribbonData->m_boneIndex];
+        const uint32_t ribbonBone = ribbonData->m_boneIndex < this->m_shared->m_data->m_bones.m_count ? ribbonData->m_boneIndex : 0;
+        C44Matrix transform = this->m_boneMatrices[ribbonBone];
         transform.Translate(ribbonData->m_position);
         transform *= this->m_scene->m_viewInv;
 
@@ -2968,32 +2971,62 @@ void CM2Model::RenderBatchShadowMap(int32_t untextured, M2Batch* batch, const CM
         }
 
         if (total > 1 || !prevSection || section->m_boneComboIndex != prevSection->m_boneComboIndex) {
+            // NOT IN BINARY. Third copy of the palette overflow: the 256-register shadow array only holds
+            // 75 bones from register 31 and this wrote 3 * registers of them. See CM2SceneRender::DrawBatch.
+            // Instances are clamped before the write so the drawn batch matches the uploaded palette.
+            const uint32_t kMaxPaletteRegisters = 256 - 31;
+            const uint32_t bonesPerInstance = 3 * section->m_boneCount;
+
+            if (bonesPerInstance) {
+                const uint32_t fitted = kMaxPaletteRegisters / bonesPerInstance;
+
+                if (fitted < instances) {
+                    instances = fitted;
+                }
+            }
+
+            if (!instances) {
+                break;
+            }
+
             float* constants = g_theGxDevicePtr->ShaderConstantsLock(GxSh_Vertex) + 31 * 4;
             uint32_t registers = 0;
+            const uint32_t comboCount = this->m_shared->m_data->m_boneCombos.m_count;
 
             for (uint32_t n = 0; n < instances; n++) {
                 CM2Model* model = list.m_batches[done + index + n].m_model;
 
-                for (uint32_t i = 0; i < section->m_boneCount; i++) {
-                    const C44Matrix& bone = model->m_boneMatrices[this->m_shared->m_data->m_boneCombos[i + section->m_boneComboIndex]];
-                    constants[0] = bone.a0;
-                    constants[1] = bone.b0;
-                    constants[2] = bone.c0;
-                    constants[3] = bone.d0;
-                    constants[4] = bone.a1;
-                    constants[5] = bone.b1;
-                    constants[6] = bone.c1;
-                    constants[7] = bone.d1;
-                    constants[8] = bone.a2;
-                    constants[9] = bone.b2;
-                    constants[10] = bone.c2;
-                    constants[11] = bone.d2;
+                for (uint32_t i = 0; i < section->m_boneCount && registers < kMaxPaletteRegisters; i++) {
+                    const uint32_t combo = i + section->m_boneComboIndex;
+
+                    if (combo >= comboCount) {
+                        break;
+                    }
+
+                    const C44Matrix* bone = model->BoneMatrixSafe(this->m_shared->m_data->m_boneCombos[combo]);
+
+                    if (!bone) {
+                        break;
+                    }
+
+                    constants[0] = bone->a0;
+                    constants[1] = bone->b0;
+                    constants[2] = bone->c0;
+                    constants[3] = bone->d0;
+                    constants[4] = bone->a1;
+                    constants[5] = bone->b1;
+                    constants[6] = bone->c1;
+                    constants[7] = bone->d1;
+                    constants[8] = bone->a2;
+                    constants[9] = bone->b2;
+                    constants[10] = bone->c2;
+                    constants[11] = bone->d2;
                     constants += 12;
-                    registers++;
+                    registers += 3;
                 }
             }
 
-            g_theGxDevicePtr->ShaderConstantsUnlock(GxSh_Vertex, 31, 3 * registers);
+            g_theGxDevicePtr->ShaderConstantsUnlock(GxSh_Vertex, 31, registers);
         }
 
         if (!prevSection || section->m_boneInfluences != prevSection->m_boneInfluences) {
@@ -4876,7 +4909,10 @@ void CM2Model::AnimateAttachmentsMT() {
             }
 
             M2Attachment* attachment = &this->m_shared->m_data->m_attachments[child->m_attachmentIndex];
-            matrix = this->m_boneMatrices[attachment->m_bone];
+            // NOT IN BINARY. See the parent-index clamp: a bone index from the file can exceed the model's
+            // bone count, and indexing past m_boneMatrices writes over whatever follows it.
+            const uint32_t attachBone = attachment->m_bone < this->m_shared->m_data->m_bones.m_count ? attachment->m_bone : 0;
+            matrix = this->m_boneMatrices[attachBone];
             matrix.Translate(attachment->m_position);
         }
 
@@ -5284,7 +5320,14 @@ void CM2Model::AnimateMT(const C44Matrix* view, const C3Vector& diffuse, const C
         uint32_t boneFlags = boneData->m_flags | bone->m_flags;
         const C44Matrix* parentMatrix;
 
-        if (parentIndex == 0xFFFF) {
+        // NOT IN BINARY behaviour change. m_parentIndex comes straight from the file and was used to index
+        // m_boneMatrices with no bound. A retail model whose parent index exceeds its own bone count reads
+        // and then writes a whole C44Matrix past the end of that allocation -- the two-float garbage that
+        // appeared over g_theGxDevicePtr in the crash dumps is exactly a matrix row landing in the module's
+        // data. The index is clamped to the bone count, and an out-of-range parent is treated as the root.
+        const uint32_t boneCount = this->m_shared->m_data->m_bones.m_count;
+
+        if (parentIndex == 0xFFFF || parentIndex >= boneCount) {
             parentMatrix = &this->m_matrixF4;
         } else {
             parentMatrix = &this->m_boneMatrices[parentIndex];
@@ -5814,7 +5857,8 @@ void CM2Model::AnimateParticleST(float deltaTime, uint32_t index) {
         return;
     }
 
-    C44Matrix transform = this->m_boneMatrices[particleData->m_boneIndex];
+    const uint32_t particleBone = particleData->m_boneIndex < this->m_shared->m_data->m_bones.m_count ? particleData->m_boneIndex : 0;
+    C44Matrix transform = this->m_boneMatrices[particleBone];
     transform.Translate(particleData->m_position);
     transform *= this->m_scene->m_viewInv;
 
@@ -5876,7 +5920,8 @@ void CM2Model::Animate() {
 
         if ((parent->m_fFlags & 1) && parent->m_frameStamp == scene->m_frameStamp && this->m_attachmentIndex != 0xFFFF) {
             M2Attachment* attachment = &parent->m_shared->m_data->m_attachments[this->m_attachmentIndex];
-            matrix = parent->m_boneMatrices[attachment->m_bone];
+            const C44Matrix* attachBone = parent->BoneMatrixSafe(attachment->m_bone);
+            matrix = attachBone ? *attachBone : parent->m_matrixF4;
             C3Vector position = attachment->m_position;
             matrix.Translate(position);
             transform = &matrix;
@@ -5974,7 +6019,8 @@ uint32_t CM2Model::ProcessEventCallbacks(uint32_t boneIndex, uint32_t sequenceIn
 
                     this->Animate();
 
-                    C3Vector position = event->m_position * this->m_boneMatrices[event->m_bone] * this->m_scene->m_viewInv;
+                    const uint32_t eventBone = event->m_bone < this->m_shared->m_data->m_bones.m_count ? event->m_bone : 0;
+                    C3Vector position = event->m_position * this->m_boneMatrices[eventBone] * this->m_scene->m_viewInv;
 
                     if (CM2Model::s_sequenceCallbacks.Count() < 0x10000) {
                         M2ModelCallback* entry = CM2Model::s_sequenceCallbacks.New();
@@ -6016,6 +6062,11 @@ C3Vector CM2Model::GetAttachmentPosition(uint32_t id) {
         bone = data->m_attachments[index].m_bone;
     }
 
+    // NOT IN BINARY. Bone indices come from the file; clamp before indexing m_boneMatrices.
+    if (bone >= data->m_bones.m_count) {
+        bone = 0;
+    }
+
     this->Animate();
 
     return data->m_attachments[index].m_position * this->m_boneMatrices[bone] * this->m_scene->m_viewInv;
@@ -6034,6 +6085,10 @@ C44Matrix CM2Model::GetAttachmentWorldTransform(uint32_t id) {
 
     if (index < data->m_attachments.m_count) {
         bone = data->m_attachments[index].m_bone;
+    }
+
+    if (bone >= data->m_bones.m_count) {
+        bone = 0;
     }
 
     this->Animate();
@@ -6065,6 +6120,10 @@ float CM2Model::GetAttachmentWorldScale(uint32_t id) {
 
     if (index < data->m_attachments.m_count) {
         bone = data->m_attachments[index].m_bone;
+    }
+
+    if (bone >= data->m_bones.m_count) {
+        bone = 0;
     }
 
     this->Animate();
@@ -6171,6 +6230,11 @@ C3Vector CM2Model::GetEventPosition(uint32_t id) {
     }
 
     this->Animate();
+
+    if (bone >= this->m_shared->m_data->m_bones.m_count) {
+        bone = 0;
+    }
+
     return *position * this->m_boneMatrices[bone] * this->m_scene->m_viewInv;
 }
 
@@ -6189,6 +6253,10 @@ C44Matrix CM2Model::GetEventWorldTransform(uint32_t id) {
     }
 
     this->Animate();
+
+    if (bone >= this->m_shared->m_data->m_bones.m_count) {
+        bone = 0;
+    }
 
     C44Matrix transform = this->m_boneMatrices[bone];
     transform.Translate(*position);

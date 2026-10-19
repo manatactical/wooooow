@@ -355,12 +355,34 @@ static void ConvertTextureComboEntry(TextureComboList* list, int32_t adjust, uin
 // OFFSET: 0x008360A0
 int32_t CM2Shared::SetIndices() {
     if (!this->m_indexPool) {
-        this->m_indexPool = g_theGxDevicePtr->PoolCreate(GxPoolTarget_Index, GxPoolUsage_Dynamic, sizeof(uint16_t) * this->m_instances * this->m_skinData->m_indices.m_count, GxPoolHintBit_Unk1, this->m_fileNameWithoutPath);
-        this->m_indexBuf = g_theGxDevicePtr->BufCreate(this->m_indexPool, sizeof(uint16_t), this->m_instances * this->m_skinData->m_indices.m_count, 0);
+        // NOT IN BINARY behaviour change. The index count was computed in uint32_t and multiplied again
+        // by sizeof(uint16_t), which overflows for a skin with many indices and hands the device a
+        // nonsense (possibly negative) size. It is computed in 64 bits now and refused if it does not fit
+        // an int32, rather than silently truncating.
+        const uint64_t indexCount = static_cast<uint64_t>(this->m_instances) * static_cast<uint64_t>(this->m_skinData->m_indices.m_count);
+        const uint64_t poolBytes = indexCount * sizeof(uint16_t);
 
-        if (!this->m_indexPool || !this->m_indexBuf) {
+        if (indexCount > 0x7FFFFFFFull || poolBytes > 0x7FFFFFFFull) {
             return 0;
         }
+
+        this->m_indexPool = g_theGxDevicePtr->PoolCreate(GxPoolTarget_Index, GxPoolUsage_Dynamic, static_cast<int32_t>(poolBytes), GxPoolHintBit_Unk1, this->m_fileNameWithoutPath);
+
+        // Checked before BufCreate, which would otherwise dereference a null pool.
+        if (!this->m_indexPool) {
+            return 0;
+        }
+
+        this->m_indexBuf = g_theGxDevicePtr->BufCreate(this->m_indexPool, sizeof(uint16_t), static_cast<uint32_t>(indexCount), 0);
+    }
+
+    // NOT IN BINARY. Create-if-missing above is keyed on the pool, but DestroyBuffers (called from
+    // AllocInstances) can free the pool while a stale buffer pointer survives, or the pool can exist with
+    // no buffer because allocation failed. The dereference below then read through a null or freed
+    // m_indexBuf and corrupted the device's pool list -- a crash inside LinkToTail a frame later, which is
+    // why the stack pointed at PoolCreate rather than here. The buffer is tested on its own.
+    if (!this->m_indexBuf) {
+        return 0;
     }
 
     if (!this->m_indexBuf->m_hasData || !this->m_indexBuf->m_valid) {
@@ -373,22 +395,63 @@ int32_t CM2Shared::SetIndices() {
         int32_t sharedVertices = (this->m_cache->m_flags & 8) || (this->m_data->m_bones.m_count == 1 && (this->m_cache->m_flags & 0x40));
         uint32_t indexStart = 0;
 
+        // NOT IN BINARY behaviour change, and the reason the mounts window corrupted the client: this loop
+        // writes section->m_indexCount elements per instance into a buffer sized
+        // m_instances * m_skinData->m_indices.m_count. Both counts come from the file, and a malformed
+        // modern skin whose sections sum to more than its index array walks straight off the end of the
+        // locked buffer. A dump of that crash showed g_theGxDevicePtr itself overwritten with garbage, so
+        // the overrun was reaching the module's globals. Writes are clamped to the allocation now, and the
+        // shortfall is logged once so the bad model can be identified.
+        const uint32_t capacity = this->m_instances * this->m_skinData->m_indices.m_count;
+        uint32_t written = 0;
+        bool truncated = false;
+
         for (uint32_t i = 0; i < this->m_skinData->m_skinSections.m_count; i++) {
             M2SkinSection* section = &this->m_skinSections[i];
             uint32_t start = this->m_skinData->m_skinSections[i].m_indexStart;
             uint16_t offset = sharedVertices ? 0 : static_cast<uint16_t>(-section->m_vertexStart);
 
-            for (uint32_t instance = 0; instance < this->m_instances; instance++) {
-                for (uint32_t j = 0; j < section->m_indexCount; j++) {
-                    indices[j] = offset + this->m_skinData->m_indices[start + j];
+            // A section whose index range is outside the skin's index array cannot be read either.
+            if (static_cast<uint64_t>(start) + section->m_indexCount > this->m_skinData->m_indices.m_count) {
+                truncated = true;
+
+                if (written < capacity) {
+                    section->m_indexStart = static_cast<uint16_t>(indexStart);
                 }
 
-                indices += section->m_indexCount;
+                continue;
+            }
+
+            for (uint32_t instance = 0; instance < this->m_instances; instance++) {
+                for (uint32_t j = 0; j < section->m_indexCount; j++) {
+                    if (written + j >= capacity) {
+                        truncated = true;
+                        break;
+                    }
+
+                    indices[written + j] = offset + this->m_skinData->m_indices[start + j];
+                }
+
+                written += section->m_indexCount;
                 offset += sharedVertices ? static_cast<uint16_t>(this->m_skinData->m_vertices.m_count) : section->m_vertexCount;
+
+                // Only a write past the allocation is an overrun. Filling it exactly is the normal case and
+                // used to raise the warning on nearly every model, which buried the real signal.
+                if (written > capacity) {
+                    truncated = true;
+                    written = capacity;
+                    break;
+                }
             }
 
             section->m_indexStart = static_cast<uint16_t>(indexStart);
             indexStart += this->m_instances * section->m_indexCount;
+        }
+
+        if (truncated) {
+            MODERN_ASSETS_LOG_WARN("m2: '%s' index buffer overrun clamped (sections=%u indices=%u capacity=%u written=%u)",
+                                   this->m_fileName, this->m_skinData->m_skinSections.m_count,
+                                   this->m_skinData->m_indices.m_count, capacity, written);
         }
 
         CGxBuf* buf = this->m_indexBuf;
@@ -405,12 +468,28 @@ int32_t CM2Shared::SetIndices() {
 // OFFSET: 0x008362B0
 int32_t CM2Shared::SetVertices(uint32_t texCoordIndex) {
     if (!this->m_vertexPool) {
-        this->m_vertexPool = g_theGxDevicePtr->PoolCreate(GxPoolTarget_Vertex, GxPoolUsage_Static, sizeof(M2Vertex) * this->m_instances * this->m_skinData->m_vertices.m_count, GxPoolHintBit_Unk1, this->m_fileNameWithoutPath);
-        this->m_vertexBuf = g_theGxDevicePtr->BufCreate(this->m_vertexPool, sizeof(M2Vertex), this->m_instances * this->m_skinData->m_vertices.m_count, 0);
+        // NOT IN BINARY behaviour change. Same overflow and same unchecked-pool hand-off as SetIndices;
+        // this is the vertex half of the pair and fails the same way on a large skin.
+        const uint64_t vertexCount = static_cast<uint64_t>(this->m_instances) * static_cast<uint64_t>(this->m_skinData->m_vertices.m_count);
+        const uint64_t poolBytes = vertexCount * sizeof(M2Vertex);
 
-        if (!this->m_vertexPool || !this->m_vertexBuf) {
+        if (vertexCount > 0x7FFFFFFFull || poolBytes > 0x7FFFFFFFull) {
             return 0;
         }
+
+        this->m_vertexPool = g_theGxDevicePtr->PoolCreate(GxPoolTarget_Vertex, GxPoolUsage_Static, static_cast<int32_t>(poolBytes), GxPoolHintBit_Unk1, this->m_fileNameWithoutPath);
+
+        if (!this->m_vertexPool) {
+            return 0;
+        }
+
+        this->m_vertexBuf = g_theGxDevicePtr->BufCreate(this->m_vertexPool, sizeof(M2Vertex), static_cast<uint32_t>(vertexCount), 0);
+    }
+
+    // NOT IN BINARY. See SetIndices: the buffer is tested on its own, because it can be null or stale while
+    // the pool it came from is still set.
+    if (!this->m_vertexBuf) {
+        return 0;
     }
 
     if (!CShaderEffect::s_enableShaders) {
@@ -421,11 +500,22 @@ int32_t CM2Shared::SetVertices(uint32_t texCoordIndex) {
                 return 0;
             }
 
+            // NOT IN BINARY behaviour change. Same overrun as SetIndices: the loop bound is built from the
+            // file's own vertexStart/vertexCount, and both are used to index the skin's vertex array and
+            // the locked buffer without either being checked. Clamped to the allocation.
+            const uint32_t capacity = this->m_instances * this->m_skinData->m_vertices.m_count;
+
             for (uint32_t i = 0; i < this->m_skinData->m_skinSections.m_count; i++) {
                 M2SkinSection* section = &this->m_skinData->m_skinSections[i];
-                uint32_t end = section->m_vertexStart + section->m_vertexCount;
+                const uint64_t end = static_cast<uint64_t>(section->m_vertexStart) + section->m_vertexCount;
 
-                for (uint32_t j = section->m_vertexStart; j < end; j++) {
+                for (uint64_t j = section->m_vertexStart; j < end; j++) {
+                    if (j >= capacity || j >= this->m_skinData->m_vertices.m_count) {
+                        MODERN_ASSETS_LOG_WARN("m2: '%s' vertex buffer overrun clamped at %llu (capacity=%u)",
+                                               this->m_fileName, static_cast<unsigned long long>(j), capacity);
+                        break;
+                    }
+
                     M2Vertex* source = &this->m_data->m_vertices[this->m_skinData->m_vertices[j]];
                     M2VertexPNT2* vertex = &vertices[j];
                     vertex->m_position = source->m_position;
@@ -618,10 +708,13 @@ CShaderEffect* CM2Shared::GetEffect(uint32_t textureCount, uint16_t shader, uint
 // VERIFY: f6943826 auto
 // OFFSET: 0x008368B0
 void CM2Shared::DestroyBuffers() {
+    // NOT IN BINARY. buf->m_pool is dereferenced to look the buffer up against the device's stream buffer.
+    // A buffer whose pool has already been torn down (or was never attached) makes that a read through
+    // null, which is the same class of fault as the crash this file was just fixed for.
     if (this->m_indexBuf) {
         CGxBuf* buf = this->m_indexBuf;
 
-        if (buf != g_theGxDevicePtr->BufStream(buf->m_pool->m_target, 0, 0)) {
+        if (buf->m_pool && buf != g_theGxDevicePtr->BufStream(buf->m_pool->m_target, 0, 0)) {
             g_theGxDevicePtr->BufDestroy(buf);
         }
 
@@ -636,7 +729,7 @@ void CM2Shared::DestroyBuffers() {
     if (this->m_vertexBuf) {
         CGxBuf* buf = this->m_vertexBuf;
 
-        if (buf != g_theGxDevicePtr->BufStream(buf->m_pool->m_target, 0, 0)) {
+        if (buf->m_pool && buf != g_theGxDevicePtr->BufStream(buf->m_pool->m_target, 0, 0)) {
             g_theGxDevicePtr->BufDestroy(buf);
         }
 
@@ -1213,17 +1306,34 @@ void CM2Shared::ConvertModernSkin() {
 int32_t CM2Shared::InitializeSkinProfile() {
     M2SkinProfile* skinData = this->m_skinData;
 
+    // NOT IN BINARY behaviour change. Three guards on values that come straight from the file:
+    //
+    //  - m_boneCount is used as a divisor. A modern skin that repacks to a section with no bones makes
+    //    this a division by zero, and the resulting garbage propagates into m_maxInstances.
+    //  - m_boneCountMax / m_boneCount has no ceiling, so a large ratio leaves m_maxInstances huge. That
+    //    value multiplies the index and vertex pool sizes in SetIndices/SetVertices, and a retail mount
+    //    window asked for enough to fail SMemAlloc -- the crash that led here.
+    //  - The 0x10000 / index-count seed is likewise unbounded.
+    //
+    // A model that cannot express a sane instance count is better drawn once than not at all.
+    constexpr uint32_t kMaxInstances = 64;
+
     this->m_maxInstances = skinData->m_indices.m_count ? 0x10000 / skinData->m_indices.m_count : 1;
 
+    if (this->m_maxInstances > kMaxInstances) {
+        this->m_maxInstances = kMaxInstances;
+    }
+
     for (uint32_t i = 0; i < skinData->m_skinSections.m_count; i++) {
-        uint32_t instances = skinData->m_boneCountMax / skinData->m_skinSections[i].m_boneCount;
+        const uint32_t boneCount = skinData->m_skinSections[i].m_boneCount;
+        const uint32_t instances = boneCount ? skinData->m_boneCountMax / boneCount : 1;
 
         if (this->m_maxInstances > instances) {
             this->m_maxInstances = instances;
         }
     }
 
-    if (!this->m_maxInstances) {
+    if (!this->m_maxInstances || this->m_maxInstances > kMaxInstances) {
         this->m_maxInstances = 1;
     }
 

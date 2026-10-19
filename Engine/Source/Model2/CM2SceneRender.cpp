@@ -430,27 +430,48 @@ void CM2SceneRender::DrawBatch() {
     this->SetupMaterial();
     this->SetupTextures();
 
-    if (CShaderEffect::s_enableShaders && (this->m_curType != this->m_prevType || this->m_curModel != this->m_prevModel || this->m_curSkinSection->m_boneComboIndex != this->m_prevSkinSection->m_boneComboIndex)) {
+    if (CShaderEffect::s_enableShaders && (this->m_curType != this->m_prevType || this->m_curModel != this->m_prevModel || !this->m_prevSkinSection || this->m_curSkinSection->m_boneComboIndex != this->m_prevSkinSection->m_boneComboIndex)) {
+        // NOT IN BINARY behaviour change, and the root cause of the mounts-window crash: the palette is
+        // written at register 31 and takes 3 registers per bone, so the 256-register shadow array is only
+        // large enough for 75 bones. A retail skin section with more than that ran off the end of
+        // s_shadowConstants and over the globals that follow it -- a dump showed g_theGxDevicePtr holding a
+        // matrix row, after which every device call faulted. Both the bone count and the combo index are
+        // clamped; the palette stops at register 255.
+        const uint32_t kMaxPaletteRegisters = 256 - 31;
         float* constants = g_theGxDevicePtr->ShaderConstantsLock(GxSh_Vertex) + 31 * 4;
+        uint32_t registers = 0;
+        const uint32_t comboCount = this->m_data->m_boneCombos.m_count;
 
-        for (uint32_t i = 0; i < this->m_curSkinSection->m_boneCount; i++) {
-            const C44Matrix& bone = this->m_curModel->m_boneMatrices[this->m_data->m_boneCombos[i + this->m_curSkinSection->m_boneComboIndex]];
-            constants[0] = bone.a0;
-            constants[1] = bone.b0;
-            constants[2] = bone.c0;
-            constants[3] = bone.d0;
-            constants[4] = bone.a1;
-            constants[5] = bone.b1;
-            constants[6] = bone.c1;
-            constants[7] = bone.d1;
-            constants[8] = bone.a2;
-            constants[9] = bone.b2;
-            constants[10] = bone.c2;
-            constants[11] = bone.d2;
+        for (uint32_t i = 0; i < this->m_curSkinSection->m_boneCount && registers < kMaxPaletteRegisters; i++) {
+            const uint32_t combo = i + this->m_curSkinSection->m_boneComboIndex;
+
+            if (combo >= comboCount) {
+                break;
+            }
+
+            const C44Matrix* bone = this->m_curModel->BoneMatrixSafe(this->m_data->m_boneCombos[combo]);
+
+            if (!bone) {
+                break;
+            }
+
+            constants[0] = bone->a0;
+            constants[1] = bone->b0;
+            constants[2] = bone->c0;
+            constants[3] = bone->d0;
+            constants[4] = bone->a1;
+            constants[5] = bone->b1;
+            constants[6] = bone->c1;
+            constants[7] = bone->d1;
+            constants[8] = bone->a2;
+            constants[9] = bone->b2;
+            constants[10] = bone->c2;
+            constants[11] = bone->d2;
             constants += 12;
+            registers += 3;
         }
 
-        g_theGxDevicePtr->ShaderConstantsUnlock(GxSh_Vertex, 31, 3 * this->m_curSkinSection->m_boneCount);
+        g_theGxDevicePtr->ShaderConstantsUnlock(GxSh_Vertex, 31, registers);
     }
 
     if (this->m_curElement->m_flags & 4) {
@@ -631,32 +652,68 @@ void CM2SceneRender::DrawBatchDoodad(M2Element* elements, uint32_t* indices) {
                 instances = total - done;
             }
 
+            // NOT IN BINARY. Same palette overflow as DrawBatch above: see the kMaxPaletteRegisters note.
+            // Instanced draws pack several models into the same 256-register array, so how many instances fit
+            // depends on the section's bone count. Clamp before writing, so the batch that gets drawn is the
+            // same set of instances whose palette was uploaded -- truncating the write alone would draw the
+            // extra instances with stale registers.
+            const uint32_t kMaxPaletteRegisters = 256 - 31;
+            const uint32_t bonesPerInstance = 3 * this->m_curSkinSection->m_boneCount;
+
+            if (bonesPerInstance) {
+                const uint32_t fitted = kMaxPaletteRegisters / bonesPerInstance;
+
+                if (fitted < instances) {
+                    instances = fitted;
+                }
+            }
+
+            if (!instances) {
+                break;
+            }
+
             float* constants = g_theGxDevicePtr->ShaderConstantsLock(GxSh_Vertex) + 31 * 4;
             uint32_t registers = 0;
+            const uint32_t comboCount = this->m_data->m_boneCombos.m_count;
 
             for (uint32_t n = 0; n < instances; n++) {
                 CM2Model* model = elements[indices[done + n]].m_model;
 
-                for (uint32_t i = 0; i < this->m_curSkinSection->m_boneCount; i++) {
-                    const C44Matrix& bone = model->m_boneMatrices[this->m_data->m_boneCombos[i + this->m_curSkinSection->m_boneComboIndex]];
-                    constants[0] = bone.a0;
-                    constants[1] = bone.b0;
-                    constants[2] = bone.c0;
-                    constants[3] = bone.d0;
-                    constants[4] = bone.a1;
-                    constants[5] = bone.b1;
-                    constants[6] = bone.c1;
-                    constants[7] = bone.d1;
-                    constants[8] = bone.a2;
-                    constants[9] = bone.b2;
-                    constants[10] = bone.c2;
-                    constants[11] = bone.d2;
+                for (uint32_t i = 0; i < this->m_curSkinSection->m_boneCount && registers < kMaxPaletteRegisters; i++) {
+                    const uint32_t combo = i + this->m_curSkinSection->m_boneComboIndex;
+
+                    if (combo >= comboCount) {
+                        break;
+                    }
+
+                    const C44Matrix* bone = model->BoneMatrixSafe(this->m_data->m_boneCombos[combo]);
+
+                    if (!bone) {
+                        break;
+                    }
+
+                    constants[0] = bone->a0;
+                    constants[1] = bone->b0;
+                    constants[2] = bone->c0;
+                    constants[3] = bone->d0;
+                    constants[4] = bone->a1;
+                    constants[5] = bone->b1;
+                    constants[6] = bone->c1;
+                    constants[7] = bone->d1;
+                    constants[8] = bone->a2;
+                    constants[9] = bone->b2;
+                    constants[10] = bone->c2;
+                    constants[11] = bone->d2;
                     constants += 12;
-                    registers++;
+                    registers += 3;
                 }
             }
 
-            g_theGxDevicePtr->ShaderConstantsUnlock(GxSh_Vertex, 31, 3 * registers);
+            if (!instances) {
+                break;
+            }
+
+            g_theGxDevicePtr->ShaderConstantsUnlock(GxSh_Vertex, 31, registers);
             CShaderEffect::SetShaders(this->m_curElement->m_vertexPermute, this->m_curElement->m_pixelPermute);
 
             batch.m_count = instances * this->m_curSkinSection->m_indexCount;

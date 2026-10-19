@@ -861,6 +861,19 @@ void CGxDevice::ShaderConstantsClear() {
 // VERIFY: 4ce72d69 manual
 // OFFSET: 0x006833E0
 void CGxDevice::ShaderConstantsSet(EGxShTarget target, uint32_t index, const float* constants, uint32_t count) {
+    // NOT IN BINARY behaviour change. Callers pass a register index and a vec4 count that come from model
+    // data, and nothing used to check the pair against the 256-register array. The mounts-window crash was
+    // exactly this: a skin section with more than 75 bones wrote its palette past the end of
+    // s_shadowConstants and over g_theGxDevicePtr, so the device pointer became a matrix row and every
+    // later call faulted. Out-of-range writes are dropped here rather than trusted.
+    if (index >= 256) {
+        return;
+    }
+
+    if (count > 256 - index) {
+        count = 256 - index;
+    }
+
     ShadowConstants& shadow = s_shadowConstants[target ? 0 : 1];
     float* dest = &shadow.constants[index * 4];
 
@@ -899,6 +912,17 @@ float* CGxDevice::ShaderConstantsLock(EGxShTarget target) {
 // OFFSET: 0x00683580
 void CGxDevice::ShaderConstantsUnlock(EGxShTarget target, uint32_t index, uint32_t count) {
     ShadowConstants& shadow = s_shadowConstants[target ? 0 : 1];
+
+    // NOT IN BINARY. Same invariant as ShaderConstantsSet: the dirty range drives the upload size, so an
+    // out-of-range index/count here made the flush read past the 256-register array even when the writes
+    // themselves were bounded. Count 0 means "nothing written" and must not wrap index - 1.
+    if (!count || index >= 256) {
+        return;
+    }
+
+    if (count > 256 - index) {
+        count = 256 - index;
+    }
 
     if (shadow.dirtyMin > index) {
         shadow.dirtyMin = index;
@@ -1647,7 +1671,22 @@ CGxDevice::~CGxDevice() {
 // VERIFY: aaaa19ed manual
 // OFFSET: 0x00687660
 CGxBuf* CGxDevice::BufCreate(CGxPool* pool, uint32_t itemSize, uint32_t itemCount, uint32_t index) {
-    CGxBuf* buf = new (SMemAlloc(sizeof(CGxBuf), __FILE__, __LINE__, 0)) CGxBuf(pool, itemSize, itemCount, index);
+    // NOT IN BINARY behaviour change. This is a placement new over a raw allocation, so the constructor
+    // runs with `this` set to whatever SMemAlloc returned. When that is null the constructor's member
+    // writes fault immediately -- the crash is at "write 0x0" inside it, NOT in LinkToTail below, so
+    // checking the result afterwards is too late. The allocation is checked first instead.
+    if (!pool) {
+        return nullptr;
+    }
+
+    void* mem = SMemAlloc(sizeof(CGxBuf), __FILE__, __LINE__, 0);
+
+    if (!mem) {
+        return nullptr;
+    }
+
+    CGxBuf* buf = new (mem) CGxBuf(pool, itemSize, itemCount, index);
+
     pool->m_bufList.LinkToTail(buf);
     buf->m_pool = pool;
     return buf;
@@ -1656,7 +1695,16 @@ CGxBuf* CGxDevice::BufCreate(CGxPool* pool, uint32_t itemSize, uint32_t itemCoun
 // VERIFY: f38621c0 manual
 // OFFSET: 0x006876D0
 CGxPool* CGxDevice::PoolCreate(EGxPoolTarget target, EGxPoolUsage usage, int32_t size, EGxPoolHintBits hint, const char* name) {
-    CGxPool* pool = new (SMemAlloc(sizeof(CGxPool), __FILE__, __LINE__, 0)) CGxPool(target, usage, size, hint, name);
+    // NOT IN BINARY behaviour change. See BufCreate: placement new over SMemAlloc means a failed
+    // allocation faults inside the constructor before any result can be checked. Allocate first.
+    void* mem = SMemAlloc(sizeof(CGxPool), __FILE__, __LINE__, 0);
+
+    if (!mem) {
+        return nullptr;
+    }
+
+    CGxPool* pool = new (mem) CGxPool(target, usage, size, hint, name);
+
     this->m_poolList.LinkToTail(pool);
     return pool;
 }

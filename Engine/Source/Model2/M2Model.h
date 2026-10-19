@@ -345,6 +345,18 @@ class CM2Model {
     void SetWorldTransform(const C3Vector& position, float rotation, float scale);
     void SetWorldTransform(const C3Vector& position, float rotation, float scale, const C3Vector& up, uint32_t flags);
     void UpdateLoaded();
+    // NOT IN BINARY. Bone indices in M2 data are used to index m_boneMatrices, which holds exactly
+    // m_bones.m_count entries, and were never checked -- an out-of-range index read and wrote a whole
+    // C44Matrix past the allocation. Treat any bad index as bone 0, or null when the model has no bones.
+    C44Matrix* BoneMatrixSafe(uint32_t index) {
+        const uint32_t count = this->m_shared->m_data->m_bones.m_count;
+
+        if (!count || !this->m_boneMatrices) {
+            return nullptr;
+        }
+
+        return &this->m_boneMatrices[index < count ? index : 0];
+    }
     void WaitForLoad(const char* reason);
     void AnimateMT(const C44Matrix* view, const C3Vector& diffuse, const C3Vector& emissive, float alpha, float alpha2);
     void AnimateMTSimple(const C44Matrix* view, const C3Vector& diffuse, const C3Vector& emissive, float alpha, float alpha2);

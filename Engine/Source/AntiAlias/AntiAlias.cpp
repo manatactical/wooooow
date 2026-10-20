@@ -87,8 +87,6 @@ const char* const kAntiAliasHLSL =
     "                     + tex2D(s0, uv + dir * (2.0 / 3.0 - 0.5)).rgb);\n"
     "  float3 rgbB = rgbA * 0.5 + 0.25 * (tex2D(s0, uv + dir * -0.5).rgb\n"
     "                                   + tex2D(s0, uv + dir *  0.5).rgb);\n"
-    "  float lB = dot(rgbB, luma);\n"
-    "  if (lB < lMin || lB > lMax) { return float4(rgbA, 1.0); }\n"
     "  return float4(rgbB, 1.0);\n"
     "}\n";
 
@@ -97,13 +95,24 @@ CGxShader* CompilePixelShader(const char* hlsl) {
     ID3DBlob* error = nullptr;
 
     if (FAILED(D3DCompile(hlsl, strlen(hlsl), "AntiAlias", nullptr, nullptr, "main", "ps_2_0", 0, 0, &code, &error))) {
-        CGxDevice::Log("AntiAlias: the pixel shader failed to compile: %s",
-                       error ? static_cast<const char*>(error->GetBufferPointer()) : "(no compiler message)");
+        // The blob's buffer is not guaranteed to be NUL-terminated -- it is a byte count and a pointer -- so
+        // passing it straight to %s hands strnlen a run of bytes with no terminator and faults. The length is
+        // copied out and terminated here.
+        char message[1024] = "(no compiler message)";
 
         if (error) {
+            uint32_t length = static_cast<uint32_t>(error->GetBufferSize());
+
+            if (length >= sizeof(message)) {
+                length = sizeof(message) - 1;
+            }
+
+            memcpy(message, error->GetBufferPointer(), length);
+            message[length] = '\0';
             error->Release();
         }
 
+        CGxDevice::Log("AntiAlias: the pixel shader failed to compile: %s", message);
         return nullptr;
     }
 

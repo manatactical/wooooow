@@ -28,6 +28,12 @@
 				ScrollFrame_OnLoad(self);
 				VideoOptionsResolutionPanel_OnLoad(self);
 			</OnLoad>
+			<OnShow>
+				-- Base OptionsList_DisplayPanel stretches the panel across the whole container; pull it in
+				-- so the scrollbar does not sit flush against the dialog border.
+				self:SetPoint("TOPLEFT", self:GetParent(), "TOPLEFT", 0, -20);
+				self:SetPoint("BOTTOMRIGHT", self:GetParent(), "BOTTOMRIGHT", -20, 20);
+			</OnShow>
 		</Scripts>
 		<ScrollChild>
 			<!-- Unnamed on purpose: $parent skips unnamed frames, so every control below keeps its
@@ -311,10 +317,12 @@
 				</Scripts>
 			</CheckButton>		
 			<Frame name="$parentBrightness" inherits="OptionsBoxTemplate">
-				<Size x="380" y="96"/>
+				<Size x="376" y="96"/>
 				<Anchors>
+					<!-- TripleBuffer is indented 16px past the checkbox column; pull back so the box lines up
+					     with the controls above and its right edge stays inside the narrower viewport. -->
 					<Anchor point="TOPLEFT" relativeTo="$parentTripleBuffer" relativePoint="BOTTOMLEFT">
-						<Offset x="0" y="-36"/>
+						<Offset x="-16" y="-36"/>
 					</Anchor>
 				</Anchors>
 				<Layers>

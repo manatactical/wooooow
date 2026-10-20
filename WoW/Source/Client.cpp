@@ -1318,7 +1318,6 @@ void ClientInitializeGame(uint32_t mapId, C3Vector position) {
     manager->m_commands[manager->m_count++] = commands;
     commands->Install();
     ModernAssetsRegisterCommands();
-    TextureRegisterCommands();
 
     ClientServices::SetMessageHandler(SMSG_NOTIFICATION, Packet_SMSG_NOTIFICATION, nullptr);
     ClientServices::SetMessageHandler(SMSG_PLAYED_TIME, Packet_SMSG_PLAYED_TIME, nullptr);
@@ -1744,6 +1743,14 @@ bool InitializeGlobal() {
 
     ClientServices::LoadCDKey();
     ConsoleInitializeClientCommand();
+
+    // NOT IN BINARY. Registered right after the command hash exists and before any screen is shown, so the
+    // texture diagnostics are usable at the login and character-select screens. Registered from
+    // ClientInitializeGame they only appeared once the world loaded -- which is too late to inspect the
+    // character-select gear, and it is the reason `texaudit` was rejected when it was run there. Registering
+    // any earlier than ConsoleInitializeClientCommand uses an uninitialised command pool and hangs.
+    TextureRegisterCommands();
+
     CVar::Initialize("Config.wtf");
     CVar::ArchiveCodeRegisteredOnly();
 

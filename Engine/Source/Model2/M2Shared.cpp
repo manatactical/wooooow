@@ -1307,8 +1307,46 @@ void CM2Shared::ConvertModernSkin() {
         return;
     }
 
+    std::vector<uint16_t> rebuiltBoneCombos;
+    uint32_t rebuiltBoneComboCount = 0;
+
     const modern::m2::SkinContractResult result = modern::m2::RebuildSkinBatches(
-        reinterpret_cast<uint8_t*>(this->m_skinData), this->m_asyncObject->m_size);
+        reinterpret_cast<uint8_t*>(this->m_skinData),
+        // Writable capacity, not the file length: an env split grows the batch array and the bone split
+        // appends rebuilt geometry, and the allocation carries slack for both.
+        this->m_skinAllocSize ? this->m_skinAllocSize : this->m_asyncObject->m_size,
+        // The bone split needs the model's boneCombos. Hand over the resolved array: after M2Init an
+        // M2Array's offset is a delta from its own member, so passing the body would need that arithmetic
+        // repeated and got it wrong.
+        this->m_data->m_boneCombos.Data(), this->m_data->m_boneCombos.m_count,
+        // Where the skin file's own data ends; rebuilt geometry is appended past it.
+        this->m_skinFileSize ? this->m_skinFileSize : this->m_asyncObject->m_size,
+        &rebuiltBoneCombos, &rebuiltBoneComboCount);
+
+    // Install the rebuilt boneCombos. The split appends a compact slice per emitted section, so the sections
+    // index entries past the model's original array -- committing them without this leaves every draw
+    // reading the wrong bone palette. The original array lives inside the model body, which is never
+    // freed per-array, so the replacement is intentionally process-lifetime like the other repack buffers.
+    if (rebuiltBoneComboCount)
+    {
+        const uint32_t previousCount = this->m_data->m_boneCombos.m_count;
+        uint16_t* owned = static_cast<uint16_t*>(SMemAlloc(rebuiltBoneComboCount * sizeof(uint16_t), __FILE__, __LINE__, 0));
+
+        if (owned)
+        {
+            memcpy(owned, rebuiltBoneCombos.data(), rebuiltBoneComboCount * sizeof(uint16_t));
+            this->m_data->m_boneCombos.Set(owned);
+            this->m_data->m_boneCombos.m_count = rebuiltBoneComboCount;
+            MODERN_ASSETS_LOG_INFO("m2: '%s' boneCombos %u -> %u", this->m_fileName,
+                                   previousCount, rebuiltBoneComboCount);
+        }
+        else
+        {
+            MODERN_ASSETS_LOG_WARN("m2: '%s' could not install rebuilt boneCombos; bone split is inert",
+                                   this->m_fileName);
+        }
+    }
+
     if (result.batchesRewritten) {
         MODERN_ASSETS_LOG_INFO("m2: '%s' skin batches rewritten=%u parked=%u",
                                this->m_fileName, result.batchesRewritten, result.batchesParked);
@@ -1838,7 +1876,12 @@ void CM2Shared::SkinProfileLoadedCallback(void* param) {
 
     const uint32_t attachStart = OsGetAsyncTimeMs();
 
-    shared->FinishLoadingSkinProfile(shared->m_asyncObject->m_size);
+    // NOT IN BINARY. The capacity, not the file length: RebuildSkinBatches can grow the batch array past the
+    // length the file shipped (a source batch splits into a primary plus a follower), and M2Init rejects any
+    // array whose end exceeds the size it is given. Passing the file length made every grown skin fail to
+    // attach, which is what left the mount invisible and frozen.
+    shared->FinishLoadingSkinProfile(shared->m_skinAllocSize ? shared->m_skinAllocSize
+                                                             : shared->m_asyncObject->m_size);
 
     PerfLogSpan("skin-attach", OsGetAsyncTimeMs() - attachStart);
 
@@ -1860,7 +1903,16 @@ int32_t CM2Shared::LoadSkinProfile(uint32_t profile) {
     }
 
     uint32_t size = SFileGetFileSize(file, nullptr);
-    this->m_skinData = static_cast<M2SkinProfile*>(SIMD::AllocA16(size, __FILE__, __LINE__));
+
+    // NOT IN BINARY. Reserve room past the skin so a modern skin can be rewritten in place: an env split
+    // grows the batch array, and the bone split appends a rebuilt vertex/index/bone/section block (a section
+    // over the client's 75-bone ceiling is repartitioned, and the rebuilt geometry does not fit in the space
+    // the original data occupied). The reserve is sized generously because the rebuilt arrays can exceed the
+    // originals; a stock skin reads its own length and writes nothing past it.
+    const uint32_t slack = size * 2 + 0x1000;
+    this->m_skinAllocSize = size + slack;
+    this->m_skinFileSize = size;
+    this->m_skinData = static_cast<M2SkinProfile*>(SIMD::AllocA16(this->m_skinAllocSize, __FILE__, __LINE__));
 
     if (!this->m_skinData) {
         SFileCloseFile(file);
@@ -1927,6 +1979,8 @@ int32_t CM2Shared::Initialize() {
     }
 
     this->m_skinData = nullptr;
+    this->m_skinAllocSize = 0;
+    this->m_skinFileSize = 0;
 
     uint32_t profile = this->GetSkinProfileIndex(maxBones);
 

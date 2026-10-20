@@ -2,6 +2,7 @@
 #define ENGINE_SOURCE_MODERNASSETS_M2_M2SKINCONTRACT_H
 
 #include <cstdint>
+#include <vector>
 
 // Rebuilds the material / texture-unit contract a modern skin omits.
 //
@@ -32,6 +33,8 @@ namespace modern::m2
         uint32_t combinerCombosBuilt = 0;
         /// Batches whose pack could not be expressed and were parked (zero geometry) instead.
         uint32_t batchesParked = 0;
+        /// Submeshes whose per-draw bone count exceeded the client's palette ceiling and were clamped.
+        uint32_t sectionsBoneClamped = 0;
     };
 
     /**
@@ -58,9 +61,21 @@ namespace modern::m2
      * through the modern repack has batches in this encoding; a stock skin must not be passed here.
      *
      * @param skin      the whole skin file, writable.
-     * @param skinSize  its byte size.
+     * @param skinSize  writable bytes at skin (>= the file length; the array may grow).
+     * @param boneCombos the model's boneCombos array (already resolved to a real pointer), or null to skip
+     *                  the bone-budget pass. Needed because a submesh whose per-draw bone palette exceeds the
+     *                  client's 75-matrix ceiling has to be repartitioned.
+     * @param boneComboCount its entry count.
+     * @param skinFileSize the length the skin file itself occupies; rebuilt geometry is appended past it.
+     * @param boneCombosOut receives the rebuilt boneCombos array when the bone split ran. The caller must
+     *                  install it on the model: sections index slices past the original array's end.
+     * @param boneComboCountOut receives its entry count.
      */
-    SkinContractResult RebuildSkinBatches(uint8_t* skin, uint32_t skinSize);
+    SkinContractResult RebuildSkinBatches(uint8_t* skin, uint32_t skinSize,
+                                          const uint16_t* boneCombos = nullptr, uint32_t boneComboCount = 0,
+                                          uint32_t skinFileSize = 0,
+                                          std::vector<uint16_t>* boneCombosOut = nullptr,
+                                          uint32_t* boneComboCountOut = nullptr);
 }
 
 #endif

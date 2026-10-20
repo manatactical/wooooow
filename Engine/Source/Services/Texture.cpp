@@ -1946,7 +1946,16 @@ void UpdateTgaTexture(EGxTexCommand command, uint32_t width, uint32_t height, ui
 
 // VERIFY: c0a503e5 manual
 // OFFSET: 0x004B7BD0
+static int32_t PumpBlpTexture(CTexture* texture, void* data, uint32_t fileBytes);
+
 int32_t PumpBlpTextureAsync(CTexture* texture, void* data) {
+    return PumpBlpTexture(texture, data, texture->m_asyncObject ? texture->m_asyncObject->m_size : 0);
+}
+
+// The body of PumpBlpTextureAsync, with the file length the caller actually read. The async path knows it
+// from the CAsyncObject; the sync path only has the size it allocated, so it passes it in rather than the
+// audit being handed 0 and skipping every sync-loaded texture.
+static int32_t PumpBlpTexture(CTexture* texture, void* data, uint32_t fileBytes) {
     CBLPFile image;
 
     if (!image.Source(data)) {
@@ -1957,9 +1966,8 @@ int32_t PumpBlpTextureAsync(CTexture* texture, void* data) {
     // NOT IN BINARY. The audit hook runs with both the parsed header and the file bytes alive, which is the
     // only point where the header can be checked against the bytes it claims to describe.
     if (s_auditCallback) {
-        s_auditCallback(texture, data, static_cast<uint32_t>(texture->m_asyncObject ? texture->m_asyncObject->m_size : 0), s_auditArg);
+        s_auditCallback(texture, data, fileBytes, s_auditArg);
     }
-
 
     if ((texture->m_flags & 4) && !(image.m_header.m_hasMips & 0x10)) {
         texture->m_flags &= ~4;
@@ -2366,7 +2374,7 @@ CTexture* CreateBlpSync(const char* fileName, char* extension, uint32_t flags, C
         DebugLog("CreateBlpTexture() failed read: %s.\n", fileName);
     }
 
-    if (!PumpBlpTextureAsync(texture, data)) {
+    if (!PumpBlpTexture(texture, data, size)) {
         FillInSolidTexture(*reinterpret_cast<const CImVector*>(&s_defaultColor), texture);
     }
 

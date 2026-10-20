@@ -574,6 +574,51 @@ namespace
         return 1;
     }
 
+    int32_t CCommand_AssetGet(const char* /*command*/, const char* arguments) {
+        if (!arguments || !*arguments) {
+            ConsolePrintf("usage: assetget <client path> [outfile]");
+            return 1;
+        }
+
+        char path[260];
+        SStrCopy(path, arguments, sizeof(path));
+
+        // A path may contain spaces, so the destination is only split off when the trailing token names a
+        // file the caller wants written.
+        const char* out = nullptr;
+        char* space = std::strrchr(path, ' ');
+
+        if (space && std::strchr(space + 1, '.') != nullptr) {
+            *space = '\0';
+            out = space + 1;
+        }
+
+        OsCreateDirectory("Logs", 0);
+
+        char fallback[320];
+
+        if (!out) {
+            char base[260];
+            DumpFileName(path, base, sizeof(base), "");
+            SStrPrintf(fallback, sizeof(fallback), "Logs\\%s.bin", base);
+            out = fallback;
+        }
+
+        void* data = nullptr;
+        uint32_t size = 0;
+
+        if (!ReadArchiveFile(path, data, size)) {
+            ConsolePrintf("assetget: '%s' is not in the mounted archives", path);
+            return 1;
+        }
+
+        const bool wrote = WriteBlob(out, data, size);
+        ConsolePrintf("assetget: '%s' -> %s (%u bytes)%s", path, out, size, wrote ? "" : " WRITE FAILED");
+        SMemFree(data, __FILE__, __LINE__, 0);
+
+        return 1;
+    }
+
     int32_t CCommand_TexAudit(const char* /*command*/, const char* arguments) {
         const bool enable = !arguments || !*arguments || std::strtoul(arguments, nullptr, 10) != 0;
 
@@ -581,6 +626,22 @@ namespace
         TextureSetAuditCallback(enable ? AuditEnabled : nullptr, nullptr);
 
         ConsolePrintf("texaudit: header checks %s; findings go to %s", enable ? "on" : "off", kLogPath);
+
+        // Write the state down immediately, flushed. Console text is lost when the client is closed, and the
+        // point of this command is to survive exactly that: it says whether the hook was on at all, which is
+        // the first thing to check when the log turns out to be empty.
+        OsCreateDirectory("Logs", 0);
+
+        FILE* file = std::fopen(kLogPath, "a");
+
+        if (file) {
+            std::fprintf(file, "texaudit: header checks %s (first load will be reported below)\n",
+                         enable ? "on" : "off");
+            std::fclose(file);
+        } else {
+            ConsolePrintf("texaudit: cannot write %s", kLogPath);
+        }
+
         return 1;
     }
 }
@@ -594,4 +655,6 @@ void TextureRegisterCommands() {
                            "Write a texture's upload pixels and raw file to Logs\\texdump: texdump <substring> [mip].");
     ConsoleCommandRegister("texaudit", CCommand_TexAudit, CATEGORY_DEBUG,
                            "Check each BLP header against its file as it loads: texaudit [0|1].");
+    ConsoleCommandRegister("assetget", CCommand_AssetGet, CATEGORY_DEBUG,
+                           "Copy one client file out of the archives: assetget <path> [outfile].");
 }

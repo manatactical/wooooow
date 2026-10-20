@@ -66,6 +66,14 @@ class CM2Shared {
     /* ---- */ uint32_t m_allocSize;
 #endif
     /* 0170 */ M2SkinProfile* m_skinData;
+#if defined(WOWDECOMP_MODERN_ASSETS)
+    // NOT IN BINARY, build-only: writable bytes at m_skinData, and the skin file's real length. A modern
+    // skin is rewritten in place before the client walks it, and a source batch that splits into a primary
+    // plus a follower second pass needs more batch records than the file shipped -- so the allocation carries
+    // a reserve past the file length. Stock skins leave these equal.
+    /* ---- */ uint32_t m_skinAllocSize;
+    /* ---- */ uint32_t m_skinFileSize;
+#endif
     /* 0174 */ CTexture** m_textures;
     /* 0178 */ CGxPool* m_indexPool;
     /* 017C */ CGxBuf* m_indexBuf;

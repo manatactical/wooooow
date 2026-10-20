@@ -351,6 +351,13 @@ namespace modern::m2
             const uint32_t offset = Rd32(body + kOffMaterials + 4);
             if (!count || !offset || !Fits(ctx.size, offset, count, kMaterialBytes)) return;
 
+            // The reference host's mask. 0x00-0x1F are the classic render flags the client reads; 0x40 and
+            // 0x80 are SHADOW-EXCLUDE and SHADOW-FORCE, which the stock caster collector tests directly.
+            // Masking them away (this used to write `flags & 0x1F`) silently re-admits geometry a modern pack
+            // explicitly opted out of the shadow pass, and drops geometry it forced in. That is a real visual
+            // difference on layered content, not a cosmetic one.
+            constexpr uint16_t kMaterialFlagMask = 0x1Fu | 0x40u | 0x80u;
+
             for (uint32_t i = 0; i < count; ++i)
             {
                 uint8_t* material = body + offset + i * kMaterialBytes;
@@ -358,7 +365,7 @@ namespace modern::m2
                 uint16_t blend = Rd16(material + 2);
                 // Past the client's 7-entry blend table, Add is the closest state it can express.
                 if (blend > 6) { blend = 4; flags |= 0x5; }
-                Wr16(material, flags & 0x1F);
+                Wr16(material, flags & kMaterialFlagMask);
                 Wr16(material + 2, blend);
             }
         }

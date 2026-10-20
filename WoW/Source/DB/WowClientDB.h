@@ -6,6 +6,8 @@
 #include <cstring>
 #include <vector>
 #include <new>
+#include <type_traits>
+#include <utility>
 #include "Engine/Source/BlizzardCore/SFile2-Core.h"
 #include "Engine/Source/Storm/H/storm.h"
 
@@ -16,6 +18,62 @@
 #endif
 
 #if defined(WOWDECOMP_MODERN_ASSETS)
+/**
+ * @brief Serves bytes already in memory as an SFileImpl the DB loader can read.
+ *
+ * Both the merge path and any table built from modern content hand the loader a complete image and need
+ * it to look like an ordinary file. The SFileImpl takes ownership of a copy.
+ */
+inline bool WowClientDB_OpenMemory(const std::vector<uint8_t>& bytes, SFileImpl** out)
+{
+    *out = nullptr;
+
+    const uint32_t size = static_cast<uint32_t>(bytes.size());
+    if (!size) return false;
+
+    auto* memory = static_cast<uint8_t*>(SMemAlloc(size, __FILE__, __LINE__, 0));
+    if (!memory) return false;
+    memcpy(memory, bytes.data(), size);
+
+    SFileImpl* file = new (__FILE__, __LINE__) SFileImpl(SFILE_MEMORY);
+    file->m_size = size;
+    file->m_data = memory;
+    file->m_position = 0;
+
+    *out = file;
+    return true;
+}
+
+/**
+ * @brief Builds a table from modern content when the stock .dbc describes the wrong era.
+ *
+ * A record type that can author a complete table declares a static BuildModernTable(std::vector<uint8_t>&);
+ * every other type has no such member and this resolves to false, leaving the normal file path untouched.
+ * Building the table is what makes the ids newer content uses exist at all: GetRecord() is a minId/maxId
+ * range check, so an id the stock .dbc never described is simply absent.
+ */
+template <class T, class = void>
+struct WowClientDB_HasModernSource : std::false_type {};
+
+template <class T>
+struct WowClientDB_HasModernSource<
+    T, std::void_t<decltype(T::BuildModernTable(std::declval<std::vector<uint8_t>&>()))>> : std::true_type {};
+
+template <class T>
+inline bool WowClientDB_OpenModern(SFileImpl** out)
+{
+    if constexpr (WowClientDB_HasModernSource<T>::value)
+    {
+        std::vector<uint8_t> bytes;
+        if (!T::BuildModernTable(bytes) || bytes.empty()) return false;
+        return WowClientDB_OpenMemory(bytes, out);
+    }
+    else
+    {
+        return false;
+    }
+}
+
 /**
  * @brief Reads a base table and layers any add-on `.dbcN-project` rows on top of it.
  *
@@ -54,20 +112,8 @@ inline bool WowClientDB_OpenMerged(const char* basePath, SFileImpl** out)
         baseBytes.swap(merged);
     }
 
-    // The memory file owns its bytes: SFileImpl frees m_data on close through the MEMORY path, so the
-    // buffer is allocated once here and handed over rather than copied a second time.
-    const uint32_t size = static_cast<uint32_t>(baseBytes.size());
-    auto* memory = static_cast<uint8_t*>(SMemAlloc(size, __FILE__, __LINE__, 0));
-    if (!memory) return false;
-    memcpy(memory, baseBytes.data(), size);
-
-    SFileImpl* file = new (__FILE__, __LINE__) SFileImpl(SFILE_MEMORY);
-    file->m_size = size;
-    file->m_data = memory;
-    file->m_position = 0;
-
-    *out = file;
-    return true;
+    // The memory file owns its bytes: SFileImpl frees m_data on close through the MEMORY path.
+    return WowClientDB_OpenMemory(baseBytes, out);
 }
 #endif
 
@@ -165,9 +211,12 @@ void WowClientDB_Common<T>::Load(const char* file, int32_t line) {
     SFileImpl* f = nullptr;
 
 #if defined(WOWDECOMP_MODERN_ASSETS)
-    // A pack may ship add-on rows beside this table rather than replacing it; merge them first. When
-    // there are none, this is the stock open (whole-file mode, as the original requested).
-    if (!WowClientDB_OpenMerged(T::GetFilename(), &f) &&
+    // A table that ships at a later revision than this client understands is taken from modern content
+    // first: the stock .dbc stops at this client's own id range, so every id the newer content uses is
+    // absent from it and GetRecord() range-rejects it. Below that, a pack may ship add-on rows beside the
+    // table rather than replacing it; merge them. Failing both, the stock open.
+    if (!WowClientDB_OpenModern<T>(&f) &&
+        !WowClientDB_OpenMerged(T::GetFilename(), &f) &&
         !SFile::OpenEx(nullptr, T::GetFilename(), 0x20000, &f)) {
         SErrDisplayAppFatalCustom(0x85100079, "Unable to open %s", T::GetFilename());
     }

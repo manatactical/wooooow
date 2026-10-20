@@ -1,6 +1,10 @@
 #include "WoW/Source/DB/Rec/AnimationDataRec.h"
 #include "Engine/Source/BlizzardCore/SFile2-Core.h"
 
+#if defined(WOWDECOMP_MODERN_ASSETS)
+#include "Engine/Source/ModernAssets/Dbc/AnimationData.h"
+#endif
+
 AnimationDataRec::AnimationDataRec() {
 }
 
@@ -11,6 +15,18 @@ AnimationDataRec::~AnimationDataRec() {
 // OFFSET: 0x008A93D0
 const char* AnimationDataRec::GetFilename() {
     return "DBFilesClient\\AnimationData.dbc";
+}
+
+// NOT IN BINARY. The stock table stops at id 505; modern content uses ids past it and GetRecord() range-
+// rejects them, so those animations could never play. The archive set's AnimationData.db2 is the same
+// table at a later revision, covering every stock id as well.
+bool AnimationDataRec::BuildModernTable(std::vector<uint8_t>& out) {
+#if defined(WOWDECOMP_MODERN_ASSETS)
+    return modern::db2::animation::BuildWdbc(out) != 0;
+#else
+    (void)out;
+    return false;
+#endif
 }
 
 // VERIFY: 2ead5348 manual

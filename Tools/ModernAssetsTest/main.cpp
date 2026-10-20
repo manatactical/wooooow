@@ -1109,8 +1109,9 @@ int main(int argc, char** argv)
             return 2;
         }
 
+        // argv[1] is the subcommand and argv[2] the file path, so the four shapes start at argv[3].
         int shapes[4];
-        for (int i = 0; i < 4; ++i) shapes[i] = static_cast<int>(std::strtoul(argv[2 + i], nullptr, 0));
+        for (int i = 0; i < 4; ++i) shapes[i] = static_cast<int>(std::strtoul(argv[3 + i], nullptr, 0));
 
         return ProbeAnimationData(argv[2], argc > 7 ? &argv[7] : nullptr, argc > 7 ? argc - 7 : 0, shapes);
     }

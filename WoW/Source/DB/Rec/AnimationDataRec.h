@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 class SFileImpl;
 
@@ -25,6 +26,19 @@ class AnimationDataRec {
     ~AnimationDataRec();
     static const char* GetFilename();
     bool Read(SFileImpl* file, const char* stringBuffer);
+
+    /**
+     * @brief Builds this table from modern content when the stock .dbc describes the wrong era.
+     *
+     * The stock AnimationData.dbc stops at id 505. Modern content -- the retail mounts in this pack among
+     * it -- uses ids far past that, and GetRecord() is a minId/maxId range check, so every one of those ids
+     * returns null: no behaviour id, no fallback chain, no animation. AnimationData.db2 is the same table at
+     * a later revision covering ids 0..1865, so it is the authority here.
+     *
+     * @param out receives the complete WDBC image.
+     * @return true when the image was built.
+     */
+    static bool BuildModernTable(std::vector<uint8_t>& out);
 };
 
 #endif

@@ -698,6 +698,7 @@ WIND_SPEED = "Speed";
 GRASS_THINNING = "Thinning";
 GRASS_THIN_START = "Thin From";
 GRASS_THIN_END = "Thin To";
+GRASS_THIN_FLOOR = "Far Share";
 GRASS_PARTING = "Parting";
 GRASS_PARTING_STRENGTH = "Strength";
 GRASS_PARTING_RADIUS = "Radius";
@@ -708,11 +709,12 @@ OPTION_TOOLTIP_GRASS_WIND_SWAY = "How far the tip of a blade leans at full stren
 OPTION_TOOLTIP_GRASS_WIND_FLUTTER = "Extra per-blade shimmer on top of the sway, in yards, so a field moves as blades rather than as one sheet.";
 OPTION_TOOLTIP_GRASS_WIND_SPEED = "How fast the wind travels, in radians per second.";
 OPTION_TOOLTIP_GRASS_THINNING = "Draws only a share of the clutter far away, keeping the near grass untouched. Makes a long view distance affordable.";
-OPTION_TOOLTIP_GRASS_THIN_START = "Distance at which thinning begins, in yards. Everything closer is drawn in full.";
-OPTION_TOOLTIP_GRASS_THIN_END = "Distance at which thinning reaches its floor, in yards.";
+OPTION_TOOLTIP_GRASS_THIN_START = "Percent of the grass view distance where thinning begins. Everything closer is drawn in full.";
+OPTION_TOOLTIP_GRASS_THIN_END = "Percent of the grass view distance where thinning reaches its floor.";
+OPTION_TOOLTIP_GRASS_THIN_FLOOR = "Share of the clutter still drawn past Thin To. A smaller number means a much thinner far field.";
 OPTION_TOOLTIP_GRASS_PARTING = "Lets the grass part around nearby characters, using each one's own size.";
-OPTION_TOOLTIP_GRASS_PARTING_STRENGTH = "How far blades lean away from a character, in yards.";
-OPTION_TOOLTIP_GRASS_PARTING_RADIUS = "Push radius as a multiple of a character's own bounding radius.";
+OPTION_TOOLTIP_GRASS_PARTING_STRENGTH = "How far blades lean away from a character, in yards. The first notch is a gentle lean, not a hole.";
+OPTION_TOOLTIP_GRASS_PARTING_RADIUS = "Push radius as a multiple of a character's own bounding radius. A mount adds a little more.";
 
 PhysicsPanelOptions = {
 	-- The two Effects-panel sliders, moved here so each value has one home. Ranges match
@@ -721,15 +723,16 @@ PhysicsPanelOptions = {
 	groundEffectDensity = { text = "CLUTTER_DENSITY", minValue = 16, maxValue = 196, valueStep = 4, tooltip = OPTION_TOOLTIP_CLUTTER_DENSITY },
 	groundEffectDist = { text = "CLUTTER_RADIUS", minValue = 20, maxValue = 196, valueStep = 4, tooltip = OPTION_TOOLTIP_CLUTTER_RADIUS },
 	grassWind = { text = "WIND_LABEL", tooltip = OPTION_TOOLTIP_GRASS_WIND },
-	grassWindSway = { text = "WIND_SWAY", minValue = 0, maxValue = 1.5, valueStep = 0.05, tooltip = OPTION_TOOLTIP_GRASS_WIND_SWAY },
-	grassWindFlutter = { text = "WIND_FLUTTER", minValue = 0, maxValue = 0.5, valueStep = 0.05, tooltip = OPTION_TOOLTIP_GRASS_WIND_FLUTTER },
-	grassWindSpeed = { text = "WIND_SPEED", minValue = 0, maxValue = 20, valueStep = 0.5, tooltip = OPTION_TOOLTIP_GRASS_WIND_SPEED },
+	grassWindSway = { text = "WIND_SWAY", minValue = 0, maxValue = 0.75, valueStep = 0.025, tooltip = OPTION_TOOLTIP_GRASS_WIND_SWAY },
+	grassWindFlutter = { text = "WIND_FLUTTER", minValue = 0, maxValue = 0.25, valueStep = 0.01, tooltip = OPTION_TOOLTIP_GRASS_WIND_FLUTTER },
+	grassWindSpeed = { text = "WIND_SPEED", minValue = 0, maxValue = 10, valueStep = 0.25, tooltip = OPTION_TOOLTIP_GRASS_WIND_SPEED },
 	grassThinning = { text = "GRASS_THINNING", tooltip = OPTION_TOOLTIP_GRASS_THINNING },
-	grassThinStart = { text = "GRASS_THIN_START", minValue = 0, maxValue = 1000, valueStep = 10, tooltip = OPTION_TOOLTIP_GRASS_THIN_START },
-	grassThinEnd = { text = "GRASS_THIN_END", minValue = 0, maxValue = 2000, valueStep = 10, tooltip = OPTION_TOOLTIP_GRASS_THIN_END },
+	grassThinStart = { text = "GRASS_THIN_START", minValue = 0, maxValue = 100, valueStep = 1, tooltip = OPTION_TOOLTIP_GRASS_THIN_START },
+	grassThinEnd = { text = "GRASS_THIN_END", minValue = 0, maxValue = 100, valueStep = 1, tooltip = OPTION_TOOLTIP_GRASS_THIN_END },
+	grassThinMinShare = { text = "GRASS_THIN_FLOOR", minValue = 0.01, maxValue = 1, valueStep = 0.01, tooltip = OPTION_TOOLTIP_GRASS_THIN_FLOOR },
 	grassParting = { text = "GRASS_PARTING", tooltip = OPTION_TOOLTIP_GRASS_PARTING },
-	grassPartingStrength = { text = "GRASS_PARTING_STRENGTH", minValue = 0, maxValue = 2, valueStep = 0.05, tooltip = OPTION_TOOLTIP_GRASS_PARTING_STRENGTH },
-	grassPartingRadiusScale = { text = "GRASS_PARTING_RADIUS", minValue = 0, maxValue = 8, valueStep = 0.25, tooltip = OPTION_TOOLTIP_GRASS_PARTING_RADIUS },
+	grassPartingStrength = { text = "GRASS_PARTING_STRENGTH", minValue = 0, maxValue = 2, valueStep = 0.02, tooltip = OPTION_TOOLTIP_GRASS_PARTING_STRENGTH },
+	grassPartingRadiusScale = { text = "GRASS_PARTING_RADIUS", minValue = 0, maxValue = 8, valueStep = 0.05, tooltip = OPTION_TOOLTIP_GRASS_PARTING_RADIUS },
 };
 
 function VideoOptionsPhysicsPanel_OnLoad (self)

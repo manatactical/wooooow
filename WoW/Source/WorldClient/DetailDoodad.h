@@ -113,12 +113,13 @@ class CDetailDoodadInstBatch {
     // CPU re-bake of every plant in the batch on the next frame; at long grass distances the free list
     // empties and most of the world's grass takes that path. Owning them for the batch's own lifetime -- the
     // chunk's -- removes the re-bake and hands the 256 units back to the rare pop-in batch. See the plan's
-    // section 3.1. m_bakeHash is how staleness is decided; nothing writes an add once the batch is drawn.
+    // section 3.1. Staleness is decided by m_addsVersion: AddDoodad is the only writer of m_adds, so a
+    // counter costs nothing where hashing the whole add list three times a frame did.
     CGxPool* m_vertexPool;
     CGxPool* m_indexPool;
-    uint64_t m_bakeHash;
-    uint64_t m_bakedHash;
-    uint32_t m_bakedAdds;
+    uint32_t m_addsVersion;
+    uint32_t m_bakedVertsVersion;
+    uint32_t m_bakedRunsVersion;
 
     // Not in the original binary. The doodad runs the bake emitted, in draw order, each with the index
     // range it owns, so the caller can bind that doodad's constant row before its sub-draw.
@@ -135,7 +136,6 @@ class CDetailDoodadInstBatch {
     uint32_t AddIndexCount(uint32_t doodadId);
     void BakeRuns();
     void BuildOwnBuffers();
-    uint64_t HashAdds() const;
 };
 
 class CDetailDoodadInst {
@@ -162,7 +162,8 @@ inline CDetailDoodadInstAdd::CDetailDoodadInstAdd() {
 // INLINED
 inline void CDetailDoodadInstBatch::FreeBuffers() {
     if (!this->m_vertexBuf) {
-        this->m_bakeHash = 0;
+        this->m_bakedVertsVersion = 0xFFFFFFFFu;
+        this->m_bakedRunsVersion = 0xFFFFFFFFu;
         return;
     }
 
@@ -195,7 +196,8 @@ inline void CDetailDoodadInstBatch::FreeBuffers() {
 
     this->m_indexBuf = nullptr;
     this->m_vertexBuf = nullptr;
-    this->m_bakeHash = 0;
+    this->m_bakedVertsVersion = 0xFFFFFFFFu;
+    this->m_bakedRunsVersion = 0xFFFFFFFFu;
 }
 
 // INLINED
@@ -206,8 +208,9 @@ inline void CDetailDoodadInstBatch::Free() {
     this->m_adds.SetCount(0);
     this->m_adds.m_chunk = 64;
     this->m_runs.SetCount(0);
-    this->m_bakedHash = 0;
-    this->m_bakedAdds = 0;
+    this->m_addsVersion = 0;
+    this->m_bakedVertsVersion = 0xFFFFFFFFu;
+    this->m_bakedRunsVersion = 0xFFFFFFFFu;
     this->FreeBuffers();
 }
 

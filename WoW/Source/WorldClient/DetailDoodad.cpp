@@ -129,48 +129,8 @@ static void AcquireBuffers(uint32_t vertexCount, CGxBuf** vertexBuf, uint32_t in
     }
 }
 
-// Not in the original binary.
-//
-// The two items the plan's section 3.2 adds. Nothing in these batches is keyed to the camera: an add's
-// record is fixed once the chunk places it, and the view matrix is a shader constant, not part of the baked
-// vertices. So the hash below changes only when the chunk's own placement changes, which is when the batch
-// genuinely has to re-bake -- once per setting change or pop-in, instead of once per frame.
-namespace {
-
-// FNV-1a over the fields that reach the vertices. Cheap, and it only has to distinguish batches that
-// actually differ; a collision costs one stale frame of one batch's grass, not corruption.
-uint64_t HashBytes(uint64_t hash, const void* data, size_t size) {
-    const uint8_t* bytes = static_cast<const uint8_t*>(data);
-
-    for (size_t i = 0; i < size; i++) {
-        hash = (hash ^ bytes[i]) * 1099511628211ULL;
-    }
-
-    return hash;
-}
-
-}  // namespace
-
-// Not in the original binary.
-uint64_t CDetailDoodadInstBatch::HashAdds() const {
-    uint64_t hash = 14695981039346656037ULL;
-    const CDetailDoodadInstAdd* adds = this->m_adds.m_data;
-    uint32_t count = this->m_adds.m_count;
-
-    for (uint32_t i = 0; i < count; i++) {
-        const CDetailDoodadInstAdd& add = adds[i];
-
-        hash = HashBytes(hash, &add.m_doodadId, sizeof(add.m_doodadId));
-        hash = HashBytes(hash, &add.m_position, sizeof(add.m_position));
-        hash = HashBytes(hash, &add.m_rotation, sizeof(add.m_rotation));
-        hash = HashBytes(hash, &add.m_scale, sizeof(add.m_scale));
-        hash = HashBytes(hash, &add.m_normal, sizeof(add.m_normal));
-        hash = HashBytes(hash, &add.m_triIndex, sizeof(add.m_triIndex));
-        hash = HashBytes(hash, &add.m_color, sizeof(add.m_color));
-    }
-
-    return hash;
-}
+// Not in the original binary. Staleness is a version counter, not a hash: AddDoodad is the only writer of
+// m_adds and nothing resets it after the bake, so the counter is exact where a hash could collide.
 
 // Not in the original binary. Sizes the batch's own pool to its exact counts, so no dense batch can overrun
 // a density unit the way a shared-list unit allowed, and allocates the pair. A pool of our own also means
@@ -844,6 +804,7 @@ void CDetailDoodadInst::AddDoodad(uint32_t id, const C3Vector& position, float r
 
     batch.m_vertexCount += vertexCount;
     batch.m_indexCount += indexCount;
+    batch.m_addsVersion++;
 }
 
 // VERIFY: 9bfece74 manual
@@ -879,14 +840,14 @@ void CDetailDoodadInstBatch::Draw() {
 
     this->BakeRuns();
 
-    uint64_t hash = this->HashAdds() ^ (static_cast<uint64_t>(this->m_runs.m_count) << 32);
     bool streamed = this->m_vertexBuf->m_pool->m_usage == GxPoolUsage_Stream;
 
-    // The fade is no longer part of the baked vertices -- it is a shader constant now -- so the bake depends on
-    // the adds alone again and this stays the stock test.
-    if (streamed || hash != this->m_bakeHash || !this->m_vertexBuf->m_hasData || !this->m_vertexBuf->m_valid) {
+    // The fade is no longer part of the baked vertices -- it is a shader constant now -- so the bake depends
+    // on the adds alone. A version counter says so exactly: AddDoodad is the only writer of m_adds, and a
+    // hash over every record three times a frame was the whole per-frame cost of a settled batch.
+    if (streamed || this->m_addsVersion != this->m_bakedVertsVersion || !this->m_vertexBuf->m_hasData || !this->m_vertexBuf->m_valid) {
         this->FillVertices();
-        this->m_bakeHash = hash;
+        this->m_bakedVertsVersion = this->m_addsVersion;
     }
 
     GxPrimVertexPtr(this->m_vertexBuf, GxVBF_PNCT);
@@ -1007,7 +968,7 @@ void CDetailDoodadInst::DrawBatches() {
 void CDetailDoodadInstBatch::BakeRuns() {
     uint32_t count = this->m_adds.Count();
 
-    if (this->m_bakedAdds == count && this->m_bakedHash == this->HashAdds()) {
+    if (this->m_bakedRunsVersion == this->m_addsVersion) {
         return;
     }
 
@@ -1057,8 +1018,7 @@ void CDetailDoodadInstBatch::BakeRuns() {
         i = end;
     }
 
-    this->m_bakedAdds = count;
-    this->m_bakedHash = this->HashAdds();
+    this->m_bakedRunsVersion = this->m_addsVersion;
 }
 
 // Not in the original binary.
@@ -1091,9 +1051,9 @@ CDetailDoodadInstBatch::CDetailDoodadInstBatch() {
     this->m_indexBuf = nullptr;
     this->m_vertexPool = nullptr;
     this->m_indexPool = nullptr;
-    this->m_bakeHash = 0;
-    this->m_bakedHash = 0;
-    this->m_bakedAdds = 0;
+    this->m_addsVersion = 0;
+    this->m_bakedVertsVersion = 0xFFFFFFFFu;
+    this->m_bakedRunsVersion = 0xFFFFFFFFu;
 }
 
 // VERIFY: 9e2e57b8 manual

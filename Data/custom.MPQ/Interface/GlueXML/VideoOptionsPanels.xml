@@ -22,8 +22,21 @@
 	
 	<!-- Resolution Panel -->
 
-	<Frame name="VideoOptionsResolutionPanel" hidden="false" parent="VideoOptionsFramePanelContainer">
-		<Layers>
+	<ScrollFrame name="VideoOptionsResolutionPanel" hidden="false" parent="VideoOptionsFramePanelContainer" inherits="UIPanelScrollFrameTemplate">
+		<Scripts>
+			<OnLoad>
+				ScrollFrame_OnLoad(self);
+				VideoOptionsResolutionPanel_OnLoad(self);
+			</OnLoad>
+		</Scripts>
+		<ScrollChild>
+			<!-- Unnamed on purpose: $parent skips unnamed frames, so every control below keeps its
+			     existing global name. Sized to the viewport width and the full content height because the
+			     scroll range is the child height minus the viewport height; an auto-sized child that just
+			     wrapped its children would report no range and clip the lower controls. -->
+			<Frame>
+				<Size x="413" y="480"/>
+				<Layers>
 			<Layer level="ARTWORK">
 				<FontString name="$parentTitle" text="RESOLUTION_LABEL" inherits="OptionsFontLarge" justifyH="LEFT" justifyV="TOP">
 					<Anchors>
@@ -51,14 +64,9 @@
 						</Anchor>
 					</Anchors>
 				</FontString>
-			</Layer>
-		</Layers>
-		<Scripts>
-			<OnLoad>
-				VideoOptionsResolutionPanel_OnLoad(self);
-			</OnLoad>
-		</Scripts>	
-		<Frames>
+					</Layer>
+				</Layers>
+			<Frames>
 			<Frame name="$parentResolutionDropDown" inherits="GlueDropDownMenuTemplate" enableMouse="true">
 				<Anchors>
 					<Anchor point="TOPLEFT">
@@ -389,8 +397,10 @@
 					</OnValueChanged>
 				</Scripts>
 			</Slider>	
-		</Frames>
-	</Frame>	
+			</Frames>
+			</Frame>
+		</ScrollChild>
+	</ScrollFrame>	
 
 	<!-- Effects Panel -->
 

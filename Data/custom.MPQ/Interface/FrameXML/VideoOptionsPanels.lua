@@ -123,6 +123,15 @@ end
 function VideoOptionsResolutionPanel_OnLoad (self)
 	self.name = RESOLUTION_LABEL;
 	self.options = ResolutionPanelOptions;
+
+	-- The panel is a scroll frame now, so the controls sit in a scroll child and register themselves
+	-- against it (self:GetParent() inside each dropdown's OnLoad). Adopt that list here, after the
+	-- child's frames are created, or the panel would find no controls and never initialize them.
+	local child = self:GetScrollChild();
+	if ( child and child.controls ) then
+		self.controls = child.controls;
+	end
+
 	VideoOptionsPanel_OnLoad(self, nil, nil, VideoOptionsResolutionPanel_Default, VideoOptionsResolutionPanel_Refresh);
 
 	self:SetScript("OnEvent", VideoOptionsResolutionPanel_OnEvent);

@@ -79,6 +79,7 @@ if (WOWDECOMP_DEBUG_SYMBOLS)
 endif ()
 
 add_subdirectory(Engine/Source/BLPFile)
+add_subdirectory(Engine/Source/AntiAlias)
 add_subdirectory(Engine/Source/Base)
 add_subdirectory(Engine/Source/BlizzardCore)
 add_subdirectory(Engine/Source/ComSat)

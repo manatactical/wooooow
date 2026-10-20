@@ -26,6 +26,7 @@
 #include "Engine/Source/Services/SysMessage.h"
 #include "Engine/Source/Services/Texture.h"
 #include "Engine/Source/ShaderEffect/ShaderEffect.h"
+#include "Engine/Source/AntiAlias/AntiAlias.h"
 #include "Engine/Source/UnitOutline/UnitOutline.h"
 #include "Engine/Source/Tempest/C4Vector.h"
 #include "Engine/Source/Tempest/CAaBox.h"
@@ -1259,6 +1260,8 @@ CGWorldFrame::CGWorldFrame(CSimpleFrame* parent) : CSimpleFrame(parent) {
     // Registers the unitOutline cvar and the device-restored callback. Idempotent, so it is safe for a
     // world frame to be built more than once.
     CUnitOutline::Init();
+    // Registers the antiAlias cvar and the device-restored callback. Idempotent for the same reason.
+    CAntiAlias::Init();
 
     CGWorldFrame::ffxEffectGlow = new (__FILE__, __LINE__) EffectGlow();
     CGWorldFrame::ffxEffectDeath = new (__FILE__, __LINE__) EffectDeath();
@@ -1815,6 +1818,12 @@ void CGWorldFrame::OnWorldRender() {
     CUnitOutline::EndDepthPass();
     PerfLogStage("outline");
     CUnitOutline::Composite();
+
+    // The frame is complete and the interface has not drawn yet, so the anti-aliasing pass filters the 3D
+    // view and nothing else. Placed after the outline's composite so the line it just drew is filtered with
+    // the world it belongs to, rather than drawn over a smoothed frame.
+    PerfLogStage("antialias");
+    CAntiAlias::Apply();
 
     PerfLogStage("interface");
     g_theGxDevicePtr->RsPop();

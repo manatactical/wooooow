@@ -155,9 +155,73 @@
 					</OnLeave>
 				</Scripts>
 			</Frame>
-			<CheckButton name="$parentVSync" inherits="VideoOptionsSmallCheckButtonTemplate">
+			<Frame name="$parentAntiAliasDropDown" inherits="GlueDropDownMenuTemplate" id="7">
 				<Anchors>
 					<Anchor point="TOPLEFT" relativeTo="$parentRefreshDropDown" relativePoint="BOTTOMLEFT">
+						<Offset x="0" y="-16"/>
+					</Anchor>
+				</Anchors>
+				<Layers>
+					<Layer level="BACKGROUND">
+						<FontString name="$parentLabel" inherits="OptionsFontSmall" text="ANTI_ALIASING">
+							<Anchors>
+								<Anchor point="BOTTOMLEFT" relativePoint="TOPLEFT">
+									<Offset x="21" y="0"/>
+								</Anchor>
+							</Anchors>
+						</FontString>
+					</Layer>
+				</Layers>
+				<Scripts>
+					<OnLoad>
+						self.type = CONTROLTYPE_DROPDOWN;
+						BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
+						VideoOptionsResolutionPanelAntiAliasDropDown_OnLoad(self);
+					</OnLoad>
+					<OnEnter>
+						OptionsTooltip:SetOwner(self);
+						OptionsTooltip:SetText(OPTION_TOOLTIP_ANTI_ALIASING);
+					</OnEnter>
+					<OnLeave>
+						OptionsTooltip:Hide();
+					</OnLeave>
+				</Scripts>
+			</Frame>
+			<Frame name="$parentFxaaQualityDropDown" inherits="GlueDropDownMenuTemplate" id="8">
+				<Anchors>
+					<Anchor point="TOPLEFT" relativeTo="$parentAntiAliasDropDown" relativePoint="BOTTOMLEFT">
+						<Offset x="0" y="-16"/>
+					</Anchor>
+				</Anchors>
+				<Layers>
+					<Layer level="BACKGROUND">
+						<FontString name="$parentLabel" inherits="OptionsFontSmall" text="FXAA_QUALITY">
+							<Anchors>
+								<Anchor point="BOTTOMLEFT" relativePoint="TOPLEFT">
+									<Offset x="21" y="0"/>
+								</Anchor>
+							</Anchors>
+						</FontString>
+					</Layer>
+				</Layers>
+				<Scripts>
+					<OnLoad>
+						self.type = CONTROLTYPE_DROPDOWN;
+						BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
+						VideoOptionsResolutionPanelFxaaQualityDropDown_OnLoad(self);
+					</OnLoad>
+					<OnEnter>
+						OptionsTooltip:SetOwner(self);
+						OptionsTooltip:SetText(OPTION_TOOLTIP_FXAA_QUALITY);
+					</OnEnter>
+					<OnLeave>
+						OptionsTooltip:Hide();
+					</OnLeave>
+				</Scripts>
+			</Frame>
+			<CheckButton name="$parentVSync" inherits="VideoOptionsSmallCheckButtonTemplate">
+				<Anchors>
+					<Anchor point="TOPLEFT" relativeTo="$parentFxaaQualityDropDown" relativePoint="BOTTOMLEFT">
 						<Offset x="16" y="-8"/>
 					</Anchor>
 				</Anchors>

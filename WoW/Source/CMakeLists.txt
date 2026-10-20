@@ -34,6 +34,7 @@ target_link_options(Wow PRIVATE "/INCREMENTAL:NO" "/ENTRY:start")
 target_link_libraries(Wow
     PRIVATE
         BLPFile
+        AntiAlias
         Base
         BlizzardCore
         ComSat

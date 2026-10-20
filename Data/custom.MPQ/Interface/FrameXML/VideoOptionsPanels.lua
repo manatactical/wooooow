@@ -74,12 +74,31 @@ end
 
 -- [[ Resolution Panel ]] --
 
+-- Anti-aliasing is not in the original binary. It is a post-process pass over the finished frame, not one
+-- of the device's multisample formats, so it is a plain cvar the engine module reads rather than a format
+-- offered by the driver.
+ANTI_ALIASING = "Anti-Aliasing";
+ANTI_ALIASING_OFF = "Off";
+ANTI_ALIASING_FXAA = "FXAA";
+OPTION_TOOLTIP_ANTI_ALIASING = "Smooths the stair-stepped edges of the 3D view with a post-process pass over the finished frame. The interface, text and icons are never filtered, so they stay sharp. Has no effect while Multisample above is anything other than 1x, where the driver has already smoothed the frame itself, and costs some frame rate.";
+
+-- The FXAA quality presets. The pass itself is identical at every level; what changes is how eagerly a
+-- gradient counts as an edge. Low leaves faint gradients alone, Ultra filters them too.
+FXAA_QUALITY = "FXAA Quality";
+FXAA_QUALITY_LOW = "Low";
+FXAA_QUALITY_MEDIUM = "Medium";
+FXAA_QUALITY_HIGH = "High";
+FXAA_QUALITY_ULTRA = "Ultra";
+OPTION_TOOLTIP_FXAA_QUALITY = "How much FXAA smooths. Low only touches strong, obvious silhouettes and leaves everything else exactly as it was drawn; Ultra also smooths faint gradients such as the shimmer on thin geometry and foliage, which costs some detail in busy textures. Medium and High are the standard settings.";
+
 ResolutionPanelOptions = {
 	useUiScale = { text = "USE_UISCALE" },
 	gxVSync = { text = "VERTICAL_SYNC" },
 	gxTripleBuffer = { text = "TRIPLE_BUFFER" },
 	gxWindow = { text = "WINDOWED_MODE" },
 	gxMaximize = { text = "WINDOWED_MAXIMIZED" },
+	antiAlias = { text = "ANTI_ALIASING", tooltip = OPTION_TOOLTIP_ANTI_ALIASING },
+	fxaaQuality = { text = "FXAA_QUALITY", tooltip = OPTION_TOOLTIP_FXAA_QUALITY },
 	windowResizeLock = { text = "WINDOW_LOCK" },
 	desktopGamma = { text = "DESKTOP_GAMMA" },
 	gamma = { text = "GAMMA", minValue = -.5, maxValue = .5, valueStep = .1 },
@@ -369,6 +388,141 @@ function VideoOptionsResolutionPanelMultiSampleDropDown_OnClick(self)
 	local value = self:GetID();
 	local dropdown = VideoOptionsResolutionPanelMultiSampleDropDown;
 	UIDropDownMenu_SetSelectedID(dropdown, value);
+	if ( dropdown.value == value ) then
+		dropdown.newValue = nil;
+	else
+		dropdown.newValue = value;
+	end
+	VideoOptionsFrameApply:Enable();
+end
+
+function VideoOptionsResolutionPanelAntiAliasDropDown_OnLoad(self)
+	-- The menu is rebuilt from nothing on every open, so its two entries are added here rather than from the
+	-- driver's list the way the multisample formats are. The cvar itself carries the choice.
+	self.cvar = "antiAlias";
+
+	self.defaultValue = BlizzardOptionsPanel_GetCVarDefaultSafe(self.cvar);
+	self.value = BlizzardOptionsPanel_GetCVarSafe(self.cvar);
+
+	UIDropDownMenu_SetWidth(self, 160);
+	UIDropDownMenu_Initialize(self, VideoOptionsResolutionPanelAntiAliasDropDown_Initialize);
+	UIDropDownMenu_SetSelectedValue(self, self.value);
+
+	self.SetValue =
+		function (self, value)
+			BlizzardOptionsPanel_SetCVarSafe(self.cvar, value);
+		end;
+	self.GetValue =
+		function (self)
+			return BlizzardOptionsPanel_GetCVarSafe(self.cvar);
+		end
+	self.RefreshValue =
+		function (self)
+			local value = BlizzardOptionsPanel_GetCVarSafe(self.cvar);
+			UIDropDownMenu_Initialize(self, VideoOptionsResolutionPanelAntiAliasDropDown_Initialize);
+		UIDropDownMenu_SetSelectedValue(self, value);
+			self.value = value;
+			self.newValue = value;
+		end
+end
+
+function VideoOptionsResolutionPanelAntiAliasDropDown_Initialize()
+	VideoOptionsResolutionPanel_GetAntiAliasModes(ANTI_ALIASING_OFF, ANTI_ALIASING_FXAA);
+end
+
+function VideoOptionsResolutionPanel_GetAntiAliasModes(...)
+	local info = UIDropDownMenu_CreateInfo();
+	local dropdown = VideoOptionsResolutionPanelAntiAliasDropDown;
+	local selected = UIDropDownMenu_GetSelectedValue(dropdown) or dropdown.value;
+
+	for i = 1, select("#", ...) do
+		-- The cvar takes the index, which is also the id UIDropDownMenu_SetSelectedValue reads back.
+		local value = tostring(i - 1);
+
+		local checked = tonumber(selected) == i - 1;
+
+		info.text = select(i, ...);
+		info.value = value;
+		info.func = VideoOptionsResolutionPanelAntiAliasDropDown_OnClick;
+		info.checked = checked and 1 or nil;
+		UIDropDownMenu_AddButton(info);
+
+		if ( checked ) then
+			UIDropDownMenu_SetText(dropdown, info.text);
+		end
+	end
+end
+
+function VideoOptionsResolutionPanelAntiAliasDropDown_OnClick(self)
+	local value = self.value;
+	local dropdown = VideoOptionsResolutionPanelAntiAliasDropDown;
+	UIDropDownMenu_SetSelectedValue(dropdown, value);
+	if ( dropdown.value == value ) then
+		dropdown.newValue = nil;
+	else
+		dropdown.newValue = value;
+	end
+	VideoOptionsFrameApply:Enable();
+end
+
+function VideoOptionsResolutionPanelFxaaQualityDropDown_OnLoad(self)
+	self.cvar = "fxaaQuality";
+
+	self.defaultValue = BlizzardOptionsPanel_GetCVarDefaultSafe(self.cvar);
+	self.value = BlizzardOptionsPanel_GetCVarSafe(self.cvar);
+
+	UIDropDownMenu_SetWidth(self, 160);
+	UIDropDownMenu_Initialize(self, VideoOptionsResolutionPanelFxaaQualityDropDown_Initialize);
+	UIDropDownMenu_SetSelectedValue(self, self.value);
+
+	self.SetValue =
+		function (self, value)
+			BlizzardOptionsPanel_SetCVarSafe(self.cvar, value);
+		end;
+	self.GetValue =
+		function (self)
+			return BlizzardOptionsPanel_GetCVarSafe(self.cvar);
+		end
+	self.RefreshValue =
+		function (self)
+			local value = BlizzardOptionsPanel_GetCVarSafe(self.cvar);
+			UIDropDownMenu_Initialize(self, VideoOptionsResolutionPanelFxaaQualityDropDown_Initialize);
+			UIDropDownMenu_SetSelectedValue(self, value);
+			self.value = value;
+			self.newValue = value;
+		end
+end
+
+function VideoOptionsResolutionPanelFxaaQualityDropDown_Initialize()
+	VideoOptionsResolutionPanel_GetFxaaQualities(FXAA_QUALITY_LOW, FXAA_QUALITY_MEDIUM, FXAA_QUALITY_HIGH, FXAA_QUALITY_ULTRA);
+end
+
+function VideoOptionsResolutionPanel_GetFxaaQualities(...)
+	local info = UIDropDownMenu_CreateInfo();
+	local dropdown = VideoOptionsResolutionPanelFxaaQualityDropDown;
+	local selected = UIDropDownMenu_GetSelectedValue(dropdown) or dropdown.value;
+
+	for i = 1, select("#", ...) do
+		-- The cvar takes the index, which is also the value the dropdown reads back.
+		local value = tostring(i - 1);
+		local checked = tonumber(selected) == i - 1;
+
+		info.text = select(i, ...);
+		info.value = value;
+		info.func = VideoOptionsResolutionPanelFxaaQualityDropDown_OnClick;
+		info.checked = checked and 1 or nil;
+		UIDropDownMenu_AddButton(info);
+
+		if ( checked ) then
+			UIDropDownMenu_SetText(dropdown, info.text);
+		end
+	end
+end
+
+function VideoOptionsResolutionPanelFxaaQualityDropDown_OnClick(self)
+	local value = self.value;
+	local dropdown = VideoOptionsResolutionPanelFxaaQualityDropDown;
+	UIDropDownMenu_SetSelectedValue(dropdown, value);
 	if ( dropdown.value == value ) then
 		dropdown.newValue = nil;
 	else

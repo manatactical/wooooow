@@ -43,6 +43,7 @@ target_link_options(WowClient PRIVATE "/INCREMENTAL:NO" "/ENTRY:start" "/MAP:${C
 target_link_libraries(WowClient
     PRIVATE
         BLPFile
+        AntiAlias
         Base
         BlizzardCore
         ComSat

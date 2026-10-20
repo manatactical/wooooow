@@ -41,6 +41,12 @@ CVar* CWorldParam::cvar_shadowBandRange;
 // Not in the original binary. See CUnitOutline::Enabled.
 CVar* CWorldParam::cvar_unitOutline;
 
+// Not in the original binary. See CAntiAlias::Enabled.
+CVar* CWorldParam::cvar_antiAlias;
+
+// Not in the original binary. See CAntiAlias's quality preset table.
+CVar* CWorldParam::cvar_fxaaQuality;
+
 // STATIC: 0x00CD857C
 CVar* CWorldParam::cvar_texLodBias;
 
@@ -819,6 +825,16 @@ void CWorldParam::Initialize() {
     // while the login screen is up, which is before any world frame exists, and GetCVarDefault raises on an
     // unregistered name. CUnitOutline::Init registers it too, so Init order cannot be got wrong.
     CWorldParam::cvar_unitOutline = CVar::Register("unitOutline", "Outline the mouseover and target units", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+
+    // Not in the original binary. The anti-aliasing mode: 0 off, 1 FXAA. Unlike the unit outline this one
+    // defaults to 0, so a client that never touches the options draws exactly what the stock 3.3.5a client
+    // drew. CAntiAlias::Init registers it too, so Init order cannot be got wrong.
+    CWorldParam::cvar_antiAlias = CVar::Register("antiAlias", "anti-aliasing mode: 0 off, 1 FXAA", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+
+    // Not in the original binary. The FXAA quality preset, meaningful only while antiAlias is 1. Registered
+    // here for the same reason as the mode. CAntiAlias::Init registers it too, and clamps it itself, so the
+    // shader cannot be handed an index off the end of its table.
+    CWorldParam::cvar_fxaaQuality = CVar::Register("fxaaQuality", "FXAA quality: 0 low, 1 medium, 2 high, 3 ultra", 1, "2", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
     // Not in the original binary. The panel reads this, nothing may usefully write it - ShadowModeCallback
     // refuses writes, so it is read-only in effect without the CVar flag that would make Lua raise an error.

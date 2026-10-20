@@ -47,6 +47,14 @@ class CWorldParam {
     // CUnitOutline::Init(), which runs once a world frame exists -- the options panel reads the cvar at
     // login and GetCVarDefault raises on a name that is not registered yet.
     static CVar* cvar_unitOutline;
+
+    // Not in the original binary. The anti-aliasing mode, read by CAntiAlias from the render path. Registered
+    // here for the same reason as cvar_unitOutline: the options dropdown asks for its default at the login
+    // screen, before any world frame exists. CAntiAlias::Init registers it too, so Init order cannot be wrong.
+    static CVar* cvar_antiAlias;
+
+    // Not in the original binary. The FXAA quality preset (0 low .. 3 ultra), read alongside the mode.
+    static CVar* cvar_fxaaQuality;
     static bool ShadowTextureSizeCallback(CVar* var, const char* oldValue, const char* value, void* arg);
     static bool ShadowModeCallback(CVar* var, const char* oldValue, const char* value, void* arg);
     static bool CascadedShadowsCallback(CVar* var, const char* oldValue, const char* value, void* arg);

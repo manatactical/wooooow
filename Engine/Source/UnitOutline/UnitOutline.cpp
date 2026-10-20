@@ -39,10 +39,10 @@ namespace {
 // the video options tab carries only the master switch, so they are constants here. Distances are in
 // screen pixels.
 // ---------------------------------------------------------------------------------------------
-constexpr float kThickness = 1.75f;   // edge width
-constexpr float kIntensity = 4.0f;    // edge accumulation weight (brightness)
+constexpr float kThickness = 2.75f;   // edge width
+constexpr float kIntensity = 7.0f;    // edge accumulation weight (brightness)
 constexpr float kOpacity   = 1.0f;    // final outline alpha scale
-constexpr float kSoftness  = 0.225f;  // blur radius, times kSoftnessScale
+constexpr float kSoftness  = 0.25f;   // blur radius, times kSoftnessScale
 constexpr float kThreshold = 0.0f;    // clip cutoff; trims faint pixels
 
 // Blur radius, in mask texels, that kSoftness maps to. The mask is back-buffer sized, so one texel is
@@ -51,8 +51,8 @@ constexpr float kThreshold = 0.0f;    // clip cutoff; trims faint pixels
 constexpr float kSoftnessScale = 2.0f;
 
 constexpr int32_t kMaxTargets   = 64;  // selections and quest givers, each up to two models plus gear
-constexpr uint32_t kFadeMs         = 400;
-constexpr float    kFadeEndOpacity = 0.5f;
+constexpr uint32_t kFadeMs         = 700;
+constexpr float    kFadeEndOpacity = 0.75f;
 
 // ---------------------------------------------------------------------------------------------
 // The shaders. Ported from the WXL module's hlsl (its Hlsl.hpp); the port change is that they are
@@ -937,8 +937,12 @@ void CUnitOutline::StampMask(const CGxBatch& batch, const float color[4], CGxTex
 }
 
 // Not in the original binary. The fade: full strength when the entry appears, eased to kFadeEndOpacity
-// over kFadeMs and then held there. The edge shader recovers the line colour as rgb/alpha, so scaling the
-// premultiplied colour and its weight together keeps the hue exact while the line fades.
+// over kFadeMs and then held there.
+//
+// The weight is put into the mask's rgb only, never its alpha. Alpha is the target's coverage, and the edge
+// pass turns coverage into line alpha with the intensity gain, which clamps at 1 -- so a weight in alpha
+// disappeared into that saturate and the fade was invisible. Weighted rgb leaves alpha (opacity) at full and
+// the edge pass recovers the line colour as rgb/alpha, so what eases is the line's brightness.
 void CUnitOutline::StampSilhouette(const CGxBatch& batch, int32_t index) {
     float color[4];
     memcpy(color, s_targets[index].m_color, sizeof(color));
@@ -951,7 +955,6 @@ void CUnitOutline::StampSilhouette(const CGxBatch& batch, int32_t index) {
         color[0] *= weight;
         color[1] *= weight;
         color[2] *= weight;
-        color[3] *= weight;
     }
 
     // The whole silhouette, untested, so the edge shape never inherits a wall's rim.

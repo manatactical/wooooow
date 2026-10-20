@@ -673,6 +673,73 @@ function VideoOptionsAdvancedPanel_OnLoad (self)
 	VideoOptionsPanel_OnLoad(self);
 end
 
+-- [[ Physics Panel ]] --
+-- Grass and clutter: how much grows, how far it is drawn, and the wind that moves it. The two sliders that
+-- used to sit on the Effects panel moved here so each value has one home; the rest are new. The wind's
+-- direction, wavelength and stiffness rules stay in CGrassMotion as named constants.
+PHYSICS_LABEL = "Physics";
+PHYSICS_SUBTEXT = "Clutter and the wind that moves it. Density and view distance both grow the grass pool, which is allocated once when the setting changes.";
+CLUTTER_LABEL = "Clutter";
+WIND_LABEL = "Wind";
+DISTANCE_LABEL = "Distance";
+PARTING_LABEL = "Parting";
+CLUTTER_DENSITY = "Clutter Density";
+CLUTTER_RADIUS = "View Distance";
+WIND_SWAY = "Sway";
+WIND_FLUTTER = "Flutter";
+WIND_SPEED = "Speed";
+GRASS_THINNING = "Thinning";
+GRASS_THIN_START = "Thin From";
+GRASS_THIN_END = "Thin To";
+GRASS_PARTING = "Parting";
+GRASS_PARTING_STRENGTH = "Strength";
+GRASS_PARTING_RADIUS = "Radius";
+OPTION_TOOLTIP_CLUTTER_DENSITY = "How much clutter grows per terrain cell. 196 is the ceiling, twelve times the stock maximum, and roughly triples the grass pool.";
+OPTION_TOOLTIP_CLUTTER_RADIUS = "How far clutter is drawn, in yards. A map may cap this lower than the slider allows.";
+OPTION_TOOLTIP_GRASS_WIND = "Sways grass and clutter in the wind. Off draws the stock, motionless grass.";
+OPTION_TOOLTIP_GRASS_WIND_SWAY = "How far the tip of a blade leans at full strength, in yards.";
+OPTION_TOOLTIP_GRASS_WIND_FLUTTER = "Extra per-blade shimmer on top of the sway, in yards, so a field moves as blades rather than as one sheet.";
+OPTION_TOOLTIP_GRASS_WIND_SPEED = "How fast the wind travels, in radians per second.";
+OPTION_TOOLTIP_GRASS_THINNING = "Draws only a share of the clutter far away, keeping the near grass untouched. Makes a long view distance affordable.";
+OPTION_TOOLTIP_GRASS_THIN_START = "Distance at which thinning begins, in yards. Everything closer is drawn in full.";
+OPTION_TOOLTIP_GRASS_THIN_END = "Distance at which thinning reaches its floor, in yards.";
+OPTION_TOOLTIP_GRASS_PARTING = "Lets the grass part around nearby characters, using each one's own size.";
+OPTION_TOOLTIP_GRASS_PARTING_STRENGTH = "How far blades lean away from a character, in yards.";
+OPTION_TOOLTIP_GRASS_PARTING_RADIUS = "Push radius as a multiple of a character's own bounding radius.";
+
+PhysicsPanelOptions = {
+	-- The two Effects-panel sliders, moved here. Ranges match CGrassMotion::kMinClutterDensity /
+	-- kMaxClutterDensity and kMaxViewDistance, which are also the ceilings the two cvars enforce.
+	groundEffectDensity = { text = "CLUTTER_DENSITY", minValue = 16, maxValue = 196, valueStep = 4, tooltip = OPTION_TOOLTIP_CLUTTER_DENSITY },
+	groundEffectDist = { text = "CLUTTER_RADIUS", minValue = 20, maxValue = 196, valueStep = 4, tooltip = OPTION_TOOLTIP_CLUTTER_RADIUS },
+	grassWind = { text = "WIND_LABEL", tooltip = OPTION_TOOLTIP_GRASS_WIND },
+	grassWindSway = { text = "WIND_SWAY", minValue = 0, maxValue = 1.5, valueStep = 0.05, tooltip = OPTION_TOOLTIP_GRASS_WIND_SWAY },
+	grassWindFlutter = { text = "WIND_FLUTTER", minValue = 0, maxValue = 0.5, valueStep = 0.05, tooltip = OPTION_TOOLTIP_GRASS_WIND_FLUTTER },
+	grassWindSpeed = { text = "WIND_SPEED", minValue = 0, maxValue = 20, valueStep = 0.5, tooltip = OPTION_TOOLTIP_GRASS_WIND_SPEED },
+	grassThinning = { text = "GRASS_THINNING", tooltip = OPTION_TOOLTIP_GRASS_THINNING },
+	grassThinStart = { text = "GRASS_THIN_START", minValue = 0, maxValue = 1000, valueStep = 10, tooltip = OPTION_TOOLTIP_GRASS_THIN_START },
+	grassThinEnd = { text = "GRASS_THIN_END", minValue = 0, maxValue = 2000, valueStep = 10, tooltip = OPTION_TOOLTIP_GRASS_THIN_END },
+	grassParting = { text = "GRASS_PARTING", tooltip = OPTION_TOOLTIP_GRASS_PARTING },
+	grassPartingStrength = { text = "GRASS_PARTING_STRENGTH", minValue = 0, maxValue = 2, valueStep = 0.05, tooltip = OPTION_TOOLTIP_GRASS_PARTING_STRENGTH },
+	grassPartingRadiusScale = { text = "GRASS_PARTING_RADIUS", minValue = 0, maxValue = 8, valueStep = 0.25, tooltip = OPTION_TOOLTIP_GRASS_PARTING_RADIUS },
+};
+
+function VideoOptionsPhysicsPanel_OnLoad (self)
+	self.name = PHYSICS_LABEL;
+	self.options = PhysicsPanelOptions;
+
+	-- The panel may be a scroll frame (controls then live in a scroll child and register themselves
+	-- against it via self:GetParent() in each control's OnLoad); adopt that list, or the panel would find
+	-- no controls. Guarded because self is only a scroll frame when the XML that loaded is the scroll
+	-- variant: on a plain frame self.controls is already the right list, and GetScrollChild does not exist.
+	local child = self.GetScrollChild and self:GetScrollChild();
+	if ( child and child.controls ) then
+		self.controls = child.controls;
+	end
+
+	VideoOptionsPanel_OnLoad(self);
+end
+
 -- [[ Debug Panel ]] --
 -- The overlay itself lives on UIParent and is built in FrameXML's copy of this file; glue only exposes the
 -- checkbox, which is what writes the showPerformance CVar.
@@ -708,8 +775,6 @@ EffectsPanelOptions = {
 	TerrainMip = { text = "TERRAIN_MIP", minValue = 0, maxValue = 1, valueStep = 1, tooltip = OPTION_TOOLTIP_TERRAIN_TEXTURE, },
 	particleDensity = { text = "PARTICLE_DENSITY", minValue = 10, maxValue = 100, valueStep = 10},
 	environmentDetail = { text = "ENVIRONMENT_DETAIL", minValue = 50, maxValue = 150, valueStep = 25},
-	groundEffectDensity = { text = "GROUND_DENSITY", minValue = 16, maxValue = 128, valueStep = 8},
-	groundEffectDist = { text = "GROUND_RADIUS", minValue = 70, maxValue = 140, valueStep = 10 },
 	BaseMip = { text = "TEXTURE_DETAIL", minValue = 0, maxValue = 1, valueStep = 1, tooltipPoint = "BOTTOMRIGHT", tooltipOwnerPoint = "TOPLEFT", },
 	textureFilteringMode = { text = "ANISOTROPIC", minValue = 0, maxValue = 5, valueStep = 1, gameRestart = 1, tooltipPoint = "BOTTOMRIGHT", tooltipOwnerPoint = "TOPLEFT", tooltipRequirement = OPTION_RESTART_REQUIREMENT, },
 	weatherDensity = { text = "WEATHER_DETAIL", minValue = 0, maxValue = 3, valueStep = 1, tooltipPoint = "BOTTOMRIGHT", tooltipOwnerPoint = "TOPLEFT", },

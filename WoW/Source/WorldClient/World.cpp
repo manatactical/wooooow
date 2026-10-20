@@ -1309,7 +1309,12 @@ void World::SetDetailDoodadDensity(int32_t density) {
 void World::SetDetailDoodadDist(float dist) {
     if (dist != CWorld::detailDoodadDist) {
         CWorld::detailDoodadDist = dist;
-        CDetailDoodad::s_bPoolsDirty = 1;
+        // NOT IN BINARY behaviour change. The original also sets CDetailDoodad::s_bPoolsDirty here, which
+        // frees every chunk's grass (CMap::ClearChunkDetailDoodads) and re-bakes the whole world one chunk
+        // per frame. Nothing in the pools is sized from the distance -- UpdatePools reads
+        // s_detailDoodadDensity alone -- and the fade and the texgen are recomputed from detailDoodadDist
+        // every frame by InitializeRenderState/InitializeShaderConstants. So the rebuild was pure waste, and
+        // it is what made the distance slider unusable.
         World::groundEffectDistValueSqr = dist * dist;
     }
 }

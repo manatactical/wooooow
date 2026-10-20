@@ -9,6 +9,7 @@
 #include "Engine/Source/ShaderEffect/ShadowCache.h"
 #include "WoW/Common/AaBsp.h"
 #include "WoW/Source/UIUtil/PortraitButton.h"
+#include "WoW/Source/WorldClient/GrassMotion.h"
 #include "WoW/Source/WorldClient/Map.h"
 #include "WoW/Source/WorldClient/Types.h"
 #include "WoW/Source/WorldClient/World.h"
@@ -375,9 +376,13 @@ bool CWorldParam::TerrainAlphaBitDepthCallback(CVar* var, const char* oldValue, 
 bool CWorldParam::GroundEffectDensityCallback(CVar* var, const char* oldValue, const char* value, void* arg) {
     int32_t density = SStrToInt(value);
 
-    if (density < 16 || density > 256) {
+    // NOT IN BINARY behaviour change. The original allowed up to 256 while both options panels capped at
+    // 128, so the console and the UI disagreed and the message named a ceiling the player could not reach.
+    // The range now follows CGrassMotion, which is also what the pool sizing and the Physics slider use, so
+    // the three cannot drift apart again.
+    if (density < CGrassMotion::kMinClutterDensity || density > CGrassMotion::kMaxClutterDensity) {
         char buffer[256];
-        sprintf(buffer, "Ground effect density must be in range %d to %d.", 16, 256);
+        sprintf(buffer, "Ground effect density must be in range %d to %d.", CGrassMotion::kMinClutterDensity, CGrassMotion::kMaxClutterDensity);
         ConsoleWriteA(buffer, DEFAULT_COLOR);
 
         return false;
@@ -393,9 +398,12 @@ bool CWorldParam::GroundEffectDensityCallback(CVar* var, const char* oldValue, c
 bool CWorldParam::GroundEffectDistCallback(CVar* var, const char* oldValue, const char* value, void* arg) {
     float dist = SStrToFloat(value);
 
-    if (dist < 0.0f || dist > 140.0f) {
+    // NOT IN BINARY behaviour change: the original ceiling was 140. See GroundEffectDensityCallback. The
+    // engine still clamps per map (CWorld::ValidateFarClip, and the chunk-side detailDoodadDist test), so a
+    // larger number simply does not apply everywhere.
+    if (dist < 0.0f || dist > CGrassMotion::kMaxViewDistance) {
         char buffer[256];
-        sprintf(buffer, "Ground effect distance must be in range %0f to %0f.", 0.0, 140.0);
+        sprintf(buffer, "Ground effect distance must be in range %0f to %0f.", 0.0, CGrassMotion::kMaxViewDistance);
         ConsoleWriteA(buffer, DEFAULT_COLOR);
 
         return false;
@@ -835,6 +843,14 @@ void CWorldParam::Initialize() {
     // here for the same reason as the mode. CAntiAlias::Init registers it too, and clamps it itself, so the
     // shader cannot be handed an index off the end of its table.
     CWorldParam::cvar_fxaaQuality = CVar::Register("fxaaQuality", "FXAA quality: 0 low, 1 medium, 2 high, 3 ultra", 1, "2", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+
+    // Not in the original binary. The grass and wind cvars the Physics tab reads. Registered here for the
+    // same reason as unitOutline and antiAlias: the panel asks for their defaults while the login screen is
+    // up, before any world frame exists, and GetCVarDefault raises on an unregistered name. CGrassMotion::Init
+    // registers the same set at the world->interface boundary, and Register reuses an existing var, so the
+    // two orders cannot conflict. The Physics panel's tooltips carry the meanings; the help strings here are
+    // what /console and Config.wtf show.
+    CGrassMotion::Init();
 
     // Not in the original binary. The panel reads this, nothing may usefully write it - ShadowModeCallback
     // refuses writes, so it is read-only in effect without the CVar flag that would make Lua raise an error.

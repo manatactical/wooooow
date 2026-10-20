@@ -29,6 +29,7 @@
 #include "WoW/Source/WorldClient/MapLight.h"
 #include "WoW/Source/WorldClient/MapObjGroup.h"
 #include "WoW/Source/WorldClient/Types.h"
+#include "WoW/Source/WorldClient/GrassMotion.h"
 #include "WoW/Source/WorldClient/World.h"
 
 // STATIC: 0x00D1C4C4
@@ -110,9 +111,13 @@ static void __stdcall BuildInstanceMatrix(C33Matrix& result, C33Matrix& rotation
 // VERIFY: 15a97eda manual
 // OFFSET: 0x007B2CA0
 static void AcquireBuffers(uint32_t vertexCount, CGxBuf** vertexBuf, uint32_t indexCount, CGxBuf** indexBuf) {
+    // NOT IN BINARY behaviour change. The original tested `if (count)` and then read count-2 and count-1,
+    // which underflows to 0xFFFFFFFF when the list holds exactly one entry. The pools hand the pair out
+    // together, so an odd count should not happen -- but a single-entry list would then be two out-of-bounds
+    // reads and a writable buffer pair pointing at somebody else's memory. Two is the real precondition.
     uint32_t count = CDetailDoodad::s_freeGxBufs.Count();
 
-    if (count) {
+    if (count >= 2) {
         *vertexBuf = CDetailDoodad::s_freeGxBufs[count - 2];
         *indexBuf = CDetailDoodad::s_freeGxBufs[count - 1];
         CDetailDoodad::s_freeGxBufs.SetCount(count - 2);
@@ -121,6 +126,103 @@ static void AcquireBuffers(uint32_t vertexCount, CGxBuf** vertexBuf, uint32_t in
     } else {
         *vertexBuf = g_theGxDevicePtr->BufStream(GxPoolTarget_Vertex, sizeof(CGxVertexPNCT), vertexCount);
         *indexBuf = g_theGxDevicePtr->BufStream(GxPoolTarget_Index, sizeof(uint16_t), indexCount);
+    }
+}
+
+// Not in the original binary.
+//
+// The two items the plan's section 3.2 adds. Nothing in these batches is keyed to the camera: an add's
+// record is fixed once the chunk places it, and the view matrix is a shader constant, not part of the baked
+// vertices. So the hash below changes only when the chunk's own placement changes, which is when the batch
+// genuinely has to re-bake -- once per setting change or pop-in, instead of once per frame.
+namespace {
+
+// FNV-1a over the fields that reach the vertices. Cheap, and it only has to distinguish batches that
+// actually differ; a collision costs one stale frame of one batch's grass, not corruption.
+uint64_t HashBytes(uint64_t hash, const void* data, size_t size) {
+    const uint8_t* bytes = static_cast<const uint8_t*>(data);
+
+    for (size_t i = 0; i < size; i++) {
+        hash = (hash ^ bytes[i]) * 1099511628211ULL;
+    }
+
+    return hash;
+}
+
+}  // namespace
+
+// Not in the original binary.
+uint64_t CDetailDoodadInstBatch::HashAdds() const {
+    uint64_t hash = 14695981039346656037ULL;
+    const CDetailDoodadInstAdd* adds = this->m_adds.m_data;
+    uint32_t count = this->m_adds.m_count;
+
+    for (uint32_t i = 0; i < count; i++) {
+        const CDetailDoodadInstAdd& add = adds[i];
+
+        hash = HashBytes(hash, &add.m_doodadId, sizeof(add.m_doodadId));
+        hash = HashBytes(hash, &add.m_position, sizeof(add.m_position));
+        hash = HashBytes(hash, &add.m_rotation, sizeof(add.m_rotation));
+        hash = HashBytes(hash, &add.m_scale, sizeof(add.m_scale));
+        hash = HashBytes(hash, &add.m_normal, sizeof(add.m_normal));
+        hash = HashBytes(hash, &add.m_triIndex, sizeof(add.m_triIndex));
+        hash = HashBytes(hash, &add.m_color, sizeof(add.m_color));
+    }
+
+    return hash;
+}
+
+// Not in the original binary. Sizes the batch's own pool to its exact counts, so no dense batch can overrun
+// a density unit the way a shared-list unit allowed, and allocates the pair. A pool of our own also means
+// the buffers never enter s_freeGxBufs, so the 128 pairs there go back to serving the rare pop-in batch.
+void CDetailDoodadInstBatch::BuildOwnBuffers() {
+    if (this->m_vertexBuf || !this->m_vertexCount || !this->m_indexCount) {
+        return;
+    }
+
+    this->m_vertexPool = g_theGxDevicePtr->PoolCreate(GxPoolTarget_Vertex, GxPoolUsage_Dynamic,
+                                                      static_cast<int32_t>(sizeof(CGxVertexPNCT) * this->m_vertexCount),
+                                                      GxPoolHintBit_Unk3, "CDetailDoodad_batch_vtx");
+    this->m_indexPool = g_theGxDevicePtr->PoolCreate(GxPoolTarget_Index, GxPoolUsage_Dynamic,
+                                                     static_cast<int32_t>(sizeof(uint16_t) * this->m_indexCount),
+                                                     GxPoolHintBit_Unk0, "CDetailDoodad_batch_idx");
+
+    if (!this->m_vertexPool || !this->m_indexPool) {
+        // One of the two failed. Drop whichever succeeded rather than leaving it for the session; the
+        // caller falls through to the stock free-list path.
+        if (this->m_indexPool) {
+            g_theGxDevicePtr->PoolDestroy(this->m_indexPool);
+            this->m_indexPool = nullptr;
+        }
+
+        if (this->m_vertexPool) {
+            g_theGxDevicePtr->PoolDestroy(this->m_vertexPool);
+            this->m_vertexPool = nullptr;
+        }
+
+        return;
+    }
+
+    this->m_vertexBuf = g_theGxDevicePtr->BufCreate(this->m_vertexPool, sizeof(CGxVertexPNCT), this->m_vertexCount, 0);
+    this->m_indexBuf = g_theGxDevicePtr->BufCreate(this->m_indexPool, sizeof(uint16_t), this->m_indexCount, 0);
+
+    if (!this->m_vertexBuf || !this->m_indexBuf) {
+        // The caller sees a null m_vertexBuf and takes the stock free-list path. Give the pools straight
+        // back so a partial failure does not leave them for the session.
+        if (this->m_indexBuf) {
+            g_theGxDevicePtr->BufDestroy(this->m_indexBuf);
+            this->m_indexBuf = nullptr;
+        }
+
+        if (this->m_vertexBuf) {
+            g_theGxDevicePtr->BufDestroy(this->m_vertexBuf);
+            this->m_vertexBuf = nullptr;
+        }
+
+        g_theGxDevicePtr->PoolDestroy(this->m_indexPool);
+        g_theGxDevicePtr->PoolDestroy(this->m_vertexPool);
+        this->m_indexPool = nullptr;
+        this->m_vertexPool = nullptr;
     }
 }
 
@@ -135,6 +237,12 @@ int32_t CDetailDoodadInst::HasBatches() {
 
     return 0;
 }
+
+
+// Not in the original binary. Sorts the adds by doodad, shuffles within each doodad, and records the index
+// range each one owns: the layout both the wind's per-doodad constant row and the distance thinning need.
+static void ShuffleRange(CDetailDoodadInstAdd* adds, uint32_t count, uint32_t seed);
+static uint32_t Mix(uint32_t value);
 
 // VERIFY: e98d17d0 auto
 // OFFSET: 0x007B10E0
@@ -153,6 +261,12 @@ void CDetailDoodad::SetupVertexShader(const C44Matrix& world, uint32_t index) {
 
     CDetailDoodad::s_shaderConstants.m_worldView = world * view;
     g_theGxDevicePtr->ShaderConstantsSet(GxSh_Vertex, 0, reinterpret_cast<const float*>(&CDetailDoodad::s_shaderConstants), sizeof(CDetailDoodad::s_shaderConstants) / sizeof(C4Vector));
+
+    // Not in the original binary. The actor array rides straight after the engine's own block, while this
+    // chunk is the one being drawn: only this chunk's layers draw before the next SetupVertexShader, so
+    // nothing can clobber it in between. The per-frame rows (the dormant point-light rows c14..c18) are
+    // already inside s_shaderConstants, so the call above carries them and they are not repeated here.
+    CGrassMotion::UploadChunkConstants();
 }
 
 // VERIFY: f3428d3d manual
@@ -312,6 +426,10 @@ void CDetailDoodad::InitializeShaderConstants() {
     consts.m_fade.y = dist * fade;
     consts.m_fade.z = 0.0f;
     consts.m_fade.w = 0.0f;
+
+    // Not in the original binary. Last, so it writes into the block that was just rebuilt: the camera, the
+    // clock, the wind and parting values, and this frame's actor gather.
+    CGrassMotion::BeginFrame();
 }
 
 // VERIFY: 7ec422be manual
@@ -510,6 +628,18 @@ void CDetailDoodad::Initialize() {
     } else if (CDetailDoodad::s_bUseShaders) {
         g_theGxDevicePtr->ShaderCreate(CDetailDoodad::s_vertexShader, GxSh_Vertex, "Shaders\\Vertex", "DetailDoodad", sizeof(CDetailDoodad::s_vertexShader) / sizeof(CDetailDoodad::s_vertexShader[0]));
         g_theGxDevicePtr->ShaderCreate(CDetailDoodad::s_pixelShader, GxSh_Pixel, "Shaders\\Pixel", "DetailDoodad", sizeof(CDetailDoodad::s_pixelShader) / sizeof(CDetailDoodad::s_pixelShader[0]));
+
+        // Not in the original binary. The wind is injected here, once: ShaderCreate has just read the .bls
+        // bytecode and nothing has bound a shader yet, so m_loaded is still 0, the device has not compiled
+        // it, and the patched text is what it will compile. See GrassMotion.h.
+        //
+        // Only the first three permutations, which are the live no-shadow / shadow-low / shadow-high trio.
+        // 3..5 are the dormant point-light variants: they read c14..c22, the rows this module writes its
+        // per-frame values into, so patching them would corrupt the very constants they already use. Their
+        // shader-model token is identical, so the length is the only thing that tells them apart.
+        for (uint32_t i = 0; i < 3; i++) {
+            CGrassMotion::PatchVertexShader(CDetailDoodad::s_vertexShader[i], i);
+        }
     }
 }
 
@@ -545,6 +675,11 @@ void CDetailDoodad::FreeGxBufMat() {
     CDetailDoodad::s_bPoolsDirty = 1;
 }
 
+// Not in the original binary. The pool's per-batch item budget. The stock value is 4096 (a density ceiling
+// of 64); the Physics tab asks for 196, and a batch that outgrows its unit overruns it. Sized from
+// CGrassMotion so the pool ceiling and the cvar ceiling cannot drift apart.
+static const uint32_t kMaxBufferItems = static_cast<uint32_t>(CGrassMotion::kMaxClutterDensity) << 6;
+
 // VERIFY: 08827cd3 manual
 // OFFSET: 0x007B2A80
 void CDetailDoodad::UpdatePools() {
@@ -560,14 +695,17 @@ void CDetailDoodad::UpdatePools() {
     CDetailDoodad::s_vtxBufItems = vertexItems;
     CDetailDoodad::s_idxBufItems = indexItems;
 
-    if (vertexItems > 4096) {
-        vertexItems = 4096;
-        CDetailDoodad::s_vtxBufItems = 4096;
+    // NOT IN BINARY behaviour change: the original clamps are a literal 4096, which is the 64-density
+    // ceiling and not the one the density cvar allows. Raised here so a batch at 196 has a unit big enough
+    // for its own vertices, which is the overflow the plan's section 3.1 describes.
+    if (vertexItems > kMaxBufferItems) {
+        vertexItems = kMaxBufferItems;
+        CDetailDoodad::s_vtxBufItems = kMaxBufferItems;
     }
 
-    if (indexItems > 4096) {
-        indexItems = 4096;
-        CDetailDoodad::s_idxBufItems = 4096;
+    if (indexItems > kMaxBufferItems) {
+        indexItems = kMaxBufferItems;
+        CDetailDoodad::s_idxBufItems = kMaxBufferItems;
     }
 
     s_vertexBufferSize = sizeof(CGxVertexPNCT) * vertexItems;
@@ -720,30 +858,75 @@ void CDetailDoodadInstBatch::Draw() {
         return;
     }
 
-    if (!this->m_vertexBuf || this->m_vertexBuf->m_pool->m_usage == GxPoolUsage_Stream) {
+    // Not in the original binary. The batch's own buffers, sized to its exact counts. The stock line below
+    // re-acquired a stream buffer on every frame whenever the 256-entry free list was empty, and a renamed
+    // stream buffer has m_hasData cleared, which forced the bake again -- the per-frame re-bake the plan's
+    // section 3.1 traces. Owning the buffers removes both halves of that loop.
+    this->BuildOwnBuffers();
+
+    if (!this->m_vertexBuf || !this->m_indexBuf) {
+        // Our pool or buffer allocation failed. Fall back to exactly the stock path rather than drawing
+        // nothing: a wrong-looking frame is worse than the stock cost.
         AcquireBuffers(this->m_vertexCount, &this->m_vertexBuf, this->m_indexCount, &this->m_indexBuf);
     }
 
-    if (!this->m_vertexBuf->m_hasData || !this->m_vertexBuf->m_valid) {
+    // A batch with no geometry has nothing to bake and no valid max index; the uint16 cast below would
+    // otherwise underflow. AddDoodad only fills batches it found space in, so this is rare, not impossible.
+    if (!this->m_vertexCount) {
+        return;
+    }
+
+    this->BakeRuns();
+
+    uint64_t hash = this->HashAdds() ^ (static_cast<uint64_t>(this->m_runs.m_count) << 32);
+    bool streamed = this->m_vertexBuf->m_pool->m_usage == GxPoolUsage_Stream;
+
+    if (streamed || hash != this->m_bakeHash || !this->m_vertexBuf->m_hasData || !this->m_vertexBuf->m_valid) {
         this->FillVertices();
+        this->m_bakeHash = hash;
     }
 
     GxPrimVertexPtr(this->m_vertexBuf, GxVBF_PNCT);
 
-    if (!this->m_indexBuf->m_hasData || !this->m_indexBuf->m_valid) {
+    if (!this->m_indexBuf->m_hasData || !this->m_indexBuf->m_valid || streamed) {
         this->FillIndices();
     }
 
     g_theGxDevicePtr->PrimIndexPtr(this->m_indexBuf);
     g_theGxDevicePtr->RsSet(GxRs_Texture0, gxTex);
 
-    CGxBatch batch;
-    batch.m_primType = GxPrim_Triangles;
-    batch.m_start = 0;
-    batch.m_count = this->m_indexCount;
-    batch.m_minIndex = 0;
-    batch.m_maxIndex = static_cast<uint16_t>(this->m_vertexCount - 1);
-    g_theGxDevicePtr->Draw(&batch, 1);
+    // Not in the original binary. One draw per doodad run, each preceded by its own constant row and
+    // capped by the distance thinning, instead of the single draw the whole batch used to be. With one
+    // doodad in the batch this is the stock call with stock numbers.
+    for (uint32_t i = 0; i < this->m_runs.Count(); i++) {
+        const CDetailDoodadInstRun& run = this->m_runs[i];
+
+        if (run.m_doodadId < CDetailDoodad::s_doodadList.Count()) {
+            CGrassMotion::UploadDoodadRow(CDetailDoodad::s_doodadList[run.m_doodadId]);
+        }
+
+        uint32_t first = run.m_indexStart;
+        uint32_t count = run.m_indexCount;
+
+        if (this->m_thinShare < 1.0f) {
+            // Thinning drops a suffix of the run. That is an even sample of the whole doodad only because
+            // BakeRuns shuffled within the run; see its comment.
+            count = static_cast<uint32_t>(static_cast<float>(count) * this->m_thinShare);
+            count -= count % 3;
+        }
+
+        if (!count) {
+            continue;
+        }
+
+        CGxBatch drawBatch;
+        drawBatch.m_primType = GxPrim_Triangles;
+        drawBatch.m_start = first;
+        drawBatch.m_count = count;
+        drawBatch.m_minIndex = 0;
+        drawBatch.m_maxIndex = static_cast<uint16_t>(this->m_vertexCount - 1);
+        g_theGxDevicePtr->Draw(&drawBatch, 1);
+    }
 }
 
 // VERIFY: 84475972 auto
@@ -810,10 +993,137 @@ void CDetailDoodadInst::Free() {
 // VERIFY: 104e29d5 auto
 // OFFSET: 0x007B36B0
 void CDetailDoodadInst::DrawBatches() {
+    // Not in the original binary. The distance thinning, decided once per chunk from its own corner. A
+    // chunk past grassThinEnd keeps drawing at grassThinMinShare, so the far field is a stable subset
+    // rather than a ring that pops. Free() clears m_chunk, so this has to be guarded rather than assumed.
+    float mergeShare = 1.0f;
+    bool thin = false;
+
+    if (this->m_chunk) {
+        C3Vector delta = this->m_chunk->m_topLeftCoords - CWorldScene::s_activeWorldView;
+        float distToCamera = sqrtf(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
+        thin = CGrassMotion::ThinningShare(distToCamera, mergeShare);
+    }
+
     for (uint32_t i = 0; i < 4; i++) {
         if (this->m_batches[i].m_texture) {
+            this->m_batches[i].m_thinShare = thin ? mergeShare : 1.0f;
             this->m_batches[i].Draw();
         }
+    }
+}
+
+// Not in the original binary. Sorts the adds by doodad, shuffles within each doodad, and records the index
+// range each one owns. Doing this before the bake is what lets the shader skip the reference module's
+// indirect lookup table: a run is contiguous in the index buffer, so its constant row can simply be bound
+// before its sub-draw. The shuffle is what makes dropping a suffix of a run an even sample rather than a
+// clump of one corner.
+//
+// The layout is rebuilt only when the adds changed, so a settled batch keeps its order and its thinning
+// sample frame after frame; re-shuffling per frame would make the far grass shimmer.
+void CDetailDoodadInstBatch::BakeRuns() {
+    uint32_t count = this->m_adds.Count();
+
+    if (this->m_bakedAdds == count && this->m_bakedHash == this->HashAdds()) {
+        return;
+    }
+
+    // Deterministic per doodad and per count, so the subset thinning drops is stable until the bake itself
+    // changes.
+    uint32_t seed = Mix(static_cast<uint32_t>(this->m_bakedHash) ^ count);
+    CDetailDoodadInstAdd* adds = this->m_adds.m_data;
+
+    // Insertion sort by doodad id: a batch holds a few hundred adds at the stock ceiling, and they arrive
+    // nearly sorted because CreateDetailDoodads walks a chunk's layers in order.
+    for (uint32_t i = 1; i < count; i++) {
+        CDetailDoodadInstAdd key = adds[i];
+        uint32_t j = i;
+
+        while (j > 0 && adds[j - 1].m_doodadId > key.m_doodadId) {
+            adds[j] = adds[j - 1];
+            j--;
+        }
+
+        adds[j] = key;
+    }
+
+    this->m_runs.SetCount(0);
+
+    uint32_t indexStart = 0;
+    uint32_t i = 0;
+
+    while (i < count) {
+        uint32_t doodadId = adds[i].m_doodadId;
+        uint32_t end = i + 1;
+
+        while (end < count && adds[end].m_doodadId == doodadId) {
+            end++;
+        }
+
+        CDetailDoodadInstRun* run = this->m_runs.New();
+        run->m_doodadId = doodadId;
+        run->m_indexStart = indexStart;
+        run->m_indexCount = (end - i) * this->AddIndexCount(doodadId);
+
+        // Clamp to the batch's own total. The geometry counts are re-read here from the models, and a model
+        // whose skin was still loading when AddDoodad summed it could report more than it counted then; an
+        // index range past the end of the buffer the batch allocated is an out-of-bounds draw. Written as a
+        // subtraction so the test cannot wrap.
+        if (run->m_indexCount > this->m_indexCount - indexStart) {
+            run->m_indexCount = this->m_indexCount > indexStart ? this->m_indexCount - indexStart : 0;
+        }
+
+        ShuffleRange(adds + i, end - i, seed + doodadId);
+
+        indexStart += run->m_indexCount;
+        i = end;
+    }
+
+    this->m_bakedAdds = count;
+    this->m_bakedHash = this->HashAdds();
+}
+
+// Not in the original binary.
+uint32_t CDetailDoodadInstBatch::AddIndexCount(uint32_t doodadId) {
+    if (doodadId >= CDetailDoodad::s_doodadList.Count()) {
+        return 0;
+    }
+
+    CDetailDoodadData* data = CDetailDoodad::s_doodadList[doodadId];
+
+    if (!data || !data->m_model) {
+        return 0;
+    }
+
+    CM2Model* model = data->m_model;
+
+    if (!(model->m_fFlags & 1)) {
+        model->WaitForLoad(nullptr);
+    }
+
+    return model->m_shared && model->m_shared->m_skinData ? model->m_shared->m_skinData->m_indices.m_count : 0;
+}
+
+// Not in the original binary.
+//
+// Mix and ShuffleRange are the reference module's Fisher-Yates with its own mixer (GrassInstanced.cpp). The
+// shuffle is what makes distance thinning an even sample: the draw drops a suffix of each doodad's run, so
+// without it the far field would be a corner of every chunk rather than a spread over it.
+uint32_t Mix(uint32_t value) {
+    value ^= value >> 16;
+    value *= 0x7FEB352Du;
+    value ^= value >> 15;
+    value *= 0x846CA68Bu;
+    value ^= value >> 16;
+    return value;
+}
+
+void ShuffleRange(CDetailDoodadInstAdd* adds, uint32_t count, uint32_t seed) {
+    for (uint32_t i = count; i > 1; i--) {
+        uint32_t j = Mix(seed + i) % i;
+        CDetailDoodadInstAdd swap = adds[i - 1];
+        adds[i - 1] = adds[j];
+        adds[j] = swap;
     }
 }
 
@@ -824,6 +1134,13 @@ CDetailDoodadInstBatch::CDetailDoodadInstBatch() {
     this->m_indexCount = 0;
     this->m_vertexBuf = nullptr;
     this->m_indexBuf = nullptr;
+    this->m_vertexPool = nullptr;
+    this->m_indexPool = nullptr;
+    this->m_bakeHash = 0;
+    this->m_bakedHash = 0;
+    this->m_bakedAdds = 0;
+    // 1.0 means "draw every run in full"; DrawBatches lowers it when the chunk is far off.
+    this->m_thinShare = 1.0f;
 }
 
 // VERIFY: 9e2e57b8 manual

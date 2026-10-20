@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "Engine/Source/Gx/CGxTex.h"
+#include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Storm/H/stpl.h"
 #include "Engine/Source/Gx/CGxBuf.h"
 #include "Engine/Source/Tempest/C3Vector.h"
@@ -89,6 +90,15 @@ class CDetailDoodadInstAdd {
     CDetailDoodadInstAdd();
 };
 
+// Not in the original 3.3.5a binary. One doodad's contiguous run inside a batch: a batch is grouped by
+// texture, but a texture can be shared by several doodad ids, and each id needs its own constant row.
+class CDetailDoodadInstRun {
+    public:
+    /* 0000 */ uint32_t m_doodadId;
+    /* 0004 */ uint32_t m_indexStart;
+    /* 0008 */ uint32_t m_indexCount;
+};
+
 class CDetailDoodadInstBatch {
     public:
     /* 0000 */ CTexture* m_texture;
@@ -98,6 +108,27 @@ class CDetailDoodadInstBatch {
     /* 0010 */ CGxBuf* m_indexBuf;
     /* 0014 */ TSGrowableArray<CDetailDoodadInstAdd> m_adds;
 
+    // Not in the original binary. The batch's own pool and buffers, rather than a unit out of the 256-entry
+    // shared free list. A stream buffer is renamed on every lock, which resets m_hasData and forces a full
+    // CPU re-bake of every plant in the batch on the next frame; at long grass distances the free list
+    // empties and most of the world's grass takes that path. Owning them for the batch's own lifetime -- the
+    // chunk's -- removes the re-bake and hands the 256 units back to the rare pop-in batch. See the plan's
+    // section 3.1. m_bakeHash is how staleness is decided; nothing writes an add once the batch is drawn.
+    CGxPool* m_vertexPool;
+    CGxPool* m_indexPool;
+    uint64_t m_bakeHash;
+    uint64_t m_bakedHash;
+    uint32_t m_bakedAdds;
+
+    // Not in the original binary. The doodad runs the bake emitted, in draw order, each with the index
+    // range it owns. Thinning drops a suffix of a run, which is an even sample only because the bake
+    // shuffles within a run; see BakeRuns.
+    TSGrowableArray<CDetailDoodadInstRun> m_runs;
+
+    // Not in the original binary. The share of every run this batch should draw, set per frame from the
+    // chunk's distance to the camera by DrawBatches.
+    float m_thinShare;
+
     CDetailDoodadInstBatch();
     ~CDetailDoodadInstBatch();
     void Draw();
@@ -105,6 +136,11 @@ class CDetailDoodadInstBatch {
     void FillVertices();
     void Free();
     void FreeBuffers();
+
+    uint32_t AddIndexCount(uint32_t doodadId);
+    void BakeRuns();
+    void BuildOwnBuffers();
+    uint64_t HashAdds() const;
 };
 
 class CDetailDoodadInst {
@@ -131,16 +167,40 @@ inline CDetailDoodadInstAdd::CDetailDoodadInstAdd() {
 // INLINED
 inline void CDetailDoodadInstBatch::FreeBuffers() {
     if (!this->m_vertexBuf) {
+        this->m_bakeHash = 0;
         return;
     }
 
     if (this->m_vertexBuf->m_pool == CDetailDoodad::s_gxVertexPool) {
+        // A unit out of the shared list: hand both halves back, in the order AcquireBuffers pops them.
         *CDetailDoodad::s_freeGxBufs.New() = this->m_vertexBuf;
         *CDetailDoodad::s_freeGxBufs.New() = this->m_indexBuf;
+    } else {
+        // Not in the original binary. Our own buffers are not in the free list, so the identity test above
+        // cannot reclaim them: they have to be destroyed here or a chunk going away leaks them for the
+        // session. Each batch has its own pool sized to its own counts, so the pool goes with the buffers --
+        // which also keeps a density change from accumulating pools.
+        if (this->m_indexBuf) {
+            g_theGxDevicePtr->BufDestroy(this->m_indexBuf);
+        }
+
+        g_theGxDevicePtr->BufDestroy(this->m_vertexBuf);
+
+        if (this->m_indexPool) {
+            g_theGxDevicePtr->PoolDestroy(this->m_indexPool);
+        }
+
+        if (this->m_vertexPool) {
+            g_theGxDevicePtr->PoolDestroy(this->m_vertexPool);
+        }
+
+        this->m_indexPool = nullptr;
+        this->m_vertexPool = nullptr;
     }
 
     this->m_indexBuf = nullptr;
     this->m_vertexBuf = nullptr;
+    this->m_bakeHash = 0;
 }
 
 // INLINED
@@ -148,8 +208,12 @@ inline void CDetailDoodadInstBatch::Free() {
     this->m_texture = nullptr;
     this->m_vertexCount = 0;
     this->m_indexCount = 0;
+    this->m_thinShare = 1.0f;
     this->m_adds.SetCount(0);
     this->m_adds.m_chunk = 64;
+    this->m_runs.SetCount(0);
+    this->m_bakedHash = 0;
+    this->m_bakedAdds = 0;
     this->FreeBuffers();
 }
 

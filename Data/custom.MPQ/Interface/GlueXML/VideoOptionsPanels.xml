@@ -619,50 +619,6 @@
 					<OnValueChanged function="VideoOptionsEffectsPanelSlider_OnValueChanged"/>
 				</Scripts>
 			</Slider>		
-			<Slider name="$parentClutterDensity" inherits="OptionsSliderTemplate">
-				<Size x="112" y="17"/>
-				<Anchors>
-					<Anchor point="TOPLEFT" relativeTo="$parentEnvironmentDetail" relativePoint="BOTTOMLEFT">
-						<Offset x="0" y="-24"/>
-					</Anchor>
-				</Anchors>
-				<Scripts>
-					<OnLoad>
-						self.type = CONTROLTYPE_SLIDER;
-						self.cvar = "groundEffectDensity";
-						self.SetDisplayValue = self.SetValue;
-						self.SetValue = function (self, value)
-							self:SetDisplayValue(value);
-							BlizzardOptionsPanel_SetCVarSafe(self.cvar, value);
-						end
-						_G[self:GetName().."Text"]:SetFontObject("OptionsFontSmall");
-						BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
-					</OnLoad>
-					<OnValueChanged function="VideoOptionsEffectsPanelSlider_OnValueChanged"/>
-				</Scripts>
-			</Slider>		
-			<Slider name="$parentClutterRadius" inherits="OptionsSliderTemplate">
-				<Size x="112" y="17"/>
-				<Anchors>
-					<Anchor point="TOPLEFT" relativeTo="$parentClutterDensity" relativePoint="BOTTOMLEFT">
-						<Offset x="0" y="-24"/>
-					</Anchor>
-				</Anchors>
-				<Scripts>
-					<OnLoad>
-						self.type = CONTROLTYPE_SLIDER;
-						self.cvar = "groundEffectDist";
-						self.SetDisplayValue = self.SetValue;
-						self.SetValue = function (self, value)
-							self:SetDisplayValue(value);
-							BlizzardOptionsPanel_SetCVarSafe(self.cvar, value);
-						end
-						_G[self:GetName().."Text"]:SetFontObject("OptionsFontSmall");
-						BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
-					</OnLoad>
-					<OnValueChanged function="VideoOptionsEffectsPanelSlider_OnValueChanged"/>
-				</Scripts>
-			</Slider>					
 			<Slider name="$parentTextureResolution" inherits="OptionsSliderTemplate">
 				<Size x="112" y="17"/>
 				<Anchors>
@@ -1018,6 +974,373 @@
 			</CheckButton>
 		</Frames>
 	</Frame>
+	<!-- Physics Panel -->
+	<!-- Clutter and the wind that moves it. The two sliders that used to sit on the Effects panel moved
+	     here so each value has one home; the rest are new. Panels are discovered from the children of
+	     VideoOptionsFramePanelContainer by OptionsFrame_AddCategory in VideoOptionsPanel_OnLoad, so adding
+	     this frame is all that registers the tab. -->
+	<ScrollFrame name="VideoOptionsPhysicsPanel" hidden="true" parent="VideoOptionsFramePanelContainer" inherits="UIPanelScrollFrameTemplate">
+		<Scripts>
+			<OnLoad>
+				ScrollFrame_OnLoad(self);
+				VideoOptionsPhysicsPanel_OnLoad(self);
+			</OnLoad>
+			<OnShow>
+				-- Base OptionsList_DisplayPanel stretches the panel across the whole container; pull it in so
+				-- the scrollbar does not sit flush against the dialog border. Same placement as the Resolution
+				-- panel next door.
+				self:SetPoint("TOPLEFT", self:GetParent(), "TOPLEFT", 0, -20);
+				self:SetPoint("BOTTOMRIGHT", self:GetParent(), "BOTTOMRIGHT", -20, 20);
+			</OnShow>
+		</Scripts>
+		<ScrollChild>
+			<!-- Unnamed on purpose: $parent skips unnamed frames, so every control below keeps its global
+			     name. Sized to the viewport width and the full content height, because the scroll range is the
+			     child height minus the viewport height: an auto-sized child that merely wrapped its children
+			     would report no range and clip the lower boxes. 680 is the boxes' stacked height (title and
+			     subtext to ~78, then four boxes at 120/115/140/115 with 16 gaps ending at ~636) plus slack. -->
+			<Frame>
+				<Size x="413" y="680"/>
+			<Layers>
+				<Layer level="ARTWORK">
+					<FontString name="$parentTitle" text="PHYSICS_LABEL" inherits="OptionsFontLarge" justifyH="LEFT" justifyV="TOP">
+						<Anchors>
+							<Anchor point="TOPLEFT">
+								<Offset>
+									<AbsDimension x="16" y="-16"/>
+								</Offset>
+							</Anchor>
+						</Anchors>
+					</FontString>
+					<FontString name="$parentSubText" text="PHYSICS_SUBTEXT" inherits="OptionsFontHighlightSmall" nonspacewrap="true" maxLines="3" justifyH="LEFT" justifyV="TOP">
+						<Size>
+							<AbsDimension y="32" x="0"/>
+						</Size>
+						<Anchors>
+							<Anchor point="TOPLEFT" relativeTo="$parentTitle" relativePoint="BOTTOMLEFT">
+								<Offset>
+									<AbsDimension x="0" y="-8"/>
+								</Offset>
+							</Anchor>
+							<Anchor point="RIGHT">
+								<Offset>
+									<AbsDimension x="-32" y="0"/>
+								</Offset>
+							</Anchor>
+						</Anchors>
+					</FontString>
+				</Layer>
+			</Layers>
+			<Scripts>
+				<OnLoad>
+					VideoOptionsPhysicsPanel_OnLoad(self);
+				</OnLoad>
+			</Scripts>
+			<Frames>
+				<Frame name="$parentClutterBox" inherits="OptionsBoxTemplate">
+					<Size x="380" y="120"/>
+					<Anchors>
+						<Anchor point="TOPLEFT" relativeTo="$parentSubText" relativePoint="BOTTOMLEFT">
+							<Offset x="8" y="-20"/>
+						</Anchor>
+					</Anchors>
+					<Scripts>
+						<OnLoad>
+							self:SetBackdropBorderColor(0.4, 0.4, 0.4);
+							self:SetBackdropColor(0.15, 0.15, 0.15);
+							_G[self:GetName().."Title"]:SetText(CLUTTER_LABEL);
+						</OnLoad>
+					</Scripts>
+				</Frame>
+				<Slider name="$parentClutterDensity" inherits="OptionsSliderTemplate">
+					<Size x="200" y="17"/>
+					<Anchors>
+						<Anchor point="TOPLEFT" relativeTo="$parentClutterBox" relativePoint="TOPLEFT">
+							<Offset x="12" y="-8"/>
+						</Anchor>
+					</Anchors>
+					<Scripts>
+						<OnLoad>
+							self.type = CONTROLTYPE_SLIDER;
+							self.cvar = "groundEffectDensity";
+							self.SetDisplayValue = self.SetValue;
+							self.SetValue = function (self, value)
+								self:SetDisplayValue(value);
+								BlizzardOptionsPanel_SetCVarSafe(self.cvar, value);
+							end
+							_G[self:GetName().."Text"]:SetFontObject("OptionsFontSmall");
+							BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
+						</OnLoad>
+						<OnValueChanged function="VideoOptionsEffectsPanelSlider_OnValueChanged"/>
+					</Scripts>
+				</Slider>
+				<Slider name="$parentClutterRadius" inherits="OptionsSliderTemplate">
+					<Size x="200" y="17"/>
+					<Anchors>
+						<Anchor point="TOPLEFT" relativeTo="$parentClutterDensity" relativePoint="BOTTOMLEFT">
+							<Offset x="0" y="-24"/>
+						</Anchor>
+					</Anchors>
+					<Scripts>
+						<OnLoad>
+							self.type = CONTROLTYPE_SLIDER;
+							self.cvar = "groundEffectDist";
+							self.SetDisplayValue = self.SetValue;
+							self.SetValue = function (self, value)
+								self:SetDisplayValue(value);
+								BlizzardOptionsPanel_SetCVarSafe(self.cvar, value);
+							end
+							_G[self:GetName().."Text"]:SetFontObject("OptionsFontSmall");
+							BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
+						</OnLoad>
+						<OnValueChanged function="VideoOptionsEffectsPanelSlider_OnValueChanged"/>
+					</Scripts>
+				</Slider>
+				<Frame name="$parentWindBox" inherits="OptionsBoxTemplate">
+					<Size x="380" y="115"/>
+					<Anchors>
+						<Anchor point="TOPLEFT" relativeTo="$parentClutterBox" relativePoint="BOTTOMLEFT">
+							<Offset x="0" y="-16"/>
+						</Anchor>
+					</Anchors>
+					<Scripts>
+						<OnLoad>
+							self:SetBackdropBorderColor(0.4, 0.4, 0.4);
+							self:SetBackdropColor(0.15, 0.15, 0.15);
+							_G[self:GetName().."Title"]:SetText(WIND_LABEL);
+						</OnLoad>
+					</Scripts>
+				</Frame>
+				<CheckButton name="$parentWind" inherits="VideoOptionsSmallCheckButtonTemplate">
+					<Anchors>
+						<Anchor point="TOPLEFT" relativeTo="$parentWindBox" relativePoint="TOPLEFT">
+							<Offset x="12" y="-8"/>
+						</Anchor>
+					</Anchors>
+					<Scripts>
+						<OnLoad>
+							self.type = CONTROLTYPE_CHECKBOX;
+							self.cvar = "grassWind";
+							BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
+						</OnLoad>
+					</Scripts>
+				</CheckButton>
+				<Slider name="$parentWindSway" inherits="OptionsSliderTemplate">
+					<Size x="200" y="17"/>
+					<Anchors>
+						<Anchor point="TOPLEFT" relativeTo="$parentWindBox" relativePoint="TOPLEFT">
+							<Offset x="12" y="-36"/>
+						</Anchor>
+					</Anchors>
+					<Scripts>
+						<OnLoad>
+							self.type = CONTROLTYPE_SLIDER;
+							self.cvar = "grassWindSway";
+							self.SetDisplayValue = self.SetValue;
+							self.SetValue = function (self, value)
+								self:SetDisplayValue(value);
+								BlizzardOptionsPanel_SetCVarSafe(self.cvar, value);
+							end
+							_G[self:GetName().."Text"]:SetFontObject("OptionsFontSmall");
+							BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
+						</OnLoad>
+						<OnValueChanged function="VideoOptionsEffectsPanelSlider_OnValueChanged"/>
+					</Scripts>
+				</Slider>
+				<Slider name="$parentWindFlutter" inherits="OptionsSliderTemplate">
+					<Size x="200" y="17"/>
+					<Anchors>
+						<Anchor point="TOPLEFT" relativeTo="$parentWindSway" relativePoint="BOTTOMLEFT">
+							<Offset x="0" y="-8"/>
+						</Anchor>
+					</Anchors>
+					<Scripts>
+						<OnLoad>
+							self.type = CONTROLTYPE_SLIDER;
+							self.cvar = "grassWindFlutter";
+							self.SetDisplayValue = self.SetValue;
+							self.SetValue = function (self, value)
+								self:SetDisplayValue(value);
+								BlizzardOptionsPanel_SetCVarSafe(self.cvar, value);
+							end
+							_G[self:GetName().."Text"]:SetFontObject("OptionsFontSmall");
+							BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
+						</OnLoad>
+						<OnValueChanged function="VideoOptionsEffectsPanelSlider_OnValueChanged"/>
+					</Scripts>
+				</Slider>
+				<Slider name="$parentWindSpeed" inherits="OptionsSliderTemplate">
+					<Size x="200" y="17"/>
+					<Anchors>
+						<Anchor point="TOPLEFT" relativeTo="$parentWindFlutter" relativePoint="BOTTOMLEFT">
+							<Offset x="0" y="-8"/>
+						</Anchor>
+					</Anchors>
+					<Scripts>
+						<OnLoad>
+							self.type = CONTROLTYPE_SLIDER;
+							self.cvar = "grassWindSpeed";
+							self.SetDisplayValue = self.SetValue;
+							self.SetValue = function (self, value)
+								self:SetDisplayValue(value);
+								BlizzardOptionsPanel_SetCVarSafe(self.cvar, value);
+							end
+							_G[self:GetName().."Text"]:SetFontObject("OptionsFontSmall");
+							BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
+						</OnLoad>
+						<OnValueChanged function="VideoOptionsEffectsPanelSlider_OnValueChanged"/>
+					</Scripts>
+				</Slider>
+				<Frame name="$parentDistanceBox" inherits="OptionsBoxTemplate">
+					<Size x="380" y="140"/>
+					<Anchors>
+						<Anchor point="TOPLEFT" relativeTo="$parentWindBox" relativePoint="BOTTOMLEFT">
+							<Offset x="0" y="-16"/>
+						</Anchor>
+					</Anchors>
+					<Scripts>
+						<OnLoad>
+							self:SetBackdropBorderColor(0.4, 0.4, 0.4);
+							self:SetBackdropColor(0.15, 0.15, 0.15);
+							_G[self:GetName().."Title"]:SetText(DISTANCE_LABEL);
+						</OnLoad>
+					</Scripts>
+				</Frame>
+				<CheckButton name="$parentThinning" inherits="VideoOptionsSmallCheckButtonTemplate">
+					<Anchors>
+						<Anchor point="TOPLEFT" relativeTo="$parentDistanceBox" relativePoint="TOPLEFT">
+							<Offset x="12" y="-8"/>
+						</Anchor>
+					</Anchors>
+					<Scripts>
+						<OnLoad>
+							self.type = CONTROLTYPE_CHECKBOX;
+							self.cvar = "grassThinning";
+							BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
+						</OnLoad>
+					</Scripts>
+				</CheckButton>
+				<Slider name="$parentThinStart" inherits="OptionsSliderTemplate">
+					<Size x="200" y="17"/>
+					<Anchors>
+						<Anchor point="TOPLEFT" relativeTo="$parentDistanceBox" relativePoint="TOPLEFT">
+							<Offset x="12" y="-36"/>
+						</Anchor>
+					</Anchors>
+					<Scripts>
+						<OnLoad>
+							self.type = CONTROLTYPE_SLIDER;
+							self.cvar = "grassThinStart";
+							self.SetDisplayValue = self.SetValue;
+							self.SetValue = function (self, value)
+								self:SetDisplayValue(value);
+								BlizzardOptionsPanel_SetCVarSafe(self.cvar, value);
+							end
+							_G[self:GetName().."Text"]:SetFontObject("OptionsFontSmall");
+							BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
+						</OnLoad>
+						<OnValueChanged function="VideoOptionsEffectsPanelSlider_OnValueChanged"/>
+					</Scripts>
+				</Slider>
+				<Slider name="$parentThinEnd" inherits="OptionsSliderTemplate">
+					<Size x="200" y="17"/>
+					<Anchors>
+						<Anchor point="TOPLEFT" relativeTo="$parentThinStart" relativePoint="BOTTOMLEFT">
+							<Offset x="0" y="-8"/>
+						</Anchor>
+					</Anchors>
+					<Scripts>
+						<OnLoad>
+							self.type = CONTROLTYPE_SLIDER;
+							self.cvar = "grassThinEnd";
+							self.SetDisplayValue = self.SetValue;
+							self.SetValue = function (self, value)
+								self:SetDisplayValue(value);
+								BlizzardOptionsPanel_SetCVarSafe(self.cvar, value);
+							end
+							_G[self:GetName().."Text"]:SetFontObject("OptionsFontSmall");
+							BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
+						</OnLoad>
+						<OnValueChanged function="VideoOptionsEffectsPanelSlider_OnValueChanged"/>
+					</Scripts>
+				</Slider>
+				<Frame name="$parentPartingBox" inherits="OptionsBoxTemplate">
+					<Size x="380" y="115"/>
+					<Anchors>
+						<Anchor point="TOPLEFT" relativeTo="$parentDistanceBox" relativePoint="BOTTOMLEFT">
+							<Offset x="0" y="-16"/>
+						</Anchor>
+					</Anchors>
+					<Scripts>
+						<OnLoad>
+							self:SetBackdropBorderColor(0.4, 0.4, 0.4);
+							self:SetBackdropColor(0.15, 0.15, 0.15);
+							_G[self:GetName().."Title"]:SetText(PARTING_LABEL);
+						</OnLoad>
+					</Scripts>
+				</Frame>
+				<CheckButton name="$parentParting" inherits="VideoOptionsSmallCheckButtonTemplate">
+					<Anchors>
+						<Anchor point="TOPLEFT" relativeTo="$parentPartingBox" relativePoint="TOPLEFT">
+							<Offset x="12" y="-8"/>
+						</Anchor>
+					</Anchors>
+					<Scripts>
+						<OnLoad>
+							self.type = CONTROLTYPE_CHECKBOX;
+							self.cvar = "grassParting";
+							BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
+						</OnLoad>
+					</Scripts>
+				</CheckButton>
+				<Slider name="$parentPartingStrength" inherits="OptionsSliderTemplate">
+					<Size x="200" y="17"/>
+					<Anchors>
+						<Anchor point="TOPLEFT" relativeTo="$parentPartingBox" relativePoint="TOPLEFT">
+							<Offset x="12" y="-36"/>
+						</Anchor>
+					</Anchors>
+					<Scripts>
+						<OnLoad>
+							self.type = CONTROLTYPE_SLIDER;
+							self.cvar = "grassPartingStrength";
+							self.SetDisplayValue = self.SetValue;
+							self.SetValue = function (self, value)
+								self:SetDisplayValue(value);
+								BlizzardOptionsPanel_SetCVarSafe(self.cvar, value);
+							end
+							_G[self:GetName().."Text"]:SetFontObject("OptionsFontSmall");
+							BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
+						</OnLoad>
+						<OnValueChanged function="VideoOptionsEffectsPanelSlider_OnValueChanged"/>
+					</Scripts>
+				</Slider>
+				<Slider name="$parentPartingRadius" inherits="OptionsSliderTemplate">
+					<Size x="200" y="17"/>
+					<Anchors>
+						<Anchor point="TOPLEFT" relativeTo="$parentPartingStrength" relativePoint="BOTTOMLEFT">
+							<Offset x="0" y="-8"/>
+						</Anchor>
+					</Anchors>
+					<Scripts>
+						<OnLoad>
+							self.type = CONTROLTYPE_SLIDER;
+							self.cvar = "grassPartingRadiusScale";
+							self.SetDisplayValue = self.SetValue;
+							self.SetValue = function (self, value)
+								self:SetDisplayValue(value);
+								BlizzardOptionsPanel_SetCVarSafe(self.cvar, value);
+							end
+							_G[self:GetName().."Text"]:SetFontObject("OptionsFontSmall");
+							BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
+						</OnLoad>
+						<OnValueChanged function="VideoOptionsEffectsPanelSlider_OnValueChanged"/>
+					</Scripts>
+				</Slider>
+			</Frames>
+			</Frame>
+		</ScrollChild>
+	</ScrollFrame>
 	<!-- Debug Panel -->
 
 	<Frame name="VideoOptionsDebugPanel" parent="VideoOptionsFramePanelContainer" hidden="true">

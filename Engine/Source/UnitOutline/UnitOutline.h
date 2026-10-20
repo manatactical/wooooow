@@ -48,10 +48,14 @@ class CUnitOutline {
     // Not in the original binary. A mounted player is two models; both go into the occluder mask.
     static void SetPlayerModel(CM2Model* model, CM2Model* mount);
 
+    // Not in the original binary. One more model subtracted from the outline: the player's own gear hangs
+    // off its body as a separate model, so it needs adding on its own. Ignored past kMaxPlayerModels.
+    static void AddOccluder(CM2Model* model);
+
     // Not in the original binary. Records one model with the reaction colour. Exact pointer, no attach chain:
-    // an effect hung off a unit must not be outlined with it. A mounted unit is two models, recorded
-    // separately by the caller. Occlusion is not decided here: the stamp depth tests against the scene, so a
-    // wall clips the line where it covers the unit.
+    // an effect hung off a unit must not be outlined with it. A mounted unit is two models, and its gear is
+    // more, recorded separately by the caller (which filters out the effects). Occlusion is not decided
+    // here: the stamp depth tests against the scene, so a wall clips the line where it covers the unit.
     static void AddTarget(CM2Model* model, const float rgb[3], bool keepFull);
 
     // Not in the original binary. A world object the cursor is over: no reaction colour and no mount

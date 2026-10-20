@@ -50,7 +50,7 @@ constexpr float kThreshold = 0.0f;    // clip cutoff; trims faint pixels
 // off a spike or a shoulder without visibly fattening the line.
 constexpr float kSoftnessScale = 2.0f;
 
-constexpr int32_t kMaxTargets   = 16;  // selections and quest givers, each up to two models
+constexpr int32_t kMaxTargets   = 64;  // selections and quest givers, each up to two models plus gear
 constexpr uint32_t kFadeMs         = 400;
 constexpr float    kFadeEndOpacity = 0.5f;
 
@@ -192,10 +192,10 @@ int32_t s_count;
 OutlineTarget s_prevTargets[kMaxTargets];
 int32_t s_prevCount;
 
-// The local player's own models: the rider, and its mount when mounted. Both are subtracted from the
-// outline so the line never draws across the player's body, and they are held separately because the
-// target lookups no longer walk the attach chain.
-CM2Model* s_playerModels[2];
+// The local player's own models: the rider, its mount when mounted, and the gear hung off them. All are
+// subtracted from the outline so the line never draws across the player's body or its own weapon.
+constexpr int32_t kMaxPlayerModels = 32;
+CM2Model* s_playerModels[kMaxPlayerModels];
 int32_t s_playerCount;
 
 // Re-entry guard. A stamp reached from inside the composite would write into the mask the passes are
@@ -405,18 +405,31 @@ void CUnitOutline::SetPlayerModel(CM2Model* model) {
 // Not in the original binary. A mounted player is drawn as a rider hung off the mount, so both models are
 // needed for the occluder mask to cover the whole body.
 void CUnitOutline::SetPlayerModel(CM2Model* model, CM2Model* mount) {
-    s_playerModels[0] = model;
-    s_playerModels[1] = mount;
     s_playerCount = 0;
 
     if (model) {
-        s_playerCount = 1;
+        s_playerModels[s_playerCount++] = model;
     }
 
-    if (mount) {
-        s_playerCount = model ? 2 : 1;
-        s_playerModels[model ? 1 : 0] = mount;
+    if (mount && s_playerCount < kMaxPlayerModels) {
+        s_playerModels[s_playerCount++] = mount;
     }
+}
+
+// Not in the original binary. Gear is a separate model hung off the body, so it joins the occluder mask
+// the same way the body does.
+void CUnitOutline::AddOccluder(CM2Model* model) {
+    if (!model || s_playerCount >= kMaxPlayerModels) {
+        return;
+    }
+
+    for (int32_t i = 0; i < s_playerCount; i++) {
+        if (s_playerModels[i] == model) {
+            return;
+        }
+    }
+
+    s_playerModels[s_playerCount++] = model;
 }
 
 // Not in the original binary. Exactly one model is recorded, and FindTarget matches exactly that pointer.

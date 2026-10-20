@@ -12,6 +12,8 @@
 #include <cstdint>
 
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
+#include "Engine/Source/Model2/M2Model.h"
+#include "Engine/Source/Storm/H/storm.h"
 #include "Engine/Source/UnitOutline/UnitOutline.h"
 #include "WoW/Source/Object/ObjectClient/GameObject_C.h"
 #include "WoW/Source/Object/ObjectClient/Object_C.h"
@@ -94,9 +96,26 @@ void ColorForReaction(int32_t reaction, float* rgb) {
 
 
 
+// Gear -- a weapon, a shield, a helm, the shoulders, a cape -- is its own model hung off the body's
+// attachment chain (CCharacterComponent::AddLink), so a match on the body alone leaves it unoutlined. Only
+// item models are taken: the same chain carries the quest icon, spell visuals and enchant glows, and those
+// are not part of the silhouette. Every one of them lives under Item\ObjectComponents\... .
+bool IsGearModel(CM2Model* model) {
+    const char* path = (model && model->m_shared) ? model->m_shared->m_fileName : nullptr;
+    return path && SStrStrI(path, "ObjectComponents") != nullptr;
+}
+
+void AddGearModels(CM2Model* body, const float rgb[3], bool keepFull) {
+    for (CM2Model* child = body ? body->m_attachList : nullptr; child; child = child->m_attachNext) {
+        if (IsGearModel(child)) {
+            CUnitOutline::AddTarget(child, rgb, keepFull);
+        }
+    }
+}
+
 // A unit is up to two models: the rider, and the mount it hangs off when mounted. The outline matches
 // models by exact pointer (see CUnitOutline::AddTarget), so both have to be recorded; recording only
-// GetObjectModel() would outline the mount alone and leave the rider bare.
+// GetObjectModel() would outline the mount alone and leave the rider bare. Gear hangs off the rider.
 void AddUnitModels(CGUnit_C* unit, const float rgb[3], bool keepFull) {
     if (!unit) {
         return;
@@ -108,6 +127,20 @@ void AddUnitModels(CGUnit_C* unit, const float rgb[3], bool keepFull) {
 
     if (unit->m_worldModel) {
         CUnitOutline::AddTarget(unit->m_worldModel, rgb, keepFull);
+        AddGearModels(unit->m_worldModel, rgb, keepFull);
+    }
+}
+
+// The player's own silhouette is subtracted from the line, so its gear has to go into the occluder mask
+// too: without it the outline draws across the player's own weapon and shoulders instead of stopping at
+// them.
+void AddPlayerModels(CGPlayer_C* player) {
+    CUnitOutline::SetPlayerModel(player->m_worldModel, player->m_mountModel);
+
+    for (CM2Model* child = player->m_worldModel ? player->m_worldModel->m_attachList : nullptr; child; child = child->m_attachNext) {
+        if (IsGearModel(child)) {
+            CUnitOutline::AddOccluder(child);
+        }
     }
 }
 
@@ -270,7 +303,7 @@ void CUnitOutlineGather::Update() {
         viewer = player;
     }
 
-    CUnitOutline::SetPlayerModel(player->m_worldModel, player->m_mountModel);
+    AddPlayerModels(player);
 
     AddSelection(static_cast<CGUnit_C*>(viewer)->m_unit->m_unitFieldTarget, viewer, false);
 

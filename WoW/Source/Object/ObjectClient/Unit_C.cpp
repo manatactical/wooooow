@@ -3986,6 +3986,18 @@ uint32_t CGUnit_C::ResolveAnimForModel(uint32_t animId, CM2Model* model) {
     //
     // The walk now visits each tier at most once; when none can satisfy the request the caller gets the
     // untranslated id, which is what it used before any tier resolution.
+    //
+    // m_animTier is set from the unit's own data and is not bounded by anything this code controls, while
+    // s_animTierFallback holds five entries and tierVisited is indexed by the same value. An out-of-range
+    // tier therefore indexed both arrays out of bounds, and the garbage it read became the next tier --
+    // which is a hang at best and a corrupting write at worst. Clamped once, here, since every later use
+    // of tier depends on it.
+    constexpr int32_t kAnimTierCount = sizeof(s_animTierFallback) / sizeof(s_animTierFallback[0]);
+
+    if (tier < 0 || tier >= kAnimTierCount) {
+        tier = 0;
+    }
+
     bool tierVisited[ANIM_COUNT] = {};
 
     while (!AnimationData::FindIdByBehaviorAndTier(current, tier, &result) || !model->IsSequenceLoaded(result)) {
@@ -3998,7 +4010,7 @@ uint32_t CGUnit_C::ResolveAnimForModel(uint32_t animId, CM2Model* model) {
 
             const int32_t next = s_animTierFallback[tier];
 
-            if (next == tier || tierVisited[next]) {
+            if (next == tier || next < 0 || next >= kAnimTierCount || tierVisited[next]) {
                 return animId;
             }
 
@@ -4514,7 +4526,36 @@ void CGUnit_C::PlayBaseAnimation(uint32_t animId, int32_t flags) {
     if (this->m_mountModel) {
         if (IsFullBodyAnim(anim)) {
             mountSlot = newSlot;
-            mountSlot.m_sequenceId = this->ResolveAnimForModel(anim, this->m_mountModel);
+
+            // NOT IN BINARY. The mount's animation was always derived from the *rider's* choice: anim is
+            // whatever ChooseMovementAnim picked for the player's own model, and it was then translated
+            // through the animation table for the mount. A player model has no flight cycle, so while
+            // flying it picks ANIM_SWIM (42) -- and the mount was told to swim too. That is why flying
+            // mounts paddle through the air.
+            //
+            // A mount that authors its own air sequence should play that sequence. The ids are read from
+            // the mount's own file, so whichever air cycle it actually carries is the one used, and a
+            // mount with none keeps the translated behaviour.
+            uint32_t mountAnim = 0xFFFFFFFF;
+
+            if (this->m_movementData.m_flags & MOVEMENTFLAG_FLYING) {
+                const M2Data* mountData = this->m_mountModel->m_shared ? this->m_mountModel->m_shared->m_data : nullptr;
+
+                if (mountData) {
+                    const uint32_t airIds[] = { ANIM_FLY_RUN, ANIM_FLY_WALK, ANIM_FLY_STAND };
+
+                    for (uint32_t airId : airIds) {
+                        if (this->m_mountModel->HasSequence(mountData, airId)) {
+                            mountAnim = airId;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            mountSlot.m_sequenceId = mountAnim != 0xFFFFFFFF
+                                   ? mountAnim
+                                   : this->ResolveAnimForModel(anim, this->m_mountModel);
         }
 
         if (!IsFullBodyAnim(anim) && IsUpperBodyAnim(anim)) {
@@ -6990,7 +7031,9 @@ int32_t CGUnit_C::FindDefaultAnimForTier(int32_t tier, uint32_t* anim) const {
         }
     }
 
-    if (!this->m_worldModel->HasSequence(id)) {
+    // A unit without a world model has no sequence to check; the caller treats that as "no default"
+    // rather than crashing. The original dereferenced m_worldModel unconditionally.
+    if (!this->m_worldModel || !this->m_worldModel->HasSequence(id)) {
         return 0;
     }
 
@@ -7866,7 +7909,42 @@ int32_t CGUnit_C::ChooseMovementAnim(uint32_t flags, uint32_t* anim) const {
         return 1;
     }
 
-    if (moveFlags & (MOVEMENTFLAG_SWIMMING | MOVEMENTFLAG_FLYING)) {
+    // NOT IN BINARY. Swimming and flying used to share one branch, so anything moving through air played
+    // ANIM_SWIM (42). That is correct only for a model that has no air animation: modern flying mounts
+    // author their own flight cycles -- giant eagle 2 has 234 FLY_RUN (1600ms) and 233 FLY_WALK -- and
+    // playing 42 for them is why they swim through the sky.
+    //
+    // The two cases are now separate, and flight asks for the model's own sequence rather than being
+    // translated through the animation table. Whichever air id the model actually authored is the one that
+    // plays; the swim branch is only reached when the model has none of them.
+    if (moveFlags & MOVEMENTFLAG_FLYING) {
+        CM2Model* model = this->m_worldModel;
+
+        // HasSequence(id) waits for a load, which a move-state selector must not do. The data overload only
+        // reads the sequence table, so that is what is asked; a model still loading simply matches nothing
+        // and gets the swim fallback below.
+        const CM2Shared* shared = model ? model->m_shared : nullptr;
+        const M2Data* data = shared ? shared->m_data : nullptr;
+
+        if (model && data) {
+            // The model's own air cycle, in preference order. A model that authors only a stand is drawn
+            // with that rather than left unanimated; one that authors nothing falls through to swim, which
+            // is what a non-flying model moving through air was always drawn with.
+            const uint32_t candidates[] = { ANIM_FLY_RUN, ANIM_FLY_WALK, ANIM_FLY_STAND };
+
+            for (uint32_t id : candidates) {
+                if (model->HasSequence(data, id)) {
+                    *anim = id;
+                    return 1;
+                }
+            }
+        }
+
+        *anim = (moveFlags & MOVEMENTFLAG_BACKWARD) ? ANIM_SWIM_BACKWARDS : ANIM_SWIM;
+        return 1;
+    }
+
+    if (moveFlags & MOVEMENTFLAG_SWIMMING) {
         if (moveFlags & (MOVEMENTFLAG_STRAFE_LEFT | MOVEMENTFLAG_STRAFE_RIGHT)) {
             *anim = ANIM_SWIM_RIGHT - ((moveFlags & MOVEMENTFLAG_STRAFE_LEFT) != 0);
             return 1;

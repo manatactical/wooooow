@@ -717,7 +717,7 @@ void CM2SceneRender::DrawBatchDoodad(M2Element* elements, uint32_t* indices) {
             CShaderEffect::SetShaders(this->m_curElement->m_vertexPermute, this->m_curElement->m_pixelPermute);
 
             batch.m_count = instances * this->m_curSkinSection->m_indexCount;
-            batch.m_maxIndex = static_cast<uint16_t>(instances * this->m_curShared->m_skinData->m_vertices.m_count - 1);
+            batch.m_maxIndex = instances * this->m_curShared->m_skinData->m_vertices.m_count - 1;
             CUnitOutline::StampBatch(batch, this->m_curModel);
             g_theGxDevicePtr->Draw(&batch, 1);
         }
@@ -755,7 +755,7 @@ void CM2SceneRender::DrawBatchDoodad(M2Element* elements, uint32_t* indices) {
             GxRsSet(GxRs_NormalizeNormals, normalize);
 
             batch.m_count = instances * this->m_curSkinSection->m_indexCount;
-            batch.m_maxIndex = static_cast<uint16_t>(instances * this->m_curSkinSection->m_vertexCount - 1);
+            batch.m_maxIndex = instances * this->m_curSkinSection->m_vertexCount - 1;
             CUnitOutline::StampBatch(batch, this->m_curModel);
             g_theGxDevicePtr->Draw(&batch, 1);
         }

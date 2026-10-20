@@ -90,17 +90,20 @@ static MipBits* s_mipBits;
 static int32_t s_pumping;
 
 // STATIC: 0x00B49C98
-static int32_t s_gxTexCacheSize;
+// NOT IN BINARY type: int64_t, because the accounting is a byte count that a modern ceiling exceeds
+// INT32_MAX once the cache is allowed past 2 GiB. The name and role are unchanged.
+static int64_t s_gxTexCacheSize;
 
 // STATIC: 0x00B49C9C
-static int32_t s_gxTexCacheMaxSize;
+static int64_t s_gxTexCacheMaxSize;
 
 // STATIC: 0x00B49CA0
 static uint32_t s_asyncLoadBufferUsed;
 
-// NOT IN BINARY. The async upload budget, as a byte count. Left at the original 4 MiB: raising it was
-// offered as a cvar and never showed a benefit worth the extra frame-thread time in the drain, so it is
-// a constant again rather than a knob.
+// NOT IN BINARY. The async upload budget, as a byte count. Raising it was offered as a cvar in the
+// single-worker disk era and never showed a benefit; the disk queue is multi-threaded now (see
+// AsyncFileReadSetDiskQueueCount), so the backlog it bounds drains faster than it did when that was
+// measured. Still a constant, not a knob.
 static constexpr uint32_t s_asyncLoadBudget = 0x400000;
 
 // STATIC: 0x00B49CA4
@@ -933,16 +936,20 @@ void TextureGetTextureFormats(PIXEL_FORMAT& pixelFormat, EGxTexFormat& gxTexForm
     }
 }
 
+// The 2010 table: 64 MiB, or 32 MiB below 1 GiB of RAM. Left as it was on purpose. Scaling it to a fraction
+// of system RAM was tried on x64 and made fast camera motion worse, not better: the cache then grows past
+// what the D3D9 driver can hold, so textures are pushed to system memory and re-uploaded on every frame
+// that moves the camera. The 2010 number is a VRAM figure, not an address-space figure.
+// The int32_t overflow this section used to have is fixed separately, in TextureSetCacheSize and its
+// callers, so an explicit textureCacheSize above 2047 MiB is honoured instead of wrapping.
+static uint64_t TextureGetDefaultCacheSize() {
+    return OsGetPhysicalMemory() <= 0x40000000ull ? 0x2000000ull : 0x4000000ull;
+}
+
 // VERIFY: 7e1eb12e manual
 // OFFSET: 0x004B6180
-uint32_t TextureCacheGetMaxSize() {
-    uint32_t size = 0x4000000;
-
-    if (OsGetPhysicalMemory() <= 0x40000000) {
-        size = 0x2000000;
-    }
-
-    return g_theGxDevicePtr->DeviceApi() == GxApi_D3d9Ex ? 0 : size;
+uint64_t TextureCacheGetMaxSize() {
+    return g_theGxDevicePtr->DeviceApi() == GxApi_D3d9Ex ? 0 : TextureGetDefaultCacheSize();
 }
 
 // VERIFY: 3db7e996 auto
@@ -1089,27 +1096,15 @@ void AsyncTextureWait(CTexture* texture) {
 
 // VERIFY: 6e25a772 manual
 // OFFSET: 0x004B6580
-void TextureSetCacheSize(int32_t size) {
-    uint32_t maxSize = 0x4000000;
-
-    if (OsGetPhysicalMemory() <= 0x40000000) {
-        maxSize = 0x2000000;
-    }
-
-    if (g_theGxDevicePtr->DeviceApi() == GxApi_D3d9Ex) {
-        maxSize = 0;
-    }
+void TextureSetCacheSize(int64_t size) {
+    const uint64_t maxSize = g_theGxDevicePtr->DeviceApi() == GxApi_D3d9Ex ? 0 : TextureGetDefaultCacheSize();
 
     if (size < 0) {
         s_gxTexCacheMaxSize = 0;
         return;
     }
 
-    s_gxTexCacheMaxSize = maxSize;
-
-    if (size <= static_cast<int32_t>(maxSize)) {
-        s_gxTexCacheMaxSize = size;
-    }
+    s_gxTexCacheMaxSize = static_cast<int64_t>(size <= static_cast<int64_t>(maxSize) ? static_cast<uint64_t>(size) : maxSize);
 }
 
 // VERIFY: 579a09eb auto

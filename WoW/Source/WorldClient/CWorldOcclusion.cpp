@@ -981,7 +981,7 @@ void CWorldScene::RenderOcclusionVolumes() {
     batch.m_start = 0;
     batch.m_count = indexCount;
     batch.m_minIndex = 0;
-    batch.m_maxIndex = static_cast<uint16_t>(vertexCount);
+    batch.m_maxIndex = vertexCount;
     g_theGxDevicePtr->Draw(&batch, 1);
 
     g_theGxDevicePtr->RsPop();

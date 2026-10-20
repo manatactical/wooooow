@@ -10,7 +10,7 @@
 static const char* s_weekDayNames[7] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
 
 // STATIC: 0x00CAC11C
-static int32_t s_localTimeOffset;
+static time_t s_localTimeOffset;
 
 // VERIFY: c0d1d008 auto
 // OFFSET: 0x0076C1B0
@@ -453,7 +453,7 @@ void WowTime::ConvertToLocal(WowTime& time) const {
     if (!s_localTimeOffset) {
         time_t now;
         ::time(&now);
-        s_localTimeOffset = static_cast<int32_t>(now + 3600 * this->m_tzHours - mktime(gmtime(&now)));
+        s_localTimeOffset = now + 3600 * this->m_tzHours - mktime(gmtime(&now));
 
         if (!s_localTimeOffset) {
             return;

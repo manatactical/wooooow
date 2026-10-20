@@ -509,8 +509,14 @@ bool UIFasterCallback(CVar* var, const char* oldValue, const char* value, void* 
 // VERIFY: 1cb25927 auto
 // OFFSET: 0x004022E0
 bool ProcessAffinityMaskCallback(CVar* var, const char* oldValue, const char* value, void* arg) {
-    uint32_t maxMask = 0xFFFFFFFF >> (32 - OsGetNumberOfProcessors());
-    uint32_t mask = atol(value);
+    // NOT IN BINARY fix: `0xFFFFFFFF >> (32 - OsGetNumberOfProcessors())` was undefined behaviour as soon as
+    // the count exceeded 32, which is exactly the machine this build targets, and it cannot express a mask
+    // for a processor group beyond the first. Saturate at the full 32-bit mask the cvar itself stores.
+    // shortcut: the mask is still 32-bit because processAffinityMask's value lives in CVar::m_intValue;
+    // widening it needs a 64-bit cvar value, upgrade if groups past the first ever need to be addressed.
+    const uint32_t processors = OsGetNumberOfProcessors();
+    const uint32_t maxMask = processors >= 32 ? 0xFFFFFFFFu : (0xFFFFFFFFu >> (32 - processors));
+    uint32_t mask = static_cast<uint32_t>(atol(value));
 
     if (mask > maxMask) {
         ConsolePrintf("Specified mask %08x is greater than the maximum allowable value of %08x", mask, maxMask);
@@ -523,17 +529,17 @@ bool ProcessAffinityMaskCallback(CVar* var, const char* oldValue, const char* va
 // VERIFY: 46b0bbdc auto
 // OFFSET: 0x00402320
 bool TextureCacheSizeCallback(CVar* var, const char* oldValue, const char* value, void* arg) {
-    int32_t size = SStrToInt(value) << 20;
-    int32_t maxSize = TextureCacheGetMaxSize();
+    int64_t size = static_cast<int64_t>(SStrToInt(value)) << 20;
+    int64_t maxSize = static_cast<int64_t>(TextureCacheGetMaxSize());
     char message[256];
 
     if (size < 0 || size > maxSize) {
-        SStrPrintf(message, sizeof(message), "Texture cache size (%d meg) greater than maximum allowed for your system (%d meg).", size >> 20, maxSize >> 20);
+        SStrPrintf(message, sizeof(message), "Texture cache size (%d meg) greater than maximum allowed for your system (%d meg).", static_cast<int32_t>(size >> 20), static_cast<int32_t>(maxSize >> 20));
         ConsoleWrite(message, DEFAULT_COLOR);
         return false;
     }
 
-    SStrPrintf(message, sizeof(message), "Texture cache size set to %d meg.", size >> 20);
+    SStrPrintf(message, sizeof(message), "Texture cache size set to %d meg.", static_cast<int32_t>(size >> 20));
     ConsoleWrite(message, DEFAULT_COLOR);
     TextureSetCacheSize(size);
 

@@ -841,7 +841,7 @@ void CMapRenderChunk::RenderSinglePass() {
     batch.m_start = 0;
     batch.m_count = 2 * vertexCount;
     batch.m_minIndex = 0;
-    batch.m_maxIndex = static_cast<uint16_t>(2 * vertexCount);
+    batch.m_maxIndex = 2 * vertexCount;
     g_theGxDevicePtr->Draw(&batch, 1);
     g_theGxDevicePtr->RsPop();
 }

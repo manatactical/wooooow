@@ -295,7 +295,7 @@ class CGxDeviceD3d9Ex : public CGxDevice {
     virtual void TexDestroy(CGxTex* texId);
     virtual int32_t TexCopy(CGxTex* dest, const C2iVector& destPos, const C2iVector& sourcePos, const C2iVector& size, uint32_t level, uint32_t plane);
     virtual int32_t TexStretch(CGxTex* dest, const CiRect* destRect, const CiRect* sourceRect, uint32_t level, uint32_t face);
-    virtual void TexSetCacheSize(uint32_t size);
+    virtual void TexSetCacheSize(uint64_t size);
     virtual void QueryCreate(CGxQuery*& query, EGxQueryType type);
     virtual void QueryDestroy(CGxQuery*& query);
     virtual bool QueryBegin(CGxQuery* query);
@@ -408,3 +408,6 @@ class CGxDeviceD3d9Ex : public CGxDevice {
 CGxDevice* CreateCGxDeviceD3d9Ex();
 
 #endif
+
+
+

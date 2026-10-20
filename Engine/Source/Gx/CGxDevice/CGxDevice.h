@@ -219,7 +219,7 @@ class CGxDevice {
     virtual void TexDestroy(CGxTex* texId);
     virtual int32_t TexCopy(CGxTex* dest, const C2iVector& destPos, const C2iVector& sourcePos, const C2iVector& size, uint32_t level, uint32_t plane) = 0;
     virtual int32_t TexStretch(CGxTex* dest, const CiRect* destRect, const CiRect* sourceRect, uint32_t level, uint32_t face) = 0;
-    virtual void TexSetCacheSize(uint32_t size);
+    virtual void TexSetCacheSize(uint64_t size);
     virtual void QueryCreate(CGxQuery*& query, EGxQueryType type);
     virtual void QueryDestroy(CGxQuery*& query);
     virtual bool QueryBegin(CGxQuery* query) = 0;
@@ -366,3 +366,4 @@ extern CGxDevice* g_theGxDevicePtr;
 extern const char* s_formatToInt[CGxFormat::Formats_Last];
 
 #endif
+

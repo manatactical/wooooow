@@ -553,7 +553,7 @@ void GxDrawLockedElements() {
     batch.m_start = 0;
     batch.m_count = s_lockIndexCount;
     batch.m_minIndex = 0;
-    batch.m_maxIndex = static_cast<uint16_t>(s_lockVertexCount - 1);
+    batch.m_maxIndex = s_lockVertexCount - 1;
     g_theGxDevicePtr->Draw(&batch, 1);
 }
 
@@ -1092,7 +1092,7 @@ void GxDrawLockedElements(EGxPrim primType, uint32_t indexCount, const uint16_t*
     batch.m_start = 0;
     batch.m_count = indexCount;
     batch.m_minIndex = 0;
-    batch.m_maxIndex = static_cast<uint16_t>(s_lockVertexCount - 1);
+    batch.m_maxIndex = s_lockVertexCount - 1;
     g_theGxDevicePtr->Draw(&batch, 1);
 }
 

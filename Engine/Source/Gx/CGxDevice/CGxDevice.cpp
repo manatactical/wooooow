@@ -59,6 +59,9 @@ static const char** s_shaderTargetNames[GxShTargets_Last] = { CGxDevice::s_verte
 uint32_t CGxDevice::s_alphaRef[12] = { 0, 224, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0 };
 
 // STATIC: 0x00AD8BAC
+// NOT IN BINARY note: left at the original sizes. Raising them was tried and made fast camera motion
+// visibly worse -- PoolSizeSet reallocates the whole pool, so a larger ceiling only moves the same stall
+// later and the bigger working set costs more in D3D9. Do not raise without a before/after spike log.
 int32_t s_streamVertexPoolSize = 0x2C0000;
 
 // STATIC: 0x00AD8BB0
@@ -140,7 +143,7 @@ void CGxDevice::PrimPointSize(float size) {
 void CGxDevice::PrimLineWidth(float width) {
 }
 
-void CGxDevice::TexSetCacheSize(uint32_t size) {
+void CGxDevice::TexSetCacheSize(uint64_t size) {
 }
 
 // VERIFY: c758af65 manual
@@ -1069,12 +1072,22 @@ CGxBuf* CGxDevice::BufStream(EGxPoolTarget target, uint32_t itemSize, uint32_t i
     CGxBuf* buf = this->m_streamBufs[target];
     CGxPool* pool = buf->m_pool;
 
-    if (pool && static_cast<uint32_t>(pool->m_size) < itemCount * itemSize) {
-        this->PoolSizeSet(pool, itemCount * itemSize);
+    // NOT IN BINARY. itemCount * itemSize was computed in 32 bits and handed straight to PoolSizeSet, which
+    // takes a uint32_t. A caller whose counts multiply past 4 GiB gets a wrapped size, and a wrapped size can
+    // look smaller than the pool and skip the grow entirely. Computed in 64 bits now and refused if it does
+    // not fit, so the buffer is either sized correctly or not handed out.
+    const uint64_t bytes = static_cast<uint64_t>(itemSize) * static_cast<uint64_t>(itemCount);
+
+    if (bytes > 0x7FFFFFFFull) {
+        return nullptr;
+    }
+
+    if (pool && static_cast<uint32_t>(pool->m_size) < bytes) {
+        this->PoolSizeSet(pool, static_cast<uint32_t>(bytes));
     }
 
     buf->m_itemSize = itemSize;
-    buf->m_size = itemCount * itemSize;
+    buf->m_size = static_cast<uint32_t>(bytes);
     buf->m_itemCount = itemCount;
     buf->m_hasData = 0;
     return buf;
@@ -1655,7 +1668,7 @@ CGxDevice::~CGxDevice() {
     for (CGxTex* texId = this->m_textures.Head(); texId; texId = this->m_textures.Next(texId)) {
         if (texId->m_apiSpecificData) {
             char buffer[256];
-            sprintf(buffer, "Unfreed texture (%d x %d) with user function address %08x.", texId->m_width, texId->m_height, static_cast<uint32_t>(reinterpret_cast<uintptr_t>(texId->m_userFunc)));
+            sprintf(buffer, "Unfreed texture (%d x %d) with user function address %p.", texId->m_width, texId->m_height, reinterpret_cast<void*>(texId->m_userFunc));
             DebugLog(buffer);
         }
     }

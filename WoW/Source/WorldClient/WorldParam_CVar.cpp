@@ -766,7 +766,7 @@ bool CWorldParam::GxTextureCacheSizeCallback(CVar* var, const char* oldValue, co
 
     if (size) {
         World::s_texCacheOverride = size << 20;
-        g_theGxDevicePtr->TexSetCacheSize(size << 20);
+        g_theGxDevicePtr->TexSetCacheSize(static_cast<uint64_t>(size) << 20);
 
         char buffer[256];
         sprintf(buffer, "Texture cache size set to %dMB.", size);

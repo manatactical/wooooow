@@ -5909,7 +5909,7 @@ void CMap::RenderFootprints() {
                 batch.m_start = 0;
                 batch.m_count = texture.m_vertexCount;
                 batch.m_minIndex = 0;
-                batch.m_maxIndex = static_cast<uint16_t>(texture.m_vertexCount - 1);
+                batch.m_maxIndex = texture.m_vertexCount - 1;
                 g_theGxDevicePtr->Draw(&batch, 1);
             }
         }

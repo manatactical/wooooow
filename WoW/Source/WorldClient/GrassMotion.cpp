@@ -574,19 +574,17 @@ void CGrassMotion::AnalyzeDoodad(CDetailDoodadData* data) {
     data->m_grassSways = 0;
     data->m_grassRootV = 0.0f;
     data->m_grassInvSpan = 1.0f;
-
-    M2Data* m2Data = model->m_shared->m_data;
     M2SkinProfile* skin = model->m_shared->m_skinData;
 
     if (!skin->m_vertices.m_count) {
         return;
     }
 
-    float minZ = m2Data->m_vertices[skin->m_vertices[0]].m_position.z;
+    float minZ = model->m_shared->Vertices()[skin->m_vertices[0]].m_position.z;
     float maxZ = minZ;
 
     for (uint32_t i = 1; i < skin->m_vertices.m_count; i++) {
-        float z = m2Data->m_vertices[skin->m_vertices[i]].m_position.z;
+        float z = model->m_shared->Vertices()[skin->m_vertices[i]].m_position.z;
 
         if (z < minZ) {
             minZ = z;
@@ -613,7 +611,7 @@ void CGrassMotion::AnalyzeDoodad(CDetailDoodadData* data) {
     uint32_t tipCount = 0;
 
     for (uint32_t i = 0; i < skin->m_vertices.m_count; i++) {
-        const M2Vertex& source = m2Data->m_vertices[skin->m_vertices[i]];
+        const M2Vertex& source = model->m_shared->Vertices()[skin->m_vertices[i]];
 
         if (source.m_position.z <= rootBand) {
             rootSum += source.m_texcoord[0].y;

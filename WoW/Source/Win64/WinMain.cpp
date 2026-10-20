@@ -53,8 +53,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         return -1;
     }
 
+    // NOT IN BINARY size. The 8 MiB stack was chosen to fit deep Lua/UI recursion inside a 2 GB address
+    // space. x64 does not force that choice, and the reservation is only committed as it is touched, so
+    // the main fiber gets room for the deepest UI frames without costing anything on a normal frame.
     int result = -1;
-    LPVOID fiber = CreateFiberEx(0, 0x800000, 0, MainFiberProc, &result);
+    LPVOID fiber = CreateFiberEx(0, 0x1000000, 0, MainFiberProc, &result);
 
     if (!fiber) {
         return -1;

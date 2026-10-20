@@ -18,9 +18,18 @@ int32_t OsGetTimeZone() {
 
 // OFFSET: 0x0086D490
 void OsGetTimeStamp(char* buffer, uint32_t size) {
-    __time32_t now;
-    _time32(&now);
-    strftime(buffer, size, "%m%d%y_%H%M%S", _localtime32(&now));
+    time_t now;
+    ::time(&now);
+    tm local;
+
+    if (localtime_s(&local, &now) != 0) {
+        if (size) {
+            buffer[0] = '\0';
+        }
+        return;
+    }
+
+    strftime(buffer, size, "%m%d%y_%H%M%S", &local);
 }
 
 #endif

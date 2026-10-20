@@ -44,7 +44,9 @@ class CDbgHelpDll {
 struct LOADEDMODULE {
     /* 0000 */ char name[256];
     /* 0100 */ void* base;
-    /* 0104 */ uint32_t size;
+    // NOT IN BINARY width: an x64 module size is a SIZE_T. Truncating it to 32 bits under-reports any
+    // module at or above 4 GiB, which would make a crash-log frame resolve to the wrong module.
+    /* 0104 */ size_t size;
 };
 
 struct MEMDUMP {
@@ -947,7 +949,7 @@ static void sReadModuleDebugInfo(MODULEDEBUGINFO* info, const uint8_t* base) {
 }
 
 // OFFSET: 0x0077E2B0
-static void sLogModuleLine(void (*logLineProc)(void*, const char*, ...), void* logLineProcParam, void* base, const char* name, uint32_t size) {
+static void sLogModuleLine(void (*logLineProc)(void*, const char*, ...), void* logLineProcParam, void* base, const char* name, size_t size) {
     MODULEDEBUGINFO info;
 
     __try {
@@ -964,7 +966,7 @@ static void sLogModuleLine(void (*logLineProc)(void*, const char*, ...), void* l
         checksum[0] = 0;
     }
 
-    logLineProc(logLineProcParam, "DBG-MODULE<%08llX %08lX \"%s\" \"%s\" %lu {%08lx-%04hx-%04hx-%02x%02x%02x%02x%02x%02x%02x%02x} %lu %lu%s>", static_cast<uint64_t>(reinterpret_cast<uintptr_t>(base)), size, name, info.pdbName, info.signature, info.guid.Data1, info.guid.Data2, info.guid.Data3, info.guid.Data4[0], info.guid.Data4[1], info.guid.Data4[2], info.guid.Data4[3], info.guid.Data4[4], info.guid.Data4[5], info.guid.Data4[6], info.guid.Data4[7], info.age, info.timeDateStamp, checksum);
+    logLineProc(logLineProcParam, "DBG-MODULE<%08llX %08lX \"%s\" \"%s\" %llu {%08lx-%04hx-%04hx-%02x%02x%02x%02x%02x%02x%02x%02x} %lu %lu%s>", static_cast<uint64_t>(reinterpret_cast<uintptr_t>(base)), static_cast<unsigned long long>(size), name, info.pdbName, info.signature, info.guid.Data1, info.guid.Data2, info.guid.Data3, info.guid.Data4[0], info.guid.Data4[1], info.guid.Data4[2], info.guid.Data4[3], info.guid.Data4[4], info.guid.Data4[5], info.guid.Data4[6], info.guid.Data4[7], info.age, info.timeDateStamp, checksum);
 }
 
 // OFFSET: 0x0077E3D0
@@ -1005,7 +1007,7 @@ static void sLogLoadedModules(void (*logLineProc)(void*, const char*, ...), void
                 LDR_DATA_TABLE_ENTRY* ldrEntry = CONTAINING_RECORD(link, LDR_DATA_TABLE_ENTRY, InMemoryOrderLinks);
                 LOADEDMODULE* module = &modules[numModules];
                 module->base = ldrEntry->DllBase;
-                module->size = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(ldrEntry->Reserved3[1]));
+                module->size = static_cast<size_t>(reinterpret_cast<uintptr_t>(ldrEntry->Reserved3[1]));
 
                 uint32_t length;
 

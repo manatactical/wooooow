@@ -191,14 +191,16 @@ void IOsSystemCpuLog(const CpuIdInfo* info) {
 
 // OFFSET: 0x0086B240
 uint32_t OsGetNumberOfProcessors() {
-    SYSTEM_INFO info = {};
-    GetSystemInfo(&info);
+    // NOT IN BINARY: GetSystemInfo saturates dwNumberOfProcessors at 32, one processor group. On a machine
+    // with more than 32 logical processors every downstream count (disk workers, scheduler, M2 cache) was
+    // therefore computed from 32. GetActiveProcessorCount across all groups is the x64-correct call.
+    const DWORD processors = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
 
-    if (!info.dwNumberOfProcessors) {
+    if (!processors) {
         return 1;
     }
 
-    return info.dwNumberOfProcessors;
+    return processors;
 }
 
 // Not in the original binary; see System.h. Called once from main(), never restored: the process is

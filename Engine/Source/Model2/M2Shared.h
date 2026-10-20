@@ -71,6 +71,13 @@ class CM2Shared {
     /* 017C */ CGxBuf* m_indexBuf;
     /* 0180 */ CGxPool* m_vertexPool;
     /* 0184 */ CGxBuf* m_vertexBuf;
+#if defined(WOWDECOMP_ARCH_64)
+    // NOT IN BINARY: the expanded vertex buffer, when it had to be reallocated instead of overwritten in
+    // place. M2Array::m_offset is a signed 32-bit delta from m_data, so a runtime allocation more than
+    // 2 GiB away would truncate; holding the pointer here keeps the format field 32-bit and the pointer
+    // 64-bit. Null means the vertices still live in the loaded body.
+    /* ---- */ M2Vertex* m_vertexData;
+#endif
     /* 0188 */ CShaderEffect** m_effects;
     /* 018C */ M2SkinSection* m_skinSections;
     /* 0190 */ uint32_t m_instances;
@@ -100,6 +107,20 @@ class CM2Shared {
     int32_t FinishLoadingLowPrioritySequence(uint32_t sequenceIndex, CAsyncObject* object);
     int32_t FinishLoadingSkinProfile(uint32_t size);
     uint32_t GetSkinProfileIndex(uint32_t maxBones);
+    // NOT IN BINARY: the vertex array's runtime base. M2Array::m_offset is a signed 32-bit delta from
+    // m_data and cannot hold a pointer that landed elsewhere on x64, so the expanded buffer is tracked
+    // here instead. Falls back to the in-body array.
+    // Defined inline on purpose: called once per vertex in every transform and hit-test loop, and an
+    // out-of-line call there is measurably worse.
+    inline M2Vertex* Vertices() const {
+#if defined(WOWDECOMP_ARCH_64)
+        if (this->m_vertexData) {
+            return this->m_vertexData;
+        }
+#endif
+        return this->m_data->m_vertices.Data();
+    }
+    void SetVerticesArray(M2Vertex* data, uint32_t count);
     CShaderEffect* GetEffect(M2Batch* batch);
     CShaderEffect* GetEffect(uint32_t textureCount, uint16_t shader, uint16_t textureCoordComboIndex);
     int32_t Initialize();

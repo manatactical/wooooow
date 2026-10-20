@@ -132,7 +132,7 @@ void TextureCacheUpdate();
 void TextureCacheNewTexture(CTexture* texture);
 void TextureCacheNewTexture(CTexture* texture, CGxTexFlags texFlags);
 void TextureCacheNewTexture(CTexture* texture, const CImVector& color);
-uint32_t TextureCacheGetMaxSize();
+uint64_t TextureCacheGetMaxSize();
 CTexture* TextureCacheGetTexture(const char* fileName);
 uint32_t TextureCalcGxTexSize(EGxTexFormat format, uint32_t width, uint32_t height, EGxTexFilter filter);
 int32_t TextureCalcMipCount(uint32_t width, uint32_t height);
@@ -176,7 +176,7 @@ int32_t TextureOnAtlas(CTexture* texture);
 TEXFILETYPE TexturePickAlternateFilename(const char* fileName, TEXFILETYPE type, char* buffer, uint32_t size);
 EGxTexFormat TexturePixelFormatToGxTexFormat(PIXEL_FORMAT format);
 void TextureReportLoadError(const char* type, const char* fileName, CStatus* status);
-void TextureSetCacheSize(int32_t size);
+void TextureSetCacheSize(int64_t size);
 void TextureSetFilterMode(EGxTexFilter filter);
 void TextureSetMaxAnisotropy(uint32_t maxAnisotropy);
 void TextureSetTextureSubstitutions(const char* from, const char* to);
@@ -187,3 +187,4 @@ void UpdateBlpTextureAsync(EGxTexCommand command, uint32_t width, uint32_t heigh
 void UpdateTgaTexture(EGxTexCommand command, uint32_t width, uint32_t height, uint32_t face, uint32_t level, void* userArg, uint32_t& texelStrideInBytes, const void*& texels);
 
 #endif
+

@@ -3363,7 +3363,7 @@ void CWorldScene::RenderOccluders() {
     batch.m_start = 0;
     batch.m_count = 6 * count;
     batch.m_minIndex = 0;
-    batch.m_maxIndex = static_cast<uint16_t>(4 * count);
+    batch.m_maxIndex = 4 * count;
     g_theGxDevicePtr->Draw(&batch, 1);
 
     g_theGxDevicePtr->RsPop();

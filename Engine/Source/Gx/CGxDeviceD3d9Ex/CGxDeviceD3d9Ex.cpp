@@ -4083,8 +4083,10 @@ int32_t CGxDeviceD3d9Ex::ITexAllocD3dTexture(CGxTex* texId) {
 
 // VERIFY: 7c75275f auto
 // OFFSET: 0x006A60B0
-void CGxDeviceD3d9Ex::TexSetCacheSize(uint32_t size) {
-    this->m_texCacheSize = size;
+void CGxDeviceD3d9Ex::TexSetCacheSize(uint64_t size) {
+    // m_texCacheSize is a 32-bit field in the 32-bit struct layout this class mirrors, so the ceiling stays
+    // at 0x80000000; TextureSetCacheSize already clamps to that.
+    this->m_texCacheSize = static_cast<uint32_t>(size);
 }
 
 // VERIFY: 28216b7e manual
@@ -4483,3 +4485,4 @@ void CGxDeviceD3d9Ex::ITexTouch(CGxTex* texId) {
         this->m_texCacheList.LinkToTail(texId);
     }
 }
+

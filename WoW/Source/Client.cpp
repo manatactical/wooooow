@@ -1088,7 +1088,7 @@ int32_t InitializeEngineCallback(const void* data, void* param) {
     s_cvTextureFilteringMode = CVar::Register("textureFilteringMode", "Texture filtering mode", 1, "1", CWorldParam::TextureFilteringCallback, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvarUIFaster = CVar::Register("UIFaster", "UI acceleration option", 0, "3", UIFasterCallback, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvTextureCacheSize = CVar::Register("textureCacheSize", "Texture cache size in bytes", 1, "128", TextureCacheSizeCallback, CATEGORY_GRAPHICS, false, nullptr, false);
-    TextureSetCacheSize(s_cvTextureCacheSize->m_intValue << 20);
+    TextureSetCacheSize(static_cast<int64_t>(s_cvTextureCacheSize->m_intValue) << 20);
 
     uint32_t m2Flags = GetM2CvarFlags();
     AddConsoleDeviceDefaultCallback(SetDefaults);

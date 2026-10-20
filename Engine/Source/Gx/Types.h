@@ -180,8 +180,16 @@ class CGxBatch {
     /* 0000 */ EGxPrim m_primType;
     /* 0004 */ uint32_t m_start;
     /* 0008 */ uint32_t m_count;
+#if defined(WOWDECOMP_ARCH_64)
+    // NOT IN BINARY width. The index range is an index-space value and is not part of any file format, so it
+    // is widened on x64 only: the Win32 build still mirrors the 0x0010 layout the offsets above describe
+    // and remains the layout check against Wow.exe. Callers that used to truncate with a cast no longer do.
+    /* 000C */ uint32_t m_minIndex;
+    /* 0010 */ uint32_t m_maxIndex;
+#else
     /* 000C */ uint16_t m_minIndex;
     /* 000E */ uint16_t m_maxIndex;
+#endif
 };
 
 enum EGxColorFormat {

@@ -2765,7 +2765,7 @@ int32_t CM2Model::GetRegionBounds(M2SkinSection* section, CAaBox& box, C44Matrix
     box.t = C3Vector(-FLT_MAX, -FLT_MAX, -FLT_MAX);
 
     for (uint32_t i = 0; i < section->m_vertexCount; i++) {
-        M2Vertex* vertex = &data->m_vertices[skin->m_vertices[i + section->m_vertexStart]];
+        M2Vertex* vertex = &this->m_shared->Vertices()[skin->m_vertices[i + section->m_vertexStart]];
 
         if (*reinterpret_cast<uint32_t*>(&vertex->m_weights) != weights || *reinterpret_cast<uint32_t*>(&vertex->m_indices) != indices) {
             weights = *reinterpret_cast<uint32_t*>(&vertex->m_weights);
@@ -3034,7 +3034,7 @@ void CM2Model::RenderBatchShadowMap(int32_t untextured, M2Batch* batch, const CM
         }
 
         gxBatch.m_count = instances * section->m_indexCount;
-        gxBatch.m_maxIndex = static_cast<uint16_t>(instances * this->m_shared->m_skinData->m_vertices.m_count - 1);
+        gxBatch.m_maxIndex = instances * this->m_shared->m_skinData->m_vertices.m_count - 1;
         g_theGxDevicePtr->Draw(&gxBatch, 1);
     }
 }
@@ -3089,7 +3089,7 @@ void CM2Model::TransformVerticesNoUVSelect_cpp(const CM2Model* model, const M2Sk
     uint32_t weights = 0;
     uint32_t indices = 0;
     const C44Matrix* bones = model->m_boneMatrices;
-    M2Vertex* vertex = &model->m_shared->m_data->m_vertices[section->m_vertexStart];
+    M2Vertex* vertex = &model->m_shared->Vertices()[section->m_vertexStart];
     M2Vertex* end = vertex + section->m_vertexCount;
 
     for (; vertex < end; vertex++, out++) {
@@ -3146,7 +3146,7 @@ void CM2Model::TransformVertices_cpp(CM2Model* model, M2SkinSection* section, ui
     uint32_t weights = 0;
     uint32_t indices = 0;
     const C44Matrix* bones = model->m_boneMatrices;
-    M2Vertex* vertex = &model->m_shared->m_data->m_vertices[section->m_vertexStart];
+    M2Vertex* vertex = &model->m_shared->Vertices()[section->m_vertexStart];
     M2Vertex* end = vertex + section->m_vertexCount;
     float* out = reinterpret_cast<float*>(vertices);
 
@@ -3204,7 +3204,7 @@ void CM2Model::TransformVertices_cpp(CM2Model* model, M2SkinSection* section, ui
 // OFFSET: 0x0082A4E0
 void CM2Model::TransformVerticesOneBone_cpp(CM2Model* model, M2SkinSection* section, uint8_t* vertices, int32_t texCoord) {
     const C44Matrix* bones = model->m_boneMatrices;
-    M2Vertex* vertex = &model->m_shared->m_data->m_vertices[section->m_vertexStart];
+    M2Vertex* vertex = &model->m_shared->Vertices()[section->m_vertexStart];
     M2Vertex* end = vertex + section->m_vertexCount;
     float* out = reinterpret_cast<float*>(vertices);
 
@@ -3232,7 +3232,7 @@ void CM2Model::TransformVertices_sse(CM2Model* model, M2SkinSection* section, ui
     uint32_t weights = 0;
     uint32_t indices = 0;
     const C44Matrix* bones = model->m_boneMatrices;
-    M2Vertex* vertex = &model->m_shared->m_data->m_vertices[section->m_vertexStart];
+    M2Vertex* vertex = &model->m_shared->Vertices()[section->m_vertexStart];
     M2Vertex* end = vertex + section->m_vertexCount;
     float* out = reinterpret_cast<float*>(vertices);
     __m128 row0;
@@ -3282,7 +3282,7 @@ void CM2Model::TransformVerticesOneBone_sse(CM2Model* model, M2SkinSection* sect
     }
 
     const C44Matrix* bones = model->m_boneMatrices;
-    M2Vertex* vertex = &model->m_shared->m_data->m_vertices[section->m_vertexStart];
+    M2Vertex* vertex = &model->m_shared->Vertices()[section->m_vertexStart];
     M2Vertex* end = vertex + section->m_vertexCount;
     float* out = reinterpret_cast<float*>(vertices);
 

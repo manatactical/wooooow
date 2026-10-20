@@ -70,10 +70,10 @@ static void AsyncFileReadFreeA16(CAsyncObject* object) {
 }
 
 #if defined(WOWDECOMP_ARCH_64)
-static void AsyncFileReadFreeNear(CAsyncObject* object) {
+static void AsyncFileReadFreeWithin2Gb(CAsyncObject* object) {
     void* buffer = object->m_buffer;
     AsyncFileReadDestroyObject(object);
-    OsFreeNear(buffer);
+    OsFreeWithin2Gb(buffer);
 }
 #endif
 
@@ -464,6 +464,19 @@ int32_t CM2Shared::SetIndices() {
     return 1;
 }
 
+// NOT IN BINARY, x64-only: publishes the expanded buffer and tells the rest of the loader it is not in the
+// file body. m_offset is left alone: anything that still reads the array directly keeps resolving into the
+// loaded body rather than into the struct itself.
+void CM2Shared::SetVerticesArray(M2Vertex* data, uint32_t count) {
+#if defined(WOWDECOMP_ARCH_64)
+    this->m_vertexData = data;
+    this->m_data->m_vertices.m_count = count;
+#else
+    this->m_data->m_vertices.Set(data);
+    this->m_data->m_vertices.m_count = count;
+#endif
+}
+
 // VERIFY: fe5131e0 manual
 // OFFSET: 0x008362B0
 int32_t CM2Shared::SetVertices(uint32_t texCoordIndex) {
@@ -516,7 +529,7 @@ int32_t CM2Shared::SetVertices(uint32_t texCoordIndex) {
                         break;
                     }
 
-                    M2Vertex* source = &this->m_data->m_vertices[this->m_skinData->m_vertices[j]];
+                    M2Vertex* source = &this->Vertices()[this->m_skinData->m_vertices[j]];
                     M2VertexPNT2* vertex = &vertices[j];
                     vertex->m_position = source->m_position;
                     vertex->m_normal = source->m_normal;
@@ -549,7 +562,7 @@ int32_t CM2Shared::SetVertices(uint32_t texCoordIndex) {
                 uint32_t end = section->m_vertexStart + section->m_vertexCount;
 
                 for (uint32_t j = section->m_vertexStart; j < end; j++) {
-                    memcpy(&vertices[j], &this->m_data->m_vertices[this->m_skinData->m_vertices[j]], sizeof(M2Vertex));
+                    memcpy(&vertices[j], &this->Vertices()[this->m_skinData->m_vertices[j]], sizeof(M2Vertex));
                     *reinterpret_cast<uint32_t*>(&vertices[j].m_indices) = boneOffset + *reinterpret_cast<uint32_t*>(&this->m_skinData->m_bones[j]);
                 }
             }
@@ -1383,7 +1396,7 @@ int32_t CM2Shared::InitializeSkinProfile() {
             uint32_t end = section->m_vertexStart + section->m_vertexCount;
 
             for (uint32_t j = section->m_vertexStart; j < end; j++) {
-                vertices[j] = this->m_data->m_vertices[this->m_skinData->m_vertices[j]];
+                vertices[j] = this->Vertices()[this->m_skinData->m_vertices[j]];
 
                 for (uint32_t k = 0; k < section->m_boneInfluences; k++) {
                     vertices[j].m_indices.b[k] = static_cast<uint8_t>(this->m_data->m_boneCombos[section->m_boneComboIndex + this->m_skinData->m_bones[j].b[k]]);
@@ -1405,16 +1418,12 @@ int32_t CM2Shared::InitializeSkinProfile() {
         }
 
         if (this->m_skinData->m_vertices.m_count <= this->m_data->m_vertices.m_count) {
-            memcpy(this->m_data->m_vertices.Data(), vertices, sizeof(M2Vertex) * this->m_skinData->m_vertices.m_count);
+            memcpy(this->Vertices(), vertices, sizeof(M2Vertex) * this->m_skinData->m_vertices.m_count);
             delete[] vertices;
         } else {
             this->m_flags |= 8;
 #if defined(WOWDECOMP_ARCH_64)
-            uint32_t bytes = sizeof(M2Vertex) * this->m_skinData->m_vertices.m_count;
-            M2Vertex* buffer = static_cast<M2Vertex*>(OsAllocNear(this->m_data, bytes));
-            memcpy(buffer, vertices, bytes);
-            delete[] vertices;
-            this->m_data->m_vertices.Set(buffer);
+            this->SetVerticesArray(vertices, this->m_skinData->m_vertices.m_count);
 #else
             this->m_data->m_vertices.Set(vertices);
 #endif
@@ -1725,6 +1734,9 @@ CM2Shared::CM2Shared(CM2Cache* cache) {
     this->m_indexBuf = nullptr;
     this->m_vertexPool = nullptr;
     this->m_vertexBuf = nullptr;
+#if defined(WOWDECOMP_ARCH_64)
+    this->m_vertexData = nullptr;
+#endif
     this->m_effects = nullptr;
     this->m_skinSections = nullptr;
     this->m_instances = 0;
@@ -2136,7 +2148,7 @@ void CM2Shared::CancelAllDeferredSequences() {
     for (CM2SequenceLoad* load = this->m_sequenceLoads.Head(); !this->m_sequenceLoads.IsEnd(load); load = this->m_sequenceLoads.RawNext(load)) {
         if (load->m_asyncObject) {
 #if defined(WOWDECOMP_ARCH_64)
-            if (!AsyncFile::Cancel(load->m_asyncObject, AsyncFileReadFreeNear)) {
+            if (!AsyncFile::Cancel(load->m_asyncObject, AsyncFileReadFreeWithin2Gb)) {
 #else
             if (!AsyncFile::Cancel(load->m_asyncObject, AsyncFileReadFreeA16)) {
 #endif
@@ -2206,7 +2218,7 @@ CM2Shared::~CM2Shared() {
     if (this->m_lowPrioritySequenceCapacity) {
         for (uint32_t i = 0; i < this->m_lowPrioritySequenceCount; i++) {
 #if defined(WOWDECOMP_ARCH_64)
-            OsFreeNear(this->m_lowPrioritySequenceBuffers[i]);
+            OsFreeWithin2Gb(this->m_lowPrioritySequenceBuffers[i]);
 #else
             SIMD::FreeA16(this->m_lowPrioritySequenceBuffers[i]);
 #endif
@@ -2219,7 +2231,8 @@ CM2Shared::~CM2Shared() {
 
     if (this->m_flags & 8) {
 #if defined(WOWDECOMP_ARCH_64)
-        OsFreeNear(this->m_data->m_vertices.Data());
+        delete[] this->m_vertexData;
+        this->m_vertexData = nullptr;
 #else
         delete[] this->m_data->m_vertices.Data();
 #endif
@@ -2335,7 +2348,7 @@ CM2SequenceLoad* CM2Shared::LoadLowPrioritySequence(uint16_t sequenceIndex) {
 
     uint32_t size = SFileGetFileSize(file, nullptr);
 #if defined(WOWDECOMP_ARCH_64)
-    uint8_t* buffer = static_cast<uint8_t*>(OsAllocNear(this->m_data, size));
+    uint8_t* buffer = static_cast<uint8_t*>(OsAllocWithin2Gb(this->m_data, size));
 #else
     uint8_t* buffer = static_cast<uint8_t*>(SIMD::AllocA16(size, __FILE__, __LINE__));
 #endif
@@ -2351,7 +2364,7 @@ CM2SequenceLoad* CM2Shared::LoadLowPrioritySequence(uint16_t sequenceIndex) {
     if (!load->m_asyncObject) {
         SFileCloseFile(file);
 #if defined(WOWDECOMP_ARCH_64)
-        OsFreeNear(buffer);
+        OsFreeWithin2Gb(buffer);
 #else
         SIMD::FreeA16(buffer);
 #endif

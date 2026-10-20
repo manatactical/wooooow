@@ -504,7 +504,7 @@ void CM2Scene::TransformHitTestVerticesBlendSSE(const CM2Model* model, const M2S
     uint32_t end = section->m_vertexStart + section->m_vertexCount;
 
     for (uint32_t i = section->m_vertexStart; i < end; i++) {
-        M2Vertex* vertex = &data->m_vertices[skinData->m_vertices[i]];
+        M2Vertex* vertex = &model->m_shared->Vertices()[skinData->m_vertices[i]];
 
         if (*reinterpret_cast<uint32_t*>(&vertex->m_weights) != weights || *reinterpret_cast<uint32_t*>(&vertex->m_indices) != indices) {
             weights = *reinterpret_cast<uint32_t*>(&vertex->m_weights);
@@ -539,7 +539,7 @@ void CM2Scene::TransformHitTestVerticesBlend(const CM2Model* model, const M2Skin
     uint32_t end = section->m_vertexStart + section->m_vertexCount;
 
     for (uint32_t i = section->m_vertexStart; i < end; i++) {
-        M2Vertex* vertex = &data->m_vertices[skinData->m_vertices[i]];
+        M2Vertex* vertex = &model->m_shared->Vertices()[skinData->m_vertices[i]];
 
         if (*reinterpret_cast<uint32_t*>(&vertex->m_weights) != weights || *reinterpret_cast<uint32_t*>(&vertex->m_indices) != indices) {
             weights = *reinterpret_cast<uint32_t*>(&vertex->m_weights);
@@ -571,7 +571,7 @@ void CM2Scene::TransformHitTestVertices(const CM2Model* model, const M2SkinProfi
     uint32_t end = section->m_vertexStart + section->m_vertexCount;
 
     for (uint32_t i = section->m_vertexStart; i < end; i++) {
-        M2Vertex* vertex = &data->m_vertices[skinData->m_vertices[i]];
+        M2Vertex* vertex = &model->m_shared->Vertices()[skinData->m_vertices[i]];
         const C44Matrix& matrix = model->m_boneMatrices[vertex->m_indices.b[0]];
         C3Vector p = vertex->m_position * matrix;
 

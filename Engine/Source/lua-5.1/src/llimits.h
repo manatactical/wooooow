@@ -27,7 +27,7 @@ typedef LUAI_MEM l_mem;
 typedef unsigned char lu_byte;
 
 
-#define MAX_SIZET	0x1000000
+#define MAX_SIZET	((size_t)(~(size_t)0)-2)
 
 #define MAX_LUMEM	((lu_mem)(~(lu_mem)0)-2)
 

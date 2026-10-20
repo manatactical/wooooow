@@ -469,7 +469,6 @@ void CDetailDoodadInstBatch::FillVertices() {
             model->WaitForLoad(nullptr);
         }
 
-        M2Data* m2Data = model->m_shared->m_data;
         model = data->m_model;
 
         if (!(model->m_fFlags & 1)) {
@@ -523,7 +522,7 @@ void CDetailDoodadInstBatch::FillVertices() {
             const C33Matrix& matrix = matrices[fan];
 
             for (uint32_t j = 0; j < vertexCount; j++) {
-                const M2Vertex& source = m2Data->m_vertices[skin->m_vertices[j]];
+                const M2Vertex& source = model->m_shared->Vertices()[skin->m_vertices[j]];
                 C3Vector position = source.m_position * matrix;
                 vertex->m_position.x = position.x * add.m_scale + add.m_position.x;
                 vertex->m_position.y = position.y * add.m_scale + add.m_position.y;
@@ -538,7 +537,7 @@ void CDetailDoodadInstBatch::FillVertices() {
             float s = sin(add.m_rotation);
 
             for (uint32_t j = 0; j < vertexCount; j++) {
-                const M2Vertex& source = m2Data->m_vertices[skin->m_vertices[j]];
+                const M2Vertex& source = model->m_shared->Vertices()[skin->m_vertices[j]];
                 vertex->m_position.x = (source.m_position.x * c - source.m_position.y * s) * add.m_scale + add.m_position.x;
                 vertex->m_position.y = (source.m_position.y * c + source.m_position.x * s) * add.m_scale + add.m_position.y;
                 vertex->m_position.z = source.m_position.z * add.m_scale + add.m_position.z;
@@ -921,7 +920,7 @@ void CDetailDoodadInstBatch::Draw() {
         drawBatch.m_start = first;
         drawBatch.m_count = count;
         drawBatch.m_minIndex = 0;
-        drawBatch.m_maxIndex = static_cast<uint16_t>(this->m_vertexCount - 1);
+        drawBatch.m_maxIndex = this->m_vertexCount - 1;
         g_theGxDevicePtr->Draw(&drawBatch, 1);
     }
 }

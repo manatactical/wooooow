@@ -68,6 +68,7 @@
 #include "WoW/Source/Magic/MagicClient/Spell_C.h"
 #include "WoW/Source/Magic/MagicClient/SpellVisuals.h"
 #include "WoW/Source/ModernAssetsCommands.h"
+#include "WoW/Source/Texture_Console.h"
 #include "WoW/Source/Net/NetClient/NetClient.h"
 #include "WoW/Source/Object/ObjectClient/Container_C.h"
 #include "WoW/Source/Object/ObjectClient/Corpse_C.h"
@@ -1317,6 +1318,7 @@ void ClientInitializeGame(uint32_t mapId, C3Vector position) {
     manager->m_commands[manager->m_count++] = commands;
     commands->Install();
     ModernAssetsRegisterCommands();
+    TextureRegisterCommands();
 
     ClientServices::SetMessageHandler(SMSG_NOTIFICATION, Packet_SMSG_NOTIFICATION, nullptr);
     ClientServices::SetMessageHandler(SMSG_PLAYED_TIME, Packet_SMSG_PLAYED_TIME, nullptr);

@@ -145,6 +145,33 @@ CTexture* TextureCreateBlob(char* fileName, CGxTexFlags texFlags, CStatus* statu
 SFileImpl* TextureCreateOpenFile(const char* fileName, int32_t flags);
 CTexture* TextureCreateSolid(const CImVector& color);
 void TextureDestroy();
+
+// NOT IN BINARY. Read-only views for the texture diagnostics in WoW/Source/Texture_Console.cpp.
+// The live texture list is file-local to Texture.cpp, so enumerating it has to happen here; the latch
+// asks the texture's own GxTex user func for exactly the bytes the next GPU upload would read, which
+// is what makes a dump distinguish "the client decoded the file wrong" from "the upload/present is wrong".
+//
+// LatchMip returns null when there is no user func or nothing latched. width/height/stride are what
+// that func reported, so they are the upload's own idea of the mip, not a recomputation.
+//
+// WARNING: the returned pointer is texture-owned. The async path keeps DXT mips pointing straight into
+// the file buffer, which is freed once the upload has run, so a post-upload latch is a dangling read.
+// Only latch a texture that is still pending (m_asyncObject != null) or has a resident m_mipBits.
+struct TDebugMip {
+    const void* m_texels;
+    uint32_t m_width;
+    uint32_t m_height;
+    uint32_t m_strideInBytes;
+    EGxTexFormat m_dataFormat;
+};
+
+uint32_t TextureDebugCount();
+CTexture* TextureDebugAt(uint32_t index);
+int32_t TextureDebugLatchMip(CTexture* texture, uint32_t level, TDebugMip& mip);
+
+typedef void (*TEXTURE_AUDIT_CALLBACK)(CTexture* texture, const void* blpFile, uint32_t fileBytes, void* arg);
+void TextureSetAuditCallback(TEXTURE_AUDIT_CALLBACK callback, void* arg);
+
 TEXFILETYPE TextureDiscoverFileType(const char* fileName);
 void TextureEnableAtlas(int32_t enable);
 void TextureFreeGxTex(CGxTex* gxTex, const char* name);

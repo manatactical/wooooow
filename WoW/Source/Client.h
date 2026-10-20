@@ -75,6 +75,7 @@ extern int32_t s_isPvPRealm;
 extern int32_t s_region;
 
 void AsyncFileReadRegisterCVars();
+void TextureRegisterCommands();
 void BeginCloseGame();
 int32_t CCommand_Perf(const char* command, const char* arguments);
 int32_t CCommand_ReloadUI(const char* command, const char* arguments);

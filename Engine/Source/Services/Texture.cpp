@@ -53,6 +53,10 @@ static int32_t s_createBlpAsync = 1;
 // STATIC: 0x00AC3348
 static TSExplicitList<CTexture, offsetof(CTexture, m_link)> s_textureList;
 
+// NOT IN BINARY. See TextureSetAuditCallback.
+static TEXTURE_AUDIT_CALLBACK s_auditCallback;
+static void* s_auditArg;
+
 // STATIC: 0x00AC3354
 static uint32_t s_defaultColor = 0xFF00FF00;
 
@@ -83,8 +87,36 @@ static char* s_substituteTo;
 // STATIC: 0x00B49C84
 static int32_t s_atlasEnable;
 
+// NOT IN BINARY. The size of the shared mip scratch buffer s_mipBits. TextureInitialize allocates it, but
+// every BLP lays its mip table out in it for its own dimensions, so a texture larger than the initial
+// allocation wrote past its end. Tracked here so the scratch can be grown before the layout instead.
+static size_t s_mipBitsBytes;
+
 // STATIC: 0x00B49C90
 static MipBits* s_mipBits;
+
+// NOT IN BINARY. Grows the shared mip scratch to at least `bytes`. Returns the buffer to use, or nullptr
+// when the allocation failed (in which case the caller must not lay anything out in it). MipBits is only
+// ever indexed by the client, never freed from the outside, so moving it is safe as long as every holder
+// is updated -- s_mipBits is the only one.
+static MipBits* EnsureMipScratch(uint32_t bytes) {
+    if (!s_mipBits) {
+        return nullptr;
+    }
+
+    if (bytes > s_mipBitsBytes) {
+        MipBits* grown = static_cast<MipBits*>(SMemReAlloc(s_mipBits, bytes, __FILE__, __LINE__, 0));
+
+        if (!grown) {
+            return nullptr;
+        }
+
+        s_mipBits = grown;
+        s_mipBitsBytes = bytes;
+    }
+
+    return s_mipBits;
+}
 
 // STATIC: 0x00B49C94
 static int32_t s_pumping;
@@ -216,23 +248,31 @@ int32_t TextureBuildAliasPath(char* buffer, const char* fileName) {
 // VERIFY: a6ae9dde manual
 // OFFSET: 0x004B5280
 MipBits* GetDefaultTexture(uint32_t width, uint32_t height) {
-    MipBits* images = s_mipBits;
-
-    // NOT IN BINARY. s_mipBits is the shared scratch buffer, but LoadBlpWithAlias hands its address to
-    // TextureLoadBlpMips, which repoints it at the loaded texture's own allocation. A failed load then leaves
-    // s_mipBits pointing into that texture's buffer, and this function laid out the mip table in it again for
-    // the new dimensions and filled 4*height*width bytes per level through the pointers it had just written.
-    // Those pointers sit inside the other buffer, sized for that texture, so a larger replacement dimension ran
-    // off its end -- the write that crashed in memmove during shadow-map texturing. Nothing here can know how
-    // big the buffer s_mipBits points at is, so the scratch is re-allocated for this size when it is not already
-    // the one TextureInitialize made. The 1024x1024 buffer is kept as that buffer and is never freed here.
+    // NOT IN BINARY. s_mipBits is the shared scratch buffer, and LoadBlpWithAlias hands its address to
+    // TextureLoadBlpMips, which lays a mip table out in it for the loaded texture's dimensions. A failed
+    // load then leaves s_mipBits pointing at that layout. Laying it out again here for the replacement
+    // dimensions, in the same buffer, is only safe if the buffer is big enough for BOTH -- so the two
+    // sizes are compared and the scratch is grown rather than overrun. This is the same overflow that
+    // corrupted neighbouring textures on a retail mount load; it used to be papered over by a second,
+    // fixed 1024x1024 scratch and a bounds check that silently skipped mips.
     static MipBits* s_defaultTextureScratch;
+    static size_t s_defaultTextureBytes;
+
+    const size_t needed = MippedImgCalcSize(PIXEL_ARGB8888, width, height);
 
     if (!s_defaultTextureScratch) {
-        s_defaultTextureScratch = static_cast<MipBits*>(SMemAlloc(MippedImgCalcSize(PIXEL_ARGB8888, 1024, 1024), __FILE__, __LINE__, 0));
+        s_defaultTextureBytes = MippedImgCalcSize(PIXEL_ARGB8888, 1024, 1024);
+        s_defaultTextureScratch = static_cast<MipBits*>(SMemAlloc(s_defaultTextureBytes, __FILE__, __LINE__, 0));
+    } else if (needed > s_defaultTextureBytes) {
+        MipBits* grown = static_cast<MipBits*>(SMemReAlloc(s_defaultTextureScratch, needed, __FILE__, __LINE__, 0));
+
+        if (grown) {
+            s_defaultTextureScratch = grown;
+            s_defaultTextureBytes = needed;
+        }
     }
 
-    images = s_defaultTextureScratch;
+    MipBits* images = s_defaultTextureScratch;
 
     if (!images) {
         return nullptr;
@@ -240,11 +280,8 @@ MipBits* GetDefaultTexture(uint32_t width, uint32_t height) {
 
     MippedImgSet(PIXEL_ARGB8888, width, height, images);
 
-    // The table is laid out over the whole scratch buffer, so a level's pointer can be handed back to wherever
-    // the buffer ends -- writing to it out of bounds instead of through a stale pointer. Any level that lands
-    // outside is left alone, which costs a mip some bytes of the default fill and nothing else.
     uint8_t* scratch = reinterpret_cast<uint8_t*>(images);
-    uint8_t* scratchEnd = scratch + MippedImgCalcSize(PIXEL_ARGB8888, 1024, 1024);
+    uint8_t* scratchEnd = scratch + s_defaultTextureBytes;
 
     for (uint32_t level = 0; width > 1 || height > 1; level++) {
         uint32_t bytes = 4 * height * width;
@@ -588,6 +625,7 @@ void ResolveMipLevel(EGxTexCommand command, uint32_t width, uint32_t height, uin
                     }
                 }
 
+                // Latches from the shared scratch, which is where LoadBlpWithAlias puts the chain.
                 texels = s_mipBits[level].m_mip[0];
             }
 
@@ -756,6 +794,23 @@ int32_t TextureLoadBlpMips(char* fileName, char* extension, int32_t flags, MipBi
         *pixelFormat = pixels;
     }
 
+    // NOT IN BINARY. LockChain lays a mip table out inside `*images` for THIS file's mip dimensions. Both
+    // callers hand in the shared s_mipBits, which TextureInitialize allocated for 1024x1024 ARGB8888. A
+    // bigger image (modern content ships up to 4K) made MippedImgSet write level pointers past the end of
+    // that allocation and every level copy then ran into whatever the allocator had put there -- the
+    // neighbouring textures. The scratch is grown here, where the dimensions are known. Only the shared
+    // scratch is touched; a caller that brought its own buffer owns it.
+    if (images && *images == s_mipBits) {
+        const uint32_t needed = MippedImgCalcSize(pixels, image.Width(bestMip), image.Height(bestMip));
+        MipBits* scratch = EnsureMipScratch(needed);
+
+        if (!scratch) {
+            return 0;
+        }
+
+        *images = scratch;
+    }
+
     if (!image.LockChain(pixels, *images, bestMip)) {
         return 0;
     }
@@ -791,6 +846,25 @@ void UpdateBlpTextureAsync(EGxTexCommand command, uint32_t width, uint32_t heigh
 
     switch (command) {
         case GxTex_Lock:
+            // A reload (device reset, atlas rebuild) rebuilds the chain into the shared scratch, so the
+            // scratch has to fit THIS texture before anything is laid out in it. The dimensions come from
+            // the header without decoding the whole file: open it, grow, close, then load for real.
+            if (!s_pumping) {
+                CBLPFile probe;
+
+                if (probe.Open(texture->m_filename, texture->m_flags & 2)) {
+                    PIXEL_FORMAT probeFormat;
+                    EGxTexFormat probeGx;
+                    TextureGetTextureFormats(probeFormat, probeGx, static_cast<PIXEL_FORMAT>(probe.m_header.m_preferredFormat), probe.m_header.m_alphaSize);
+
+                    if (!EnsureMipScratch(MippedImgCalcSize(probeFormat, probe.m_header.m_width, probe.m_header.m_height))) {
+                        GetDefaultTexture(width, height);
+                        GetGlobalStatusObj().Add(STATUS_ERROR, "Texture %s not loaded -- no scratch for %ux%u.\n", texture->m_filename, probe.m_header.m_width, probe.m_header.m_height);
+                        break;
+                    }
+                }
+            }
+
             if (!s_pumping && !LoadBlpWithAlias(texture->m_filename, texture->m_flags & 2, &s_mipBits)) {
                 GetDefaultTexture(width, height);
                 GetGlobalStatusObj().Add(STATUS_ERROR, "Texture %s not loaded -- replaced with default.\n", texture->m_filename);
@@ -1059,6 +1133,16 @@ void CTextureAtlas::Reload() {
         }
 
         s_pumping = 1;
+
+        // The atlas reload lays this texture's chain out in the shared scratch, so it has to fit.
+        CBLPFile probe;
+
+        if (probe.Open(texture->m_filename, texture->m_flags & 2)) {
+            PIXEL_FORMAT probeFormat;
+            EGxTexFormat probeGx;
+            TextureGetTextureFormats(probeFormat, probeGx, static_cast<PIXEL_FORMAT>(probe.m_header.m_preferredFormat), probe.m_header.m_alphaSize);
+            EnsureMipScratch(MippedImgCalcSize(probeFormat, probe.m_header.m_width, probe.m_header.m_height));
+        }
 
         if (!LoadBlpWithAlias(texture->m_filename, texture->m_flags & 2, &s_mipBits)) {
             GetGlobalStatusObj().Add(STATUS_ERROR, "Texture %s not loaded.\n", texture->m_filename);
@@ -1784,6 +1868,22 @@ void UpdateTgaTexture(EGxTexCommand command, uint32_t width, uint32_t height, ui
     switch (command) {
         case GxTex_Lock:
             if (!s_pumping) {
+                // Same reason as the BLP reload: the chain is laid out in the shared scratch, which has to
+                // fit this image before anything is written into it.
+                CTgaFile probe;
+
+                if (probe.Open(texture->m_filename, texture->m_flags & 2)) {
+                    const uint32_t probeWidth = probe.Width();
+                    const uint32_t probeHeight = probe.Height();
+                    probe.Close();
+
+                    if (!EnsureMipScratch(MippedImgCalcSize(PIXEL_ARGB8888, probeWidth, probeHeight))) {
+                        GetDefaultTexture(width, height);
+                        GetGlobalStatusObj().Add(STATUS_ERROR, "Texture %s not loaded -- no scratch for %ux%u.\n", texture->m_filename, probeWidth, probeHeight);
+                        break;
+                    }
+                }
+
                 char* extension = texture->m_filename + SStrLen(texture->m_filename);
                 int32_t result = LoadTgaMips(texture->m_filename, extension, texture->m_flags & 2, &s_mipBits, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
                 *extension = '\0';
@@ -1854,6 +1954,13 @@ int32_t PumpBlpTextureAsync(CTexture* texture, void* data) {
         return 0;
     }
 
+    // NOT IN BINARY. The audit hook runs with both the parsed header and the file bytes alive, which is the
+    // only point where the header can be checked against the bytes it claims to describe.
+    if (s_auditCallback) {
+        s_auditCallback(texture, data, static_cast<uint32_t>(texture->m_asyncObject ? texture->m_asyncObject->m_size : 0), s_auditArg);
+    }
+
+
     if ((texture->m_flags & 4) && !(image.m_header.m_hasMips & 0x10)) {
         texture->m_flags &= ~4;
     }
@@ -1876,7 +1983,16 @@ int32_t PumpBlpTextureAsync(CTexture* texture, void* data) {
 
     s_pumping = 1;
 
-    if (!image.LockChain2(texture->m_filename, pixelFormat, s_mipBits, texture->m_bestMip, 1)) {
+    // The shared scratch is grown to fit this file before LockChain2 lays anything out in it: a 4K texture
+    // in a buffer allocated for 1024x1024 wrote past its end into neighbouring allocations. That is the one
+    // change kept from the earlier attempts; the load itself is otherwise the original code.
+    if (!EnsureMipScratch(MippedImgCalcSize(pixelFormat, width, height))) {
+        s_pumping = 0;
+        texture->m_status.Add(STATUS_FATAL, "BLP Texture failure: \"%s\" no mip scratch for %ux%u.\n", texture->m_filename, width, height);
+        return 0;
+    }
+
+    if (!image.LockChain2(texture->m_filename, pixelFormat, s_mipBits, bestMip, 1)) {
         s_pumping = 0;
         texture->m_status.Add(STATUS_FATAL, "BLP Texture failure: \"%s\" decompression failed.\n", texture->m_filename);
         return 0;
@@ -1970,7 +2086,8 @@ int32_t AsyncTextureStatus() {
 // VERIFY: f4a9a3e6 manual
 // OFFSET: 0x004B7F80
 void TextureInitialize() {
-    s_mipBits = static_cast<MipBits*>(SMemAlloc(MippedImgCalcSize(PIXEL_ARGB8888, 1024, 1024), __FILE__, __LINE__, 0));
+    s_mipBitsBytes = MippedImgCalcSize(PIXEL_ARGB8888, 1024, 1024);
+    s_mipBits = static_cast<MipBits*>(SMemAlloc(s_mipBitsBytes, __FILE__, __LINE__, 0));
     AsyncFileReadAddPollHandler(AsyncTextureHandler);
     AsyncFileReadAddStatusHandler(AsyncTextureStatus);
     s_currentTime = OsGetAsyncTimeMs();
@@ -2121,6 +2238,7 @@ void TextureDestroy() {
     s_gxTexCacheFree.Clear();
     SMemFree(s_mipBits, __FILE__, __LINE__, 0);
     s_mipBits = nullptr;
+    s_mipBitsBytes = 0;
 
     for (int32_t x = 0; x < 6; x++) {
         for (int32_t y = 0; y < 6; y++) {
@@ -2624,4 +2742,87 @@ CTexture* TextureCreate(const char* fileName, CGxTexFlags texFlags, CStatus* sta
     TextureReportLoadError("texture", fileName, status);
 
     return TextureCreateSolid(*reinterpret_cast<const CImVector*>(&s_defaultColor));
+}
+
+// NOT IN BINARY. Texture diagnostics. See Texture.h for why the enumeration and the latch live here.
+// shortcut: the audit hook is only called from the async success callback, so a sync (pumping) load is
+// inspected after the fact by `texlist` instead of at load time; add the call to CreateBlpSync if a
+// sync-only failure ever needs the same trace.
+
+void TextureSetAuditCallback(TEXTURE_AUDIT_CALLBACK callback, void* arg) {
+    s_auditCallback = callback;
+    s_auditArg = arg;
+}
+
+uint32_t TextureDebugCount() {
+    uint32_t count = 0;
+
+    for (CTexture* texture = s_textureList.Head(); !s_textureList.IsEnd(texture); texture = s_textureList.RawNext(texture)) {
+        count++;
+    }
+
+    return count;
+}
+
+CTexture* TextureDebugAt(uint32_t index) {
+    for (CTexture* texture = s_textureList.Head(); !s_textureList.IsEnd(texture); texture = s_textureList.RawNext(texture)) {
+        if (!index) {
+            return texture;
+        }
+
+        index--;
+    }
+
+    return nullptr;
+}
+
+int32_t TextureDebugLatchMip(CTexture* texture, uint32_t level, TDebugMip& mip) {
+    mip.m_texels = nullptr;
+    mip.m_width = 0;
+    mip.m_height = 0;
+    mip.m_strideInBytes = 0;
+    mip.m_dataFormat = GxTex_Unknown;
+
+    if (!texture) {
+        return 0;
+    }
+
+    CGxTex* gxTex = texture->m_gxTex;
+
+    if (!gxTex || !gxTex->m_userFunc) {
+        gxTex = texture->m_atlas ? texture->m_atlas->m_gxTex : nullptr;
+
+        if (!gxTex || !gxTex->m_userFunc) {
+            return 0;
+        }
+    }
+
+    // The mip the device would hand this level to: the same shift the upload applies.
+    uint32_t baseMip = g_theGxDevicePtr->DeviceBaseMipLevel();
+    uint32_t width = texture->m_gxWidth;
+    uint32_t height = texture->m_gxHeight;
+
+    if (texture->m_gxTexTarget == GxTex_CubeMap) {
+        width *= 6;
+    }
+
+    width >>= baseMip;
+    height >>= baseMip;
+
+    for (uint32_t i = 0; i < level; i++) {
+        width = width > 1 ? width >> 1 : 1;
+        height = height > 1 ? height >> 1 : 1;
+    }
+
+    uint32_t stride = 0;
+    const void* texels = nullptr;
+    gxTex->m_userFunc(GxTex_Latch, width, height, 0, level, gxTex->m_userArg, stride, texels);
+
+    mip.m_texels = texels;
+    mip.m_width = width;
+    mip.m_height = height;
+    mip.m_strideInBytes = stride;
+    mip.m_dataFormat = gxTex->m_dataFormat;
+
+    return texels ? 1 : 0;
 }

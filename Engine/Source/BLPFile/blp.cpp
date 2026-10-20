@@ -944,7 +944,9 @@ int32_t CBLPFile::LockChain2(const char* fileName, PIXEL_FORMAT format, MipBits*
         }
 
         if (!setImages) {
-            for (uint32_t i = 0; this->m_header.m_mipSizes[i]; i++) {
+            // Bounded by the header's own table: m_mipSizes has 16 slots and a file that fills all of them
+            // has no zero terminator to stop this loop on.
+            for (uint32_t i = 0; i < 16 && this->m_header.m_mipSizes[i]; i++) {
                 images[i].m_mip[0] = reinterpret_cast<C4Pixel*>(static_cast<uint8_t*>(this->m_inMemoryImage) + this->m_header.m_mipOffsets[i]);
             }
 

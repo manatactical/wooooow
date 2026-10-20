@@ -266,9 +266,10 @@ int32_t QuestGiverEnumProc(WOWGUID guid, void* param) {
     // link and this client gets from m_questStatus.
     bool questGiver = unit->IsQuestGiver() && unit->m_questStatus >= kQuestStatusLevelAppropriate;
 
-    // The two markers that are not quest gated, so a trainer or a flight master keeps its outline whatever
-    // its quest status happens to say.
-    bool marker = (unit->m_unit->m_unitNpcFlags & 0x2000) || (unit->m_unit->m_unitNpcFlags & 0x10);
+    // The one marker that is not quest gated, so a flight master keeps its outline whatever its quest status
+    // happens to say. Trainers (0x10) are deliberately left out: a profession trainer is a shop the player
+    // walks up to deliberately, not a marker worth highlighting from across the hub.
+    bool marker = (unit->m_unit->m_unitNpcFlags & 0x2000) != 0;
 
     if (!questGiver && !marker) {
         return 1;

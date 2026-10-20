@@ -87,8 +87,14 @@ const char* const kCutoutColorHLSL =
 
 // 8-tap edge detect on the mask: a thin anti-aliased line outside the silhouette.
 //   c0 = {texel.x, texel.y, thickness, intensity}   (texel is 1/mask texture size; thickness in pixels)
-//   c1 = {opacity, threshold, player-mask-on, unused} (scale on the default alpha, clip cutoff, 1 when
-//        the player mask was stamped this frame so a stale silhouette cannot punch the line)
+//   c1 = {opacity, threshold, player-mask-on, vis-mask-on} (scale on the default alpha, clip cutoff, 1
+//        when the player mask was stamped this frame so a stale silhouette cannot punch the line, 1 when a
+//        depth-tested visibility mask exists for this frame)
+//
+// s0 is the full silhouette and s2 the depth-tested one. The line's SHAPE comes from the full silhouette,
+// which has no hole where a wall covers the unit: taking it from the depth-tested mask made the hole's rim
+// an edge, and the line traced the wall. The depth-tested mask is used only to decide whether a line pixel
+// is worth drawing at all -- if the silhouette right where the line sits is hidden, the line stops there.
 //
 // The mask stores premultiplied colour (rgb * weight, weight), where the weight lets a target's edge
 // brightness vary (the fade). rgb/alpha recovers the colour; the interior test is center-vs-average, so
@@ -101,6 +107,7 @@ const char* const kCutoutColorHLSL =
 const char* const kEdgeHLSL =
     "sampler2D m : register(s0);\n"
     "sampler2D occ : register(s1);\n"
+    "sampler2D vis : register(s2);\n"
     "float4 px : register(c0);\n"
     "float4 par : register(c1);\n"
     "#define BLUR_TAP 1.7\n"
@@ -110,9 +117,14 @@ const char* const kEdgeHLSL =
     "           + tex2D(m,uv+float2(0,o.y)) + tex2D(m,uv+float2(0,-o.y))\n"
     "           + tex2D(m,uv+float2(o.x,o.y)) + tex2D(m,uv+float2(-o.x,-o.y))\n"
     "           + tex2D(m,uv+float2(o.x,-o.y)) + tex2D(m,uv+float2(-o.x,o.y));\n"
+    "  float4 v = tex2D(vis,uv) + tex2D(vis,uv+float2(o.x,0)) + tex2D(vis,uv+float2(-o.x,0))\n"
+    "           + tex2D(vis,uv+float2(0,o.y)) + tex2D(vis,uv+float2(0,-o.y))\n"
+    "           + tex2D(vis,uv+float2(o.x,o.y)) + tex2D(vis,uv+float2(-o.x,-o.y))\n"
+    "           + tex2D(vis,uv+float2(o.x,-o.y)) + tex2D(vis,uv+float2(-o.x,o.y));\n"
     "  float center = tex2D(m, uv).a;\n"
     "  float inside = a.a > 0.0 ? saturate(center * 8.0 / a.a) : 0.0;\n"
     "  float outline = saturate(a.a * (0.125 / BLUR_TAP) * px.w) * (1.0 - inside);\n"
+    "  outline *= par.w > 0.5 ? saturate(v.a * 0.125) : 1.0;\n"
     "  clip(outline - par.y);\n"
     "  float3 col = a.a > 0.001 ? a.rgb / a.a : float3(1,1,1);\n"
     "  float om = tex2D(occ, uv).a * par.z;\n"
@@ -120,7 +132,7 @@ const char* const kEdgeHLSL =
     "}\n";
 
 // A separable gaussian tap for the softening pass: 5 explicit samples along one axis, written out rather
-// than looped because ps_2_0 only compiles the taps reliably as literals. Run once per axis and the
+// than looped because the taps compile reliably as literals and not as a loop. Run once per axis and the
 // silhouette the edge pass samples has a gradient instead of a hard 1-pixel boundary; the interior is a
 // flat plateau, so only the rim actually widens. The spacing is a fixed fraction of a texel, not a
 // multiple of Thickness: at that scale Thickness reads as line shape, and blurring it proportionally
@@ -153,9 +165,11 @@ CGxShader* s_blurPS;
 // because the batch stamps resolve it once per batch.
 FFX::Tex s_maskTex;
 FFX::Tex s_playerMaskTex;
+FFX::Tex s_visMaskTex;
 FFX::Tex s_blurTex;
 CGxTex* s_mask;
 CGxTex* s_playerMask;
+CGxTex* s_visMask;
 CGxTex* s_blur;
 
 // The frame's depth, held so the stamps can test against the scene. Null on a device that cannot provide
@@ -174,6 +188,7 @@ CGxTex* s_savedDepth;
 
 bool s_maskCleared;
 bool s_playerMaskCleared;
+bool s_visMaskCleared;
 
 struct OutlineTarget {
     CM2Model* m_model;
@@ -205,16 +220,41 @@ bool s_inComposite;
 
 // Compiles one of the shaders above. D3DCompile rather than a .bls container, because these sources are
 // not in the game's data; the device takes whatever CreatePixelShader accepts.
+//
+// ps_3_0, not ps_2_0: the edge pass needs the visibility ring, and ps_2_0's texture-addressing rule caps that
+// at two taps -- a third fails with X5426 no matter how the expression is written. The device reports
+// ps_3_0 (see the pixelShaderTarget line in Logs\gx.log); the other shaders are small enough that either
+// target serves them.
 CGxShader* CompilePixelShader(const char* hlsl) {
     ID3DBlob* code = nullptr;
     ID3DBlob* error = nullptr;
 
-    if (FAILED(D3DCompile(hlsl, strlen(hlsl), "UnitOutline", nullptr, nullptr, "main", "ps_2_0", 0, 0, &code, &error))) {
-        CGxDevice::Log("UnitOutline: a pixel shader failed to compile: %s",
-                       error ? static_cast<const char*>(error->GetBufferPointer()) : "(no compiler message)");
+    // Optimised, and that is not a preference: the unoptimised code is well past what the target allows per
+    // pass, and a failed compile leaves the shader null -- which makes the whole module silently draw
+    // nothing. D3DCompile's default is no optimisation, so it has to be asked for explicitly.
+    if (FAILED(D3DCompile(hlsl, strlen(hlsl), "UnitOutline", nullptr, nullptr, "main", "ps_3_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &error))) {
+        // Deliberately no CGxDevice::Log here: it takes a varargs format, and a failed compile is exactly
+        // when the process is already in a bad state -- a fault inside the logger turned a shader error into
+        // an unrecoverable crash. A plain file write, no format arguments, is what this path can afford.
+        FILE* file = fopen("Logs\\unitoutline.log", "a");
+
+        if (file) {
+            fputs("UnitOutline: a pixel shader failed to compile\n", file);
+
+            if (error) {
+                fwrite(error->GetBufferPointer(), 1, error->GetBufferSize(), file);
+                fputc('\n', file);
+            }
+
+            fclose(file);
+        }
 
         if (error) {
             error->Release();
+        }
+
+        if (code) {
+            code->Release();
         }
 
         return nullptr;
@@ -375,6 +415,7 @@ void CUnitOutline::OnDeviceRestored() {
 
     RefreshGxTexture(s_maskTex, s_mask);
     RefreshGxTexture(s_playerMaskTex, s_playerMask);
+    RefreshGxTexture(s_visMaskTex, s_visMask);
     RefreshGxTexture(s_blurTex, s_blur);
 
     // The depth texture is default-pool with its render-target bit set, so the device re-created it too and
@@ -600,15 +641,16 @@ bool CUnitOutline::EnsureResources() {
     // Back-buffer sized so the composite samples them 1:1 and the shaders' pixel distances hold. Built by
     // hand rather than FFX::CreateTex because they must not be rounded to a power of two: the scene's depth
     // surface is exactly this size and has to pair with them. A no-op unless the size actually changed.
-    if (!CreateFrameTex(s_maskTex, size, false) || !CreateFrameTex(s_playerMaskTex, size, false) || !CreateFrameTex(s_blurTex, size, false)) {
+    if (!CreateFrameTex(s_maskTex, size, false) || !CreateFrameTex(s_playerMaskTex, size, false) || !CreateFrameTex(s_visMaskTex, size, false) || !CreateFrameTex(s_blurTex, size, false)) {
         return false;
     }
 
     RefreshGxTexture(s_maskTex, s_mask);
     RefreshGxTexture(s_playerMaskTex, s_playerMask);
+    RefreshGxTexture(s_visMaskTex, s_visMask);
     RefreshGxTexture(s_blurTex, s_blur);
 
-    return s_mask && s_playerMask && s_blur;
+    return s_mask && s_playerMask && s_visMask && s_blur;
 }
 
 // Not in the original binary. Whether the scene's depth can be shared with the masks at all.
@@ -800,7 +842,7 @@ void CUnitOutline::EndDepthPass() {
 // is fixed for the span of a draw, so the batch is re-drawn with the module's shader rather than tinted in
 // place; the model's vertex data and its index range are untouched and the caller draws the batch for real
 // immediately afterwards, which is why the vertex stream and the pixel constants are left alone.
-void CUnitOutline::StampMask(const CGxBatch& batch, const float color[4], CGxTex* target, bool& cleared) {
+void CUnitOutline::StampMask(const CGxBatch& batch, const float color[4], CGxTex* target, bool& cleared, bool depthTest) {
     if (!target) {
         return;
     }
@@ -858,12 +900,18 @@ void CUnitOutline::StampMask(const CGxBatch& batch, const float color[4], CGxTex
     GxRsSet(GxRs_BlendingMode, GxBlend_Opaque);
     GxRsSet(GxRs_Lighting, 0);
     GxRsSet(GxRs_Fog, 0);
-    // Depth tested against the scene when BeginDepthPass supplied its depth texture: the unit is transformed
-    // by the view and projection the world just used, so a wall that is nearer rejects the pixels it covers
-    // and the line ends at its edge instead of switching the whole outline off. Writes stay off -- the mask
-    // must not add the unit to the depth the later batches of the same unit will test against.
-    GxRsSet(GxRs_DepthTest, s_depthBound ? 1 : 0);
-    s_stampDepthTest = s_depthBound ? 1 : 0;
+    // The full silhouette is stamped without the depth test, because the edge pass takes its SHAPE from
+    // that mask: a depth-tested mask has a hole where a wall covers the unit, and the hole's rim is an edge,
+    // so the line traced the wall. The depth-tested copy is the separate visibility mask, which only says
+    // whether a line pixel is hidden. Writes stay off either way -- the stamp must not add the unit to the
+    // depth the later batches of the same unit will test against.
+    bool test = depthTest && s_depthBound;
+    GxRsSet(GxRs_DepthTest, test ? 1 : 0);
+
+    if (test) {
+        s_stampDepthTest = 1;
+    }
+
     GxRsSet(GxRs_DepthFunc, 0);
     GxRsSet(GxRs_DepthWrite, 0);
     // Nothing here touches the vertex shader or the vertex stream: the stamp has to redraw the same
@@ -906,12 +954,20 @@ void CUnitOutline::StampSilhouette(const CGxBatch& batch, int32_t index) {
         color[3] *= weight;
     }
 
-    StampMask(batch, color, s_mask, s_maskCleared);
+    // The whole silhouette, untested, so the edge shape never inherits a wall's rim.
+    StampMask(batch, color, s_mask, s_maskCleared, false);
+
+    // And the same batches again, tested, into the visibility mask. Skipped when there is no shared depth:
+    // the two copies would be identical and the edge pass is told to ignore the visibility mask.
+    if (s_depthBound) {
+        const float white[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+        StampMask(batch, white, s_visMask, s_visMaskCleared, true);
+    }
 }
 
 void CUnitOutline::StampOccluder(const CGxBatch& batch) {
     const float white[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-    StampMask(batch, white, s_playerMask, s_playerMaskCleared);
+    StampMask(batch, white, s_playerMask, s_playerMaskCleared, false);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -965,7 +1021,7 @@ void CUnitOutline::BlurPass() {
 // silhouette taken out of it.
 void CUnitOutline::EdgePass() {
     float c0[4] = { s_maskTex.m_texelSize.x, s_maskTex.m_texelSize.y, kThickness, kIntensity };
-    float c1[4] = { kOpacity, kThreshold, s_playerMaskCleared ? 1.0f : 0.0f, 0.0f };
+    float c1[4] = { kOpacity, kThreshold, s_playerMaskCleared ? 1.0f : 0.0f, s_visMaskCleared ? 1.0f : 0.0f };
 
     GxRsSet(GxRs_PixelShader, s_edgePS);
     // The line is blended over the frame it was made from.
@@ -973,6 +1029,11 @@ void CUnitOutline::EdgePass() {
     GxRsSet(GxRs_AlphaRef, 0);
     GxRsSet(GxRs_Texture0, s_mask);
     GxRsSet(GxRs_Texture1, s_playerMask);
+    // ps_3_0 has no early-out for a ternary either, so both sides of the shader's conditional are evaluated:
+    // this always
+    // binds a real texture, and par.w says whether its answer is used. Without a stamped visibility mask the
+    // full silhouette is bound, whose answer is never read.
+    GxRsSet(GxRs_Texture2, s_visMaskCleared ? s_visMask : s_mask);
 
     GxShaderConstantsSet(GxSh_Pixel, 0, c0, 1);
     GxShaderConstantsSet(GxSh_Pixel, 1, c1, 1);
@@ -1003,7 +1064,7 @@ void OutlineDiag(const char* tag) {
 
     fprintf(file,
             "%s api=%d ms=%u rtt24=%d ps=%d/%d/%d/%d on=%d gx=%d/%d/%d tex=%dx%d/%dx%d/%dx%d "
-            "targets=%d maskCleared=%d depthBound=%d depthSize=%dx%d mismatch=%d stampDepth=%d\n",
+            "targets=%d maskCleared=%d depthBound=%d depthSize=%dx%d mismatch=%d stampDepth=%d vis=%d\n",
             tag,
             static_cast<int>(g_theGxDevicePtr->DeviceApi()),
             g_theGxDevicePtr->m_format.m_multisampleCount,
@@ -1015,7 +1076,7 @@ void OutlineDiag(const char* tag) {
             s_blurTex.m_size.x, s_blurTex.m_size.y,
             s_count, s_maskCleared ? 1 : 0, s_depthBound ? 1 : 0,
             s_depthSize.x, s_depthSize.y,
-            s_depthBindMismatch ? 1 : 0, s_stampDepthTest);
+            s_depthBindMismatch ? 1 : 0, s_stampDepthTest, s_visMaskCleared ? 1 : 0);
 
     fclose(file);
 }
@@ -1036,7 +1097,7 @@ void CUnitOutline::Composite() {
         return;
     }
 
-    if (!s_count && !s_maskCleared && !s_playerMaskCleared) {
+    if (!s_count && !s_maskCleared && !s_playerMaskCleared && !s_visMaskCleared) {
         // Nothing was recorded last frame and neither mask was written: there is nothing to composite and
         // no reason to spend the passes. The list still drains, so the next frame starts clean.
         BeginTargets();
@@ -1076,6 +1137,7 @@ void CUnitOutline::Composite() {
 
     GxRsSet(GxRs_Texture0, nullptr);
     GxRsSet(GxRs_Texture1, nullptr);
+    GxRsSet(GxRs_Texture2, nullptr);
 
     FFX::SetupReset();
 
@@ -1089,4 +1151,5 @@ void CUnitOutline::Composite() {
     BeginTargets();
     s_maskCleared = false;
     s_playerMaskCleared = false;
+    s_visMaskCleared = false;
 }

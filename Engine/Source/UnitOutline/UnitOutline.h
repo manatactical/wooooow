@@ -107,7 +107,7 @@ class CUnitOutline {
 
     static void StampSilhouette(const CGxBatch& batch, int32_t index);
     static void StampOccluder(const CGxBatch& batch);
-    static void StampMask(const CGxBatch& batch, const float color[4], CGxTex* target, bool& cleared);
+    static void StampMask(const CGxBatch& batch, const float color[4], CGxTex* target, bool& cleared, bool depthTest);
 
     static void BlurPass();
     static void EdgePass();

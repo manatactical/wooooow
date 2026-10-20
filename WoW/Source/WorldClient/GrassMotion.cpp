@@ -1,4 +1,4 @@
-﻿// Not in the original 3.3.5a binary. See GrassMotion.h for the pipeline and for the three seams this port
+// Not in the original 3.3.5a binary. See GrassMotion.h for the pipeline and for the three seams this port
 // uses instead of the reference module's three detours. This file is the implementation, and says where it
 // differs from `seyris-living-azeroth`'s GrassMotion.cpp / GrassDoodads.cpp / ShaderPatch.cpp.
 #include "WoW/Source/WorldClient/GrassMotion.h"
@@ -77,10 +77,6 @@ CVar* s_windSpeed;
 CVar* s_parting;
 CVar* s_partingStrength;
 CVar* s_partingRadiusScale;
-CVar* s_thinning;
-CVar* s_thinStartPercent;
-CVar* s_thinEndPercent;
-CVar* s_thinMinShare;
 
 // Whether the vertex shader came out patched at all. False means every entry point below is a no-op and
 // the grass is stock, which is the safe direction.
@@ -440,24 +436,18 @@ std::string BuildBody() {
 // their defaults at the login screen, before a world frame exists.
 void CGrassMotion::Init() {
     s_wind = CVar::Register("grassWind", "Grass and clutter sway in the wind", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    // Halfway up the panel's 0..1.5 / 0..0.5 / 0..20 sliders. The defaults are where the mid-point of the
-    // slider should land, so opening the panel shows the thumb centred rather than pinned to one end.
-    s_windSway = CVar::Register("grassWindSway", "Wind sway at the tip of a blade, in yards", 1, "0.75", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_windFlutter = CVar::Register("grassWindFlutter", "Extra per-blade shimmer, in yards", 1, "0.25", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_windSpeed = CVar::Register("grassWindSpeed", "Wind speed, radians per second", 1, "10.0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    // Defaults are a percentage of each slider's range (min is 0 for all three), so the thumb opens where the
+    // tuning wants it rather than pinned to an end.
+    s_windSway = CVar::Register("grassWindSway", "Wind sway at the tip of a blade, in yards", 1, "0.15", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_windFlutter = CVar::Register("grassWindFlutter", "Extra per-blade shimmer, in yards", 1, "0.025", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_windSpeed = CVar::Register("grassWindSpeed", "Wind speed, radians per second", 1, "1.0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_parting = CVar::Register("grassParting", "Grass parts around nearby characters", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     // Halfway up the panel's 0..2 and 0..8 sliders, and the step is fine enough that the first notch no
     // longer arrives at full strength on its own.
     // shortcut: the radius default (4.0) is numerically the midpoint but reads as a very wide push, because
     // it multiplies the bounding radius and then a mount's 1.35 on top; lower it if the field looks combed.
-    s_partingStrength = CVar::Register("grassPartingStrength", "How far blades lean away from a character, in yards", 1, "1.0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_partingStrength = CVar::Register("grassPartingStrength", "How far blades lean away from a character, in yards", 1, "1.2", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_partingRadiusScale = CVar::Register("grassPartingRadiusScale", "Push radius as a multiple of a character's bounding radius", 1, "4.0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_thinning = CVar::Register("grassThinning", "Draw fewer clutter plants far away", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    // Percentage of the grass view distance, not yards. See ThinningShare: an absolute window cannot work
-    // when the user's groundEffectDist can sit anywhere in 20..196.
-    s_thinStartPercent = CVar::Register("grassThinStart", "Percent of the grass view distance where thinning begins", 1, "5.0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_thinEndPercent = CVar::Register("grassThinEnd", "Percent of the grass view distance where thinning reaches its floor", 1, "100.0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_thinMinShare = CVar::Register("grassThinMinShare", "Share of clutter still drawn far away", 1, "0.06", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 }
 
 bool CGrassMotion::Active() {
@@ -493,8 +483,8 @@ void CGrassMotion::BeginFrame() {
     // c15 = anchor, 1/(1-anchor), sway, flutter.
     row[0] = kStiffAnchor;
     row[1] = 1.0f / (1.0f - kStiffAnchor);
-    row[2] = wind ? CvarFloat(s_windSway, 0.75f) : 0.0f;
-    row[3] = wind ? CvarFloat(s_windFlutter, 0.25f) : 0.0f;
+    row[2] = wind ? CvarFloat(s_windSway, 0.15f) : 0.0f;
+    row[3] = wind ? CvarFloat(s_windFlutter, 0.025f) : 0.0f;
     row += 4;
 
     // c16 = 1/spacing, 1/spacing, wind direction x, wind direction y.
@@ -505,10 +495,10 @@ void CGrassMotion::BeginFrame() {
     row += 4;
 
     // c17 = wind speed, flutter per yard x, flutter per yard y, push strength.
-    row[0] = CvarFloat(s_windSpeed, 10.0f);
+    row[0] = CvarFloat(s_windSpeed, 1.0f);
     row[1] = kFlutterPerYardX;
     row[2] = kFlutterPerYardY;
-    row[3] = parting ? CvarFloat(s_partingStrength, 1.0f) : 0.0f;
+    row[3] = parting ? CvarFloat(s_partingStrength, 1.2f) : 0.0f;
     row += 4;
 
     // c18 = player xyz, wind on.
@@ -657,58 +647,6 @@ void CGrassMotion::AnalyzeDoodad(CDetailDoodadData* data) {
     CGxDevice::Log("grass wind: doodad height %.3f, root v %.3f, tip v %.3f", height, rootV, tipV);
 }
 
-// The thinning curve, as fractions of the grass view distance rather than absolute yards. Absolute defaults
-// cannot work here: grass is only drawn inside CWorld::detailDoodadDist, and the user's distance is free to
-// sit anywhere in 20..196, so a fixed "thin from 150 yd" silently does nothing at any distance at or below
-// it and only ever bites in the outermost ring when it does. That is exactly why the first pass looked
-// ineffective. Everything is relative to the distance the grass actually reaches.
-bool CGrassMotion::ThinningShare(float distToCamera, float& share) {
-    share = 1.0f;
-
-    if (!CvarInt(s_thinning, 1)) {
-        return false;
-    }
-
-    float viewDistance = CWorld::detailDoodadDist;
-
-    if (viewDistance <= 0.0f) {
-        return false;
-    }
-
-    // Clamped to the 0..100 the panel offers, so a hand-edited -1 or 5000 in Config.wtf cannot invert the
-    // window; the shader would read that as "draw everything" anyway, but the clamp keeps it predictable.
-    float startPercent = CvarFloat(s_thinStartPercent, 1.0f);
-    float endPercent = CvarFloat(s_thinEndPercent, 100.0f);
-    startPercent = startPercent < 0.0f ? 0.0f : (startPercent > 100.0f ? 100.0f : startPercent);
-    endPercent = endPercent < 0.0f ? 0.0f : (endPercent > 100.0f ? 100.0f : endPercent);
-
-    // A window that does not widen means no thinning, which the module also treats as "draw everything".
-    if (endPercent <= startPercent) {
-        return false;
-    }
-
-    float start = viewDistance * startPercent * 0.01f;
-    float end = viewDistance * endPercent * 0.01f;
-
-    if (distToCamera <= start) {
-        return true;
-    }
-
-    float minShare = CvarFloat(s_thinMinShare, 0.06f);
-    minShare = minShare < 0.01f ? 0.01f : (minShare > 1.0f ? 1.0f : minShare);
-
-    if (distToCamera >= end) {
-        share = minShare;
-        return true;
-    }
-
-    // Squared rather than linear: the near half of the window stays almost full, and the drop happens where
-    // it reads least. A linear ramp spends half its budget on ground the player is looking straight at.
-    float t = (distToCamera - start) / (end - start);
-    share = 1.0f + (minShare - 1.0f) * t * t;
-
-    return true;
-}
 
 // Insert the def block after the version line and the body after the anchor, then reassemble. A shader that
 // misses either line, or that fails to assemble, is left exactly stock: a half-patched shader is a crash or

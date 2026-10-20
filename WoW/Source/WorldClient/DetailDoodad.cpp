@@ -241,9 +241,6 @@ int32_t CDetailDoodadInst::HasBatches() {
 
 // Not in the original binary. Sorts the adds by doodad, shuffles within each doodad, and records the index
 // range each one owns: the layout both the wind's per-doodad constant row and the distance thinning need.
-static void ShuffleRange(CDetailDoodadInstAdd* adds, uint32_t count, uint32_t seed);
-static uint32_t Mix(uint32_t value);
-
 // VERIFY: e98d17d0 auto
 // OFFSET: 0x007B10E0
 void CDetailDoodad::SetupVertexShader(const C44Matrix& world, uint32_t index) {
@@ -490,6 +487,11 @@ void CDetailDoodadInstBatch::FillVertices() {
             color.b = static_cast<uint8_t>((scale * color.b) >> 16);
             color.a = 0xFF;
         }
+
+        // The spawn/despawn fade is NOT applied here. The vertex colour's alpha reaches the pixel shader as
+        // v0.w and is multiplied into RGB there, so writing a fade into it darkens the grass instead of
+        // fading it. The fade lives in c19.x and is applied by the patched vertex shader to the alpha ramp
+        // (o2.x), which the pixel shader multiplies into oC0.w. See CGrassMotion::PatchVertexShader.
 
         if (g_theGxDevicePtr->Caps().m_colorFormat == GxCF_rgba) {
             CImVector swapped;
@@ -881,6 +883,8 @@ void CDetailDoodadInstBatch::Draw() {
     uint64_t hash = this->HashAdds() ^ (static_cast<uint64_t>(this->m_runs.m_count) << 32);
     bool streamed = this->m_vertexBuf->m_pool->m_usage == GxPoolUsage_Stream;
 
+    // The fade is no longer part of the baked vertices -- it is a shader constant now -- so the bake depends on
+    // the adds alone again and this stays the stock test.
     if (streamed || hash != this->m_bakeHash || !this->m_vertexBuf->m_hasData || !this->m_vertexBuf->m_valid) {
         this->FillVertices();
         this->m_bakeHash = hash;
@@ -907,13 +911,6 @@ void CDetailDoodadInstBatch::Draw() {
 
         uint32_t first = run.m_indexStart;
         uint32_t count = run.m_indexCount;
-
-        if (this->m_thinShare < 1.0f) {
-            // Thinning drops a suffix of the run. That is an even sample of the whole doodad only because
-            // BakeRuns shuffled within the run; see its comment.
-            count = static_cast<uint32_t>(static_cast<float>(count) * this->m_thinShare);
-            count -= count % 3;
-        }
 
         if (!count) {
             continue;
@@ -993,21 +990,8 @@ void CDetailDoodadInst::Free() {
 // VERIFY: 104e29d5 auto
 // OFFSET: 0x007B36B0
 void CDetailDoodadInst::DrawBatches() {
-    // Not in the original binary. The distance thinning, decided once per chunk from its own corner. A
-    // chunk past grassThinEnd keeps drawing at grassThinMinShare, so the far field is a stable subset
-    // rather than a ring that pops. Free() clears m_chunk, so this has to be guarded rather than assumed.
-    float mergeShare = 1.0f;
-    bool thin = false;
-
-    if (this->m_chunk) {
-        C3Vector delta = this->m_chunk->m_topLeftCoords - CWorldScene::s_activeWorldView;
-        float distToCamera = sqrtf(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
-        thin = CGrassMotion::ThinningShare(distToCamera, mergeShare);
-    }
-
     for (uint32_t i = 0; i < 4; i++) {
         if (this->m_batches[i].m_texture) {
-            this->m_batches[i].m_thinShare = thin ? mergeShare : 1.0f;
             this->m_batches[i].Draw();
         }
     }
@@ -1028,9 +1012,6 @@ void CDetailDoodadInstBatch::BakeRuns() {
         return;
     }
 
-    // Deterministic per doodad and per count, so the subset thinning drops is stable until the bake itself
-    // changes.
-    uint32_t seed = Mix(static_cast<uint32_t>(this->m_bakedHash) ^ count);
     CDetailDoodadInstAdd* adds = this->m_adds.m_data;
 
     // Insertion sort by doodad id: a batch holds a few hundred adds at the stock ceiling, and they arrive
@@ -1073,8 +1054,6 @@ void CDetailDoodadInstBatch::BakeRuns() {
             run->m_indexCount = this->m_indexCount > indexStart ? this->m_indexCount - indexStart : 0;
         }
 
-        ShuffleRange(adds + i, end - i, seed + doodadId);
-
         indexStart += run->m_indexCount;
         i = end;
     }
@@ -1104,29 +1083,6 @@ uint32_t CDetailDoodadInstBatch::AddIndexCount(uint32_t doodadId) {
     return model->m_shared && model->m_shared->m_skinData ? model->m_shared->m_skinData->m_indices.m_count : 0;
 }
 
-// Not in the original binary.
-//
-// Mix and ShuffleRange are the reference module's Fisher-Yates with its own mixer (GrassInstanced.cpp). The
-// shuffle is what makes distance thinning an even sample: the draw drops a suffix of each doodad's run, so
-// without it the far field would be a corner of every chunk rather than a spread over it.
-uint32_t Mix(uint32_t value) {
-    value ^= value >> 16;
-    value *= 0x7FEB352Du;
-    value ^= value >> 15;
-    value *= 0x846CA68Bu;
-    value ^= value >> 16;
-    return value;
-}
-
-void ShuffleRange(CDetailDoodadInstAdd* adds, uint32_t count, uint32_t seed) {
-    for (uint32_t i = count; i > 1; i--) {
-        uint32_t j = Mix(seed + i) % i;
-        CDetailDoodadInstAdd swap = adds[i - 1];
-        adds[i - 1] = adds[j];
-        adds[j] = swap;
-    }
-}
-
 // INLINED
 CDetailDoodadInstBatch::CDetailDoodadInstBatch() {
     this->m_texture = nullptr;
@@ -1139,8 +1095,6 @@ CDetailDoodadInstBatch::CDetailDoodadInstBatch() {
     this->m_bakeHash = 0;
     this->m_bakedHash = 0;
     this->m_bakedAdds = 0;
-    // 1.0 means "draw every run in full"; DrawBatches lowers it when the chunk is far off.
-    this->m_thinShare = 1.0f;
 }
 
 // VERIFY: 9e2e57b8 manual

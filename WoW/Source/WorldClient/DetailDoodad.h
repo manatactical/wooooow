@@ -121,13 +121,8 @@ class CDetailDoodadInstBatch {
     uint32_t m_bakedAdds;
 
     // Not in the original binary. The doodad runs the bake emitted, in draw order, each with the index
-    // range it owns. Thinning drops a suffix of a run, which is an even sample only because the bake
-    // shuffles within a run; see BakeRuns.
+    // range it owns, so the caller can bind that doodad's constant row before its sub-draw.
     TSGrowableArray<CDetailDoodadInstRun> m_runs;
-
-    // Not in the original binary. The share of every run this batch should draw, set per frame from the
-    // chunk's distance to the camera by DrawBatches.
-    float m_thinShare;
 
     CDetailDoodadInstBatch();
     ~CDetailDoodadInstBatch();
@@ -208,7 +203,6 @@ inline void CDetailDoodadInstBatch::Free() {
     this->m_texture = nullptr;
     this->m_vertexCount = 0;
     this->m_indexCount = 0;
-    this->m_thinShare = 1.0f;
     this->m_adds.SetCount(0);
     this->m_adds.m_chunk = 64;
     this->m_runs.SetCount(0);

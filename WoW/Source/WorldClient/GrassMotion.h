@@ -20,7 +20,7 @@ class CDetailDoodadData;
 //     against the array ShaderCreate filled, so a permutation this module cannot handle is left alone
 //     instead of mis-patched.
 //   * the per-frame and per-doodad values ride vertex-constant rows uploaded right beside the engine's own
-//     block in CDetailDoodad::SetupVertexShader. The engine uses c0..c13; c14..c19 and c35..c55 are ours.
+//     block in CDetailDoodad::SetupVertexShader. The engine uses c0..c13; c14..c18 and c35..c55 are ours.
 //   * the per-doodad row is a register written between a batch's own sub-draws, so the shader needs no
 //     indirect table, no index decode, and no colour tagging. That is the one place this port is materially
 //     simpler than the reference, which had to tag each instance's colour with a table index and decode it
@@ -63,7 +63,7 @@ class CGrassMotion {
     // CDetailDoodad::InitializeShaderConstants, which runs once before the chunk loop.
     static void BeginFrame();
 
-    // Uploads c14..c19 and c40..c55. Called per chunk, next to the engine's own block, so nothing drawn
+    // Uploads c14..c18 and c40..c55. Called per chunk, next to the engine's own block, so nothing drawn
     // between chunks can clobber either.
     static void UploadChunkConstants();
 
@@ -80,10 +80,6 @@ class CGrassMotion {
     // module so nothing else has to know which rows were borrowed.
     static void UploadDoodadRow(CDetailDoodadData* data);
 
-    // The share of a doodad's plants worth drawing at this distance: 1.0 inside grassThinStart, falling to
-    // grassThinMinShare at grassThinEnd and beyond. False when thinning is off or the window is degenerate,
-    // which the caller reads as "draw everything".
-    static bool ThinningShare(float distToCamera, float& share);
 };
 
 #endif

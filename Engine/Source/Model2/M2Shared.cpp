@@ -1315,10 +1315,11 @@ void CM2Shared::ConvertModernSkin() {
         // Writable capacity, not the file length: an env split grows the batch array and the bone split
         // appends rebuilt geometry, and the allocation carries slack for both.
         this->m_skinAllocSize ? this->m_skinAllocSize : this->m_asyncObject->m_size,
-        // The bone split needs the model's boneCombos. Hand over the resolved array: after M2Init an
-        // M2Array's offset is a delta from its own member, so passing the body would need that arithmetic
-        // repeated and got it wrong.
-        this->m_data->m_boneCombos.Data(), this->m_data->m_boneCombos.m_count,
+        // The bone split needs the model's boneCombos. Prefer the owned replacement when one is already
+        // installed: M2Array::Data() recovers the payload through a 32-bit delta, which is only valid for
+        // the array that shipped inside the model body.
+        this->GetOwnedBoneCombos() ? this->GetOwnedBoneCombos() : this->m_data->m_boneCombos.Data(),
+        this->m_data->m_boneCombos.m_count,
         // Where the skin file's own data ends; rebuilt geometry is appended past it.
         this->m_skinFileSize ? this->m_skinFileSize : this->m_asyncObject->m_size,
         &rebuiltBoneCombos, &rebuiltBoneComboCount);
@@ -1335,7 +1336,12 @@ void CM2Shared::ConvertModernSkin() {
         if (owned)
         {
             memcpy(owned, rebuiltBoneCombos.data(), rebuiltBoneComboCount * sizeof(uint16_t));
-            this->m_data->m_boneCombos.Set(owned);
+
+            // Deliberately not M2Array::Set(): that stores a 32-bit delta from the array's own address, and
+            // the mapped model body and this allocation can be more than 2 GiB apart on x64, so the stored
+            // value would truncate into a pointer that reads unmapped memory. The pointer is kept beside the
+            // model instead and read through GetOwnedBoneCombos().
+            this->m_ownedBoneCombos = owned;
             this->m_data->m_boneCombos.m_count = rebuiltBoneComboCount;
             MODERN_ASSETS_LOG_INFO("m2: '%s' boneCombos %u -> %u", this->m_fileName,
                                    previousCount, rebuiltBoneComboCount);
@@ -1437,7 +1443,8 @@ int32_t CM2Shared::InitializeSkinProfile() {
                 vertices[j] = this->Vertices()[this->m_skinData->m_vertices[j]];
 
                 for (uint32_t k = 0; k < section->m_boneInfluences; k++) {
-                    vertices[j].m_indices.b[k] = static_cast<uint8_t>(this->m_data->m_boneCombos[section->m_boneComboIndex + this->m_skinData->m_bones[j].b[k]]);
+                    const uint16_t* boneCombos = this->GetOwnedBoneCombos() ? this->GetOwnedBoneCombos() : this->m_data->m_boneCombos.Data();
+                    vertices[j].m_indices.b[k] = static_cast<uint8_t>(boneCombos[section->m_boneComboIndex + this->m_skinData->m_bones[j].b[k]]);
                 }
             }
         }
@@ -1447,8 +1454,12 @@ int32_t CM2Shared::InitializeSkinProfile() {
             this->m_skinData->m_skinSections[i].m_boneComboIndex = 0;
         }
 
-        for (uint32_t i = 0; i < this->m_data->m_boneCombos.m_count; i++) {
-            this->m_data->m_boneCombos[i] = static_cast<uint16_t>(i);
+        {
+            uint16_t* boneCombos = this->GetOwnedBoneCombos() ? this->GetOwnedBoneCombos() : this->m_data->m_boneCombos.Data();
+
+            for (uint32_t i = 0; i < this->m_data->m_boneCombos.m_count; i++) {
+                boneCombos[i] = static_cast<uint16_t>(i);
+            }
         }
 
         for (uint32_t i = 0; i < this->m_skinData->m_vertices.m_count; i++) {

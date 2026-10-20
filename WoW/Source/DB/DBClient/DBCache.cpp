@@ -95,12 +95,11 @@ uint32_t CWardenKey::Hash() const {
 
 // VERIFY: 8655bf5d auto
 // OFFSET: 0x00667EF0
+// No Cache folder: the directory is never created, so Load() finds nothing and Save() has nowhere to write.
 void GetCacheDirectory(char* path) {
     if (CheckDataFilesExist()) {
         SStrPrintf(path, 260, "Cache/%s/%s", "WDB", s_localeCode);
-        OsCreateDirectory(path, 1);
     } else {
         SStrCopy(path, "WDB", 260);
-        OsCreateDirectory(path, 1);
     }
 }

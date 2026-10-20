@@ -3002,6 +3002,9 @@ void CM2Model::RenderBatchShadowMap(int32_t untextured, M2Batch* batch, const CM
             float* constants = g_theGxDevicePtr->ShaderConstantsLock(GxSh_Vertex) + 31 * 4;
             uint32_t registers = 0;
             const uint32_t comboCount = this->m_shared->m_data->m_boneCombos.m_count;
+            const uint16_t* boneCombos = this->m_shared->GetOwnedBoneCombos()
+                                       ? this->m_shared->GetOwnedBoneCombos()
+                                       : this->m_shared->m_data->m_boneCombos.Data();
 
             for (uint32_t n = 0; n < instances; n++) {
                 CM2Model* model = list.m_batches[done + index + n].m_model;
@@ -3013,7 +3016,7 @@ void CM2Model::RenderBatchShadowMap(int32_t untextured, M2Batch* batch, const CM
                         break;
                     }
 
-                    const C44Matrix* bone = model->BoneMatrixSafe(this->m_shared->m_data->m_boneCombos[combo]);
+                    const C44Matrix* bone = model->BoneMatrixSafe(boneCombos[combo]);
 
                     if (!bone) {
                         break;

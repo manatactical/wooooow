@@ -442,6 +442,13 @@ void CM2SceneRender::DrawBatch() {
         uint32_t registers = 0;
         const uint32_t comboCount = this->m_data->m_boneCombos.m_count;
 
+        // The repacked array lives outside the model body (see CM2Shared::m_ownedBoneCombos); the 32-bit
+        // delta M2Array carries cannot describe that offset on x64.
+        const CM2Shared* ownedShared = this->m_curModel ? this->m_curModel->m_shared : nullptr;
+        const uint16_t* boneCombos = ownedShared && ownedShared->GetOwnedBoneCombos()
+                                   ? ownedShared->GetOwnedBoneCombos()
+                                   : this->m_data->m_boneCombos.Data();
+
         for (uint32_t i = 0; i < this->m_curSkinSection->m_boneCount && registers < kMaxPaletteRegisters; i++) {
             const uint32_t combo = i + this->m_curSkinSection->m_boneComboIndex;
 
@@ -449,7 +456,7 @@ void CM2SceneRender::DrawBatch() {
                 break;
             }
 
-            const C44Matrix* bone = this->m_curModel->BoneMatrixSafe(this->m_data->m_boneCombos[combo]);
+            const C44Matrix* bone = this->m_curModel->BoneMatrixSafe(boneCombos[combo]);
 
             if (!bone) {
                 break;

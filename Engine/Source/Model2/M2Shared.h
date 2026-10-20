@@ -72,6 +72,7 @@ class CM2Shared {
     // plus a follower second pass needs more batch records than the file shipped -- so the allocation carries
     // a reserve past the file length. Stock skins leave these equal.
     /* ---- */ uint32_t m_skinAllocSize;
+    /* ---- */ uint16_t* m_ownedBoneCombos = nullptr;
     /* ---- */ uint32_t m_skinFileSize;
 #endif
     /* 0174 */ CTexture** m_textures;
@@ -129,6 +130,14 @@ class CM2Shared {
         return this->m_data->m_vertices.Data();
     }
     void SetVerticesArray(M2Vertex* data, uint32_t count);
+
+    // NOT IN BINARY, build-only. M2Array stores its payload as a 32-bit delta from the array's own address,
+    // which cannot describe an offset between the mapped model body and a separate heap allocation on x64 --
+    // the two routinely sit more than 2 GiB apart, and Set() would silently truncate the difference. The
+    // repacked boneCombos array therefore lives here as a real pointer and is handed out instead of the
+    // delta whenever a replacement has been installed.
+    uint16_t* GetOwnedBoneCombos() const { return this->m_ownedBoneCombos; }
+    void SetOwnedBoneCombos(uint16_t* data) { this->m_ownedBoneCombos = data; }
     CShaderEffect* GetEffect(M2Batch* batch);
     CShaderEffect* GetEffect(uint32_t textureCount, uint16_t shader, uint16_t textureCoordComboIndex);
     int32_t Initialize();

@@ -56,10 +56,6 @@ static HOSFILE OpenCacheFile(const char* directory, const char* name, int32_t wr
     if (directory) {
         SStrCopy(path, directory, sizeof(path));
 
-        if (write && !OsDirectoryExists(path)) {
-            OsCreateDirectory(path, 1);
-        }
-
         SStrPack(path, "\\", sizeof(path));
         SStrPack(path, name, sizeof(path));
     } else {

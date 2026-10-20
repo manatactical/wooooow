@@ -704,14 +704,16 @@ void AsyncFileReadRegisterCVars() {
     // NOT IN BINARY. The disk queue is hardcoded to 8 workers. Measured on this SSD: 1 -> 8 workers cut
     // AsyncFileReadWaitAll's worst case from 852 ms to 314 ms, and more workers did not help further
     // (8x threads gave 2.7x, i.e. the disk was no longer the serial part). It is half the logical cores,
-    // clamped to 12, so it still behaves on a smaller machine.
+    // so it still behaves on a smaller machine. The ceiling is AsyncFileReadGetMaxDiskQueueCount() rather
+    // than a second literal: the async file layer owns the ring size and clamps to it anyway.
     {
         uint32_t workers = OsGetNumberOfProcessors() / 2;
+        const uint32_t ceiling = AsyncFileReadGetMaxDiskQueueCount();
 
         if (workers < 1) {
             workers = 1;
-        } else if (workers > 8) {
-            workers = 8;
+        } else if (workers > ceiling) {
+            workers = ceiling;
         }
 
         AsyncFileReadSetDiskQueueCount(workers);

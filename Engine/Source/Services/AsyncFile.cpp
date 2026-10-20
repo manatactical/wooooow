@@ -79,9 +79,10 @@ static HPROPCONTEXT s_propContext;
 // NOT IN BINARY size. The original is a fixed 3-slot array and only ever fills slot 0 outside streaming
 // mode, so every async read on a non-trial client is served by exactly one worker thread. That is a 2010
 // spinning-disk assumption: one queue saturates an SSD about as well as one thread saturates 16 cores.
-// The disk queue (slot 0) is now a ring of kMaxDiskQueues workers and the last slot stays reserved for the
-// frame-limited net-texture queue the streaming path uses.
-constexpr int32_t kMaxDiskQueues = 12;
+// The disk queue (slot 0) is now a ring of kMaxDiskQueues workers and the last two slots stay reserved for
+// the net queues the streaming path uses. The array size is derived from the ring size rather than being a
+// second, independently maintained number: slots [0, kMaxDiskQueues) are disk, then two net slots.
+constexpr int32_t kMaxDiskQueues = 8;
 static CAsyncQueue* s_asyncQueues[kMaxDiskQueues + 2];
 
 // NOT IN BINARY. How many worker threads serve the disk queue. 0 keeps the original single worker.
@@ -99,6 +100,11 @@ void AsyncFileReadSetDiskQueueCount(uint32_t count) {
 
 uint32_t AsyncFileReadGetDiskQueueCount() {
     return s_diskQueueCount;
+}
+
+// NOT IN BINARY. See AsyncFile.h.
+uint32_t AsyncFileReadGetMaxDiskQueueCount() {
+    return static_cast<uint32_t>(kMaxDiskQueues);
 }
 
 // STATIC: 0x00B4A218

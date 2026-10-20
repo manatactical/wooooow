@@ -46,6 +46,9 @@ void AsyncFileReadInitialize(uint32_t threadSleep, uint32_t handlerTimeout);
 // AsyncFileReadInitialize runs (the threads are created there). 0 keeps the original single worker.
 void AsyncFileReadSetDiskQueueCount(uint32_t count);
 uint32_t AsyncFileReadGetDiskQueueCount();
+// NOT IN BINARY. The largest count AsyncFileReadSetDiskQueueCount will accept; the queue ring is sized
+// from the same constant, so callers clamp to this instead of hardcoding their own ceiling.
+uint32_t AsyncFileReadGetMaxDiskQueueCount();
 
 // NOT IN BINARY. Frame-time budget for the AsyncFileReadWaitAll drain. Left at 0 (block until empty,
 // original behaviour) after measuring: capping it made the worst case worse, because map load simply

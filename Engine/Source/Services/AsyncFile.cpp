@@ -207,6 +207,17 @@ int32_t AsyncFileReadPollHandler(const void* data, void* param) {
         // model's skin, or builds a WMO/ADT group, and a bulk load runs hundreds of them back to back. The
         // earlier attempt to bound the drain only moved that cost around; timing it per call says which
         // callback the milliseconds actually belong to. m_size names the size, the file names the asset.
+        //
+        // The name is copied BEFORE the callback runs. The callback is often the one that releases the file,
+        // and by the time the timing is known the SFileImpl is already freed -- reading it after the fact is
+        // a use-after-free that faulted at the login screen, in GetActualFileName, on a 0xdddddddd name.
+        char name[256];
+        name[0] = '\0';
+
+        if (PerfLogEnabled() && object->m_file) {
+            SFile::GetActualFileName(object->m_file, name, sizeof(name));
+        }
+
         const uint32_t callbackStart = OsGetAsyncTimeMs();
 
         reinterpret_cast<void (*)(void*)>(object->m_userPostloadCallback)(object->m_userArg);
@@ -218,13 +229,6 @@ int32_t AsyncFileReadPollHandler(const void* data, void* param) {
 
         if (callbackMs >= 2) {
             char label[96];
-            char name[256];
-
-            name[0] = '\0';
-
-            if (object->m_file) {
-                SFile::GetActualFileName(object->m_file, name, sizeof(name));
-            }
 
             const char* leaf = name;
 
@@ -236,9 +240,6 @@ int32_t AsyncFileReadPollHandler(const void* data, void* param) {
 
             SStrPrintf(label, sizeof(label), "%s %uK", leaf[0] ? leaf : "?", object->m_size >> 10);
 
-            // The callback is often the one that releases the file, so the name is frequently already gone
-            // by now. The size still separates the classes: a few-KB blob is a texture or a skin, a
-            // multi-MB one is a model body.
             PerfLogSpanDetail("postload", callbackMs, label);
         }
 

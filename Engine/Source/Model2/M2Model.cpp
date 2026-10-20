@@ -1112,16 +1112,16 @@ int32_t CM2Model::HasSequence(uint32_t id) {
 // VERIFY: cf5b210a auto
 // OFFSET: 0x00825F40
 uint32_t CM2Model::ResolveSequenceFallback(uint32_t id) {
-    if (id >= ANIM_COUNT) {
-        return 0xFFFFFFFF;
-    }
-
+    // NOT IN BINARY. The ANIM_COUNT ceiling is gone. 506 is the client's own animation-table size, but a
+    // model's sequence ids come from the file, and modern content goes well past it -- the netherwing mount
+    // carries 48 ids above 506. Rejecting them here meant those sequences could never be found, which is
+    // what forced the tier walk in ResolveAnimForModel to spin.
+    //
+    // The walk is bounded by a step budget rather than by an id-indexed visited[] array, so any id range is
+    // safe without allocating a table sized to the largest id a file happens to contain.
     if (!(this->m_fFlags & 1)) {
         this->WaitForLoad(nullptr);
     }
-
-    int32_t visited[ANIM_COUNT];
-    memset(visited, 0, sizeof(visited));
 
     M2Data* data = this->m_shared->m_data;
 
@@ -1129,20 +1129,26 @@ uint32_t CM2Model::ResolveSequenceFallback(uint32_t id) {
         return id;
     }
 
-    while (id < ANIM_COUNT) {
+    // A fallback chain is at most as long as the animation table; stepping further means the table points in
+    // a cycle. Bounded explicitly so a self-referential m_fallback cannot hang the walk -- the netherwing
+    // mount froze the mount window through exactly that.
+    const uint32_t limit = g_animationDataDB.m_numRecords > 0
+                         ? static_cast<uint32_t>(g_animationDataDB.m_numRecords)
+                         : 1u;
+
+    for (uint32_t step = 0; step < limit; ++step) {
         AnimationDataRec* rec = g_animationDataDB.GetRecord(id);
 
-        if (visited[id] || !rec) {
+        if (!rec) {
             break;
         }
 
-        uint32_t fallback = rec->m_fallback;
+        const uint32_t fallback = static_cast<uint32_t>(rec->m_fallback);
 
         if (id == fallback) {
             break;
         }
 
-        visited[id] = 1;
         id = fallback;
 
         if (this->HasSequence(data, fallback)) {
@@ -1156,10 +1162,14 @@ uint32_t CM2Model::ResolveSequenceFallback(uint32_t id) {
 // VERIFY: af94bf41 manual
 // OFFSET: 0x00826050
 int32_t CM2Model::IsSequenceLoaded(uint32_t id) {
-    if (id >= 506) {
-        return 0;
-    }
-
+    // NOT IN BINARY. This used to reject every id >= 506 outright, and 506 is ANIM_COUNT -- the size of the
+    // client's own ANIMATION table, not a property of the model. A model's sequence ids are whatever the
+    // file carries: modern content routinely ships ids in the 500..1800 range (the netherwing mount has 48
+    // of them), and every one of them was reported absent, so the fallback walk could never settle.
+    //
+    // Sequence lookup itself is id-agnostic -- FindSequenceIndex hashes on the id and never indexes a
+    // client-side table -- so the check was not protecting anything here. The only array this function's
+    // caller indexed by id was ResolveSequenceFallback's visited[], which is now bounded by the walk.
     if (!(this->m_fFlags & 1)) {
         this->WaitForLoad(nullptr);
     }

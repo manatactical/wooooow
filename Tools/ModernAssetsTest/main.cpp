@@ -870,6 +870,88 @@ namespace
     /// With no arguments it reads through the client's archive set (which a standalone tool does not
     /// have mounted); given the three loose .db2 paths it decodes those instead, so the same
     /// definitions can be proven offline.
+    /**
+     * @brief Decodes AnimationData.db2 and prints every element of every field per row.
+     *
+     * The modern table is four physical columns (shapes 1/1/2/2 -- the last two are arrays), while the
+     * client's AnimationDataRec wants eight. Printing the raw columns is what makes the mapping a measured
+     * decision: f0 is the fallback (187 -> 5, 43/44/45 -> 42, 97/98 -> 96), f1 the behaviour tier, f2 the
+     * behaviour id, f3 the flags. Shapes are passed on the command line because the WDC5 reader is
+     * positional and rejects the file on a wrong element count.
+     *
+     * @param path     the .db2 to read.
+     * @param ids      ids to report in full.
+     * @param idCount  count of ids.
+     * @param shapes   per-field element counts, or null for all-scalar.
+     */
+    int ProbeAnimationData(const char* path, char** ids, int idCount, const int* shapes = nullptr)
+    {
+        std::vector<uint8_t> bytes;
+
+        if (!path)
+        {
+            std::printf("animdb2: pass a .db2 path (a standalone tool has no archive set)\n");
+            return 2;
+        }
+
+        if (!ReadFile(path, bytes))
+        {
+            std::printf("cannot read %s\n", path);
+            return 2;
+        }
+
+        std::vector<modern::db2::Field> fields = {
+            { "f0" }, { "f1" }, { "f2" }, { "f3" },
+        };
+
+        for (size_t i = 0; shapes && i < fields.size(); ++i)
+            if (shapes[i] > 0)
+                fields[i].elements = static_cast<uint16_t>(shapes[i]);
+
+        modern::db2::Definition def{ "AnimationData", path, 0, fields };
+
+        modern::db2::Table table;
+        std::string error;
+
+        if (!table.Load(def, &error))
+        {
+            std::printf("%s: decode failed: %s\n", path, error.empty() ? "(no reason)" : error.c_str());
+            return 1;
+        }
+
+        const auto& rows = table.Rows();
+        std::printf("%s: %zu row(s)\n", path, rows.size());
+
+        for (const modern::db2::wdc5::Row& row : rows)
+        {
+            bool interesting = (idCount == 0);
+
+            for (int i = 0; i < idCount && !interesting; ++i)
+            {
+                const uint32_t want = static_cast<uint32_t>(std::strtoul(ids[i], nullptr, 0));
+                if (row.id == want) interesting = true;
+            }
+
+            if (!interesting) continue;
+
+            std::printf("  id=%u", row.id);
+
+            size_t at = 0;
+            for (size_t field = 0; field < fields.size(); ++field)
+            {
+                std::printf("  f%zu=[", field);
+                for (uint16_t e = 0; e < fields[field].elements; ++e)
+                    std::printf("%s%u", e ? "," : "", row.values[at + e]);
+                at += fields[field].elements;
+                std::printf("]");
+            }
+
+            std::printf("\n");
+        }
+
+        return 0;
+    }
+
     int ProbeLightTables(const char* lightPath, const char* dataPath, const char* paramsPath)
     {
         modern::db2::light::StoreStatus status;
@@ -1014,6 +1096,23 @@ int main(int argc, char** argv)
         return ProbeLightTables(loose ? argv[2] : nullptr,
                                 loose ? argv[3] : nullptr,
                                 loose ? argv[4] : nullptr);
+    }
+
+    // animdb2 <file.db2> <f0> <f1> <f2> <f3> [id ...] -> decodes AnimationData and prints every field.
+    // The element counts come from the command line because the WDC5 reader is positional and rejects the
+    // file on a wrong cardinality; the modern table's shapes are 1/1/2/2.
+    if (argc > 1 && std::string(argv[1]) == "animdb2")
+    {
+        if (argc < 7)
+        {
+            std::printf("usage: animdb2 <file.db2> <f0> <f1> <f2> <f3> [id ...]\n");
+            return 2;
+        }
+
+        int shapes[4];
+        for (int i = 0; i < 4; ++i) shapes[i] = static_cast<int>(std::strtoul(argv[2 + i], nullptr, 0));
+
+        return ProbeAnimationData(argv[2], argc > 7 ? &argv[7] : nullptr, argc > 7 ? argc - 7 : 0, shapes);
     }
 
     if (argc > 1)

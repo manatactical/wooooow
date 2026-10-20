@@ -3943,7 +3943,10 @@ int32_t AnimationData::FindIdByBehaviorAndTier(uint32_t behavior, int32_t tier, 
     }
 
     for (int32_t i = 0; i < count; i++) {
-        AnimationDataRec* candidate = (i < 0 || i >= count) ? nullptr : &records[i];
+        // NOT IN BINARY: `candidate` was dereferenced without a null check. The bounds test above it is
+        // `i < 0 || i >= count`, which can never be true inside this loop, so a table whose record array is
+        // shorter than its count reached a null pointer here.
+        AnimationDataRec* candidate = &records[i];
 
         if (candidate->m_behaviorID == static_cast<int32_t>(behavior) && candidate->m_behaviorTier == tier) {
             *anim = candidate->m_id;
@@ -3976,15 +3979,31 @@ uint32_t CGUnit_C::ResolveAnimForModel(uint32_t animId, CM2Model* model) {
     memset(visited, 0, sizeof(visited));
     uint32_t current = animId;
 
+    // NOT IN BINARY. The tier walk is bounded. s_animTierFallback is { 0, 0, 3, 0, 0 }, so tier 0 falls
+    // back to ITSELF: once a model has no animation for any reachable tier, this retried the same walk
+    // forever and hung the client. A modern mount with sequence ids past ANIM_COUNT hits that every time,
+    // because IsSequenceLoaded reported them absent -- the netherwing mount froze the mount window.
+    //
+    // The walk now visits each tier at most once; when none can satisfy the request the caller gets the
+    // untranslated id, which is what it used before any tier resolution.
+    bool tierVisited[ANIM_COUNT] = {};
+
     while (!AnimationData::FindIdByBehaviorAndTier(current, tier, &result) || !model->IsSequenceLoaded(result)) {
-        AnimationDataRec* rec = g_animationDataDB.GetRecord(current);
+        AnimationDataRec* rec = current < ANIM_COUNT ? g_animationDataDB.GetRecord(current) : nullptr;
 
         if (current >= ANIM_COUNT || visited[current] || !rec || static_cast<int32_t>(current) == rec->m_fallback) {
             if (this->FindDefaultAnimForTier(tier, &result)) {
                 return result;
             }
 
-            tier = s_animTierFallback[tier];
+            const int32_t next = s_animTierFallback[tier];
+
+            if (next == tier || tierVisited[next]) {
+                return animId;
+            }
+
+            tierVisited[tier] = true;
+            tier = next;
             memset(visited, 0, sizeof(visited));
             current = animId;
             continue;

@@ -48,6 +48,10 @@ namespace
     // stutter. The reference uses the same 60 ms for the same reason.
     constexpr uint32_t kHoldMs = 60;
 
+    // The reference's DebugHUD setting: when on, the HUD adds its debug readout (currently the live speed
+    // percentage). Off by default, exactly like the reference's INI. Flip this to 1 to show it.
+    constexpr bool g_debugHud = false;
+
     // What the server announced about itself. Until the first S: arrives these are the reference client's
     // own documented fallbacks, so the bar and shake have sane ends even with no server module.
     struct ServerSpeeds
@@ -763,7 +767,7 @@ namespace
         SetGlobalNumber("WXL_MountAnimHudOn", 1);   // Hud=1
         SetGlobalNumber("WXL_MountAnimHudX", 0);    // HudX=0
         SetGlobalNumber("WXL_MountAnimHudY", -200); // HudY=-200, a little below centre
-        SetGlobalNumber("WXL_MountAnimDbgHud", 0);  // DebugHUD=0
+        SetGlobalNumber("WXL_MountAnimDbgHud", g_debugHud ? 1 : 0);
         SetGlobalNumber("WXL_MountAnimText", 0);    // FlightStateText=0
         SetGlobalNumber("WXL_SF", 1);
     }

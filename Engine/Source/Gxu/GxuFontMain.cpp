@@ -224,7 +224,10 @@ float GxuFontGetOneToOneHeight(CGxFont* face) {
         return 0.0f;
     }
 
-    return static_cast<float>(face->GetPixelSize()) / static_cast<float>(g_heightPixels);
+    // NOT IN BINARY: m_pixelSize, not GetPixelSize(). This is the size to draw text at when the
+    // caller wants one texel per pixel, so it must be the requested size, not the larger raster size
+    // the glyphs were sampled at.
+    return static_cast<float>(face->m_pixelSize) / static_cast<float>(g_heightPixels);
 }
 
 // VERIFY: 1ebc6f2b auto

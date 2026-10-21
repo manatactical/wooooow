@@ -14,7 +14,7 @@
 #include "Engine/Source/Storm/H/storm.h"
 #include "Engine/Source/Tempest/C44Matrix.h"
 
-static const double ONEOVERTEXSIZE = (1.0 / 256.0);
+static const double ONEOVERTEXSIZE = (1.0 / GXU_FONT_ATLAS_SIZE);
 
 // STATIC: 0x00AD9BCC
 TSList<TEXTLINETEXTURE, TSGetLink<TEXTLINETEXTURE> > TEXTLINETEXTURE::s_freeTextLineTextures;
@@ -379,7 +379,9 @@ TEXTLINETEXTURE* TEXTLINETEXTURE::NewTextLineTexture() {
 // VERIFY: be22d63b manual
 // OFFSET: 0x006C4F80
 void TEXTURECACHEROW::EvictGlyph(CHARCODEDESC* desc) {
-    uint32_t needed = desc->m_bitmapData.m_glyphCellWidth;
+    // NOT IN BINARY: include the gutter that CreateNewDesc reserved, otherwise eviction reports fewer
+    // texels freed than were actually taken and the row slowly fills with unreachable space.
+    uint32_t needed = desc->m_bitmapData.m_glyphCellWidth + GXU_FONT_GLYPH_GUTTER;
 
     CHARCODEDESC* glyph = this->m_glyphlist.Head();
 
@@ -391,7 +393,7 @@ void TEXTURECACHEROW::EvictGlyph(CHARCODEDESC* desc) {
 
     while (freed < needed) {
         CHARCODEDESC* next = this->m_glyphlist.Next(desc);
-        uint32_t gap = next ? next->m_glyphStartPixel - desc->m_glyphEndPixel - 1 : 255 - desc->m_glyphEndPixel;
+        uint32_t gap = next ? next->m_glyphStartPixel - desc->m_glyphEndPixel - 1 : (GXU_FONT_ATLAS_SIZE - 1) - desc->m_glyphEndPixel;
         freed += desc->m_glyphEndPixel - desc->m_glyphStartPixel + 1 + gap;
 
         desc = this->m_glyphlist.DeleteNode(desc);
@@ -411,7 +413,7 @@ void TEXTURECACHEROW::EvictGlyph(CHARCODEDESC* desc) {
 
     for (glyph = this->m_glyphlist.Head(); glyph; glyph = this->m_glyphlist.Next(glyph)) {
         CHARCODEDESC* next = this->m_glyphlist.Next(glyph);
-        uint32_t gap = next ? next->m_glyphStartPixel - glyph->m_glyphEndPixel - 1 : 255 - glyph->m_glyphEndPixel;
+        uint32_t gap = next ? next->m_glyphStartPixel - glyph->m_glyphEndPixel - 1 : (GXU_FONT_ATLAS_SIZE - 1) - glyph->m_glyphEndPixel;
 
         if (gap > this->m_widestFreeSlot) {
             this->m_widestFreeSlot = gap;
@@ -423,8 +425,9 @@ void TEXTURECACHEROW::EvictGlyph(CHARCODEDESC* desc) {
 // OFFSET: 0x006C5120
 CHARCODEDESC* TEXTURECACHEROW::CreateNewDesc(GLYPHBITMAPDATA* data, uint32_t rowNumber, uint32_t cellHeight) {
     uint32_t width = data->m_glyphCellWidth;
+    uint32_t slotWidth = width + GXU_FONT_GLYPH_GUTTER;
 
-    if (this->m_widestFreeSlot < width) {
+    if (this->m_widestFreeSlot < slotWidth) {
         return nullptr;
     }
 
@@ -433,7 +436,7 @@ CHARCODEDESC* TEXTURECACHEROW::CreateNewDesc(GLYPHBITMAPDATA* data, uint32_t row
     if (!head) {
         CHARCODEDESC* desc = new (__FILE__, __LINE__) CHARCODEDESC;
         this->m_glyphlist.LinkToTail(desc);
-        this->m_widestFreeSlot -= width;
+        this->m_widestFreeSlot -= slotWidth;
         desc->m_glyphStartPixel = 0;
         desc->m_glyphEndPixel = width - 1;
         desc->m_rowNumber = rowNumber;
@@ -445,7 +448,7 @@ CHARCODEDESC* TEXTURECACHEROW::CreateNewDesc(GLYPHBITMAPDATA* data, uint32_t row
 
     this->m_widestFreeSlot = head->GapToPrevious();
 
-    if (this->m_widestFreeSlot >= width) {
+    if (this->m_widestFreeSlot >= slotWidth) {
         CHARCODEDESC* desc = new (__FILE__, __LINE__) CHARCODEDESC;
         this->m_glyphlist.LinkNode(desc, 2, head);
         desc->m_glyphEndPixel = head->m_glyphStartPixel - 1;
@@ -459,7 +462,7 @@ CHARCODEDESC* TEXTURECACHEROW::CreateNewDesc(GLYPHBITMAPDATA* data, uint32_t row
 
         for (CHARCODEDESC* glyph = this->m_glyphlist.Head(); glyph; glyph = this->m_glyphlist.Next(glyph)) {
             CHARCODEDESC* next = this->m_glyphlist.Next(glyph);
-            uint32_t gap = next ? next->m_glyphStartPixel - glyph->m_glyphEndPixel - 1 : 255 - glyph->m_glyphEndPixel;
+            uint32_t gap = next ? next->m_glyphStartPixel - glyph->m_glyphEndPixel - 1 : (GXU_FONT_ATLAS_SIZE - 1) - glyph->m_glyphEndPixel;
 
             if (gap > this->m_widestFreeSlot) {
                 this->m_widestFreeSlot = gap;
@@ -474,13 +477,13 @@ CHARCODEDESC* TEXTURECACHEROW::CreateNewDesc(GLYPHBITMAPDATA* data, uint32_t row
 
     for (CHARCODEDESC* glyph = head; glyph; ) {
         CHARCODEDESC* next = this->m_glyphlist.Next(glyph);
-        uint32_t gap = next ? next->m_glyphStartPixel - glyph->m_glyphEndPixel - 1 : 255 - glyph->m_glyphEndPixel;
+        uint32_t gap = next ? next->m_glyphStartPixel - glyph->m_glyphEndPixel - 1 : (GXU_FONT_ATLAS_SIZE - 1) - glyph->m_glyphEndPixel;
 
         if (inserted) {
             if (gap > this->m_widestFreeSlot) {
                 this->m_widestFreeSlot = gap;
             }
-        } else if (gap >= width) {
+        } else if (gap >= slotWidth) {
             desc = new (__FILE__, __LINE__) CHARCODEDESC;
             this->m_glyphlist.LinkNode(desc, 1, glyph);
             desc->m_glyphStartPixel = glyph->m_glyphEndPixel + 1;

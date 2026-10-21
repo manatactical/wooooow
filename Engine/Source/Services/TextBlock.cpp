@@ -4,6 +4,7 @@
 #include "Engine/Source/Services/TextBlock.h"
 #include "Engine/Source/Base/Coordinate.h"
 #include "Engine/Source/Gxu/GxuFont.h"
+#include "Engine/Source/Gxu/GxuFontMiscClasses.h"
 #include "Engine/Source/Storm/H/storm.h"
 #include "Engine/Source/Tempest/C2Vector.h"
 #include "Engine/Source/Tempest/CImVector.h"
@@ -368,6 +369,12 @@ HTEXTFONT TextBlockGenerateFont(const char* fontName, uint32_t fontFlags, float 
 
     if (fontFlags & 0x2) {
         gxFlags |= 0x2;
+    }
+
+    // NOT IN BINARY: forward the supersample opt-in. Without this TextBlockGenerateFont drops the bit and
+    // every UI font is supersampled regardless of what the caller asked for.
+    if (fontFlags & GXU_FONTOPT_SUPERSAMPLE) {
+        gxFlags |= GXU_FONTOPT_SUPERSAMPLE;
     }
 
     if (GxuFontCreateFont(fontName, height, hashObj->m_font, gxFlags)) {

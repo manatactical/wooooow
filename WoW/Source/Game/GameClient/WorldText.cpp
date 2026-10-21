@@ -15,6 +15,7 @@
 #include "Engine/Source/Gx/Types.h"
 #include "Engine/Source/Gxu/Gxu.h"
 #include "Engine/Source/Gxu/GxuFont.h"
+#include "Engine/Source/Gxu/GxuFontMiscClasses.h"
 #include "Engine/Source/Gxu/Types.h"
 #include "Engine/Source/Os/TimeManager.h"
 #include "Engine/Source/Services/TextBlock.h"
@@ -34,7 +35,9 @@
 #include "WoW/Source/Ui/WorldFrame.h"
 
 // STATIC: 0x00A41618
-static float s_critHeightCurve[3][4] = {
+// NOT IN BINARY use: kept only so the original table and its address stay documented. CalculateTextHeight
+// no longer lerps size over time -- every style holds one size -- so this curve is unused.
+[[maybe_unused]] static float s_critHeightCurve[3][4] = {
     { 0.0f, 0.1f, 0.1f, 2.0f },
     { 0.1f, 0.2f, 2.0f, 1.0f },
     { 0.2f, 1.0f, 1.0f, 1.0f },
@@ -336,7 +339,6 @@ static void WorldTextSetupOrthoProjection() {
 // OFFSET: 0x007E6CC0
 void WORLDTEXTSTRING::CalculateTextHeight(uint32_t elapsed) {
     const WORLDTEXTTYPE& type = s_worldTextTypes[this->m_type];
-    float progress = static_cast<float>(elapsed) / static_cast<float>(type.m_duration);
     float height;
 
     if (IsDragonWorldTextStyle(this->m_type)) {
@@ -349,19 +351,14 @@ void WORLDTEXTSTRING::CalculateTextHeight(uint32_t elapsed) {
             scale *= s_dragonCritGrowFrom + (1.0f - s_dragonCritGrowFrom) * grown;
         }
         height = s_dragonFontPixels / static_cast<float>(g_heightPixels) * scale;
-    } else if (this->m_type == WT_CRIT || this->m_type == WT_CRIT_HEAL) {
-        float scale = 1.0f;
-
-        for (uint32_t i = 0; i < 3; i++) {
-            if (s_critHeightCurve[i][0] <= progress && s_critHeightCurve[i][1] > progress) {
-                scale = (progress - s_critHeightCurve[i][0]) / (s_critHeightCurve[i][1] - s_critHeightCurve[i][0]) * (s_critHeightCurve[i][3] - s_critHeightCurve[i][2]) + s_critHeightCurve[i][2];
-                break;
-            }
-        }
-
-        height = scale * type.m_endHeight;
     } else {
-        height = progress * (type.m_endHeight - type.m_startHeight) + type.m_startHeight;
+        // NOT IN BINARY behaviour change. These styles used to lerp height from m_startHeight to
+        // m_endHeight across their whole life (and crits ran a curve). Every distinct height is a distinct
+        // font size, and CGxFont caches glyphs per size, so the string was destroyed and re-rasterized on
+        // most frames -- continuously re-sampling the glyph and never settling. Drawing at one size for the
+        // whole life lets the glyph stay cached, which is both sharper and cheaper. The authored end size is
+        // kept so the numbers do not change size relative to each other.
+        height = type.m_endHeight;
     }
 
     if (height <= 0.001f) {
@@ -656,7 +653,9 @@ void WorldTextRenderBatch() {
 // OFFSET: 0x007E7BB0
 void WorldTextInitialize() {
     const char* fontName = FrameScript_GetText("DAMAGE_TEXT_FONT", -1, GENDER_NOT_APPLICABLE);
-    s_worldTextFont = TextBlockGenerateFont(fontName, 0, DDCToNDCHeight(0.018333333f));
+    // NOT IN BINARY: combat numbers opt into supersampling. They are the largest text on screen and the
+    // ones that read as "HD" when they are sharp, so they get the 2x raster while small UI text keeps 1:1.
+    s_worldTextFont = TextBlockGenerateFont(fontName, GXU_FONTOPT_SUPERSAMPLE, DDCToNDCHeight(0.018333333f));
     s_worldTextBatch = GxuFontCreateBatch(false, false);
 
     CStatus status;

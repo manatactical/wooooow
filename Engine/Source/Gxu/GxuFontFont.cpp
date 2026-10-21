@@ -34,7 +34,12 @@ const char* CGxFont::GetName() {
 // VERIFY: 637e266a auto
 // OFFSET: 0x006C2270
 uint32_t CGxFont::GetPixelSize() {
-    return this->m_pixelSize;
+    // NOT IN BINARY behaviour change: returns the rasterized size, not the requested one. Every glyph
+    // metric (advance, bearing, m_pixelsPerUnit kerning) is measured at the raster size, so the
+    // "pixelHeight / GetPixelSize()" ratios in GxuFontString/GxuFontUtil only mean on-screen pixels
+    // when they divide by the size the glyphs were sampled at. With a font that opted out of
+    // supersampling this equals m_pixelSize and nothing changes.
+    return this->m_rasterSize;
 }
 
 // VERIFY: 3c5dbf73 manual
@@ -68,13 +73,36 @@ int32_t CGxFont::UpdateDimensions() {
 
     uint32_t pixelSize = static_cast<uint32_t>(ScreenToPixelHeight(0, height));
 
-    if (pixelSize > 32) {
-        pixelSize = 32;
-    } else if (pixelSize == 0) {
+    // NOT IN BINARY. A zero here used to only log and then proceed, which left m_pixelSize at 0 and made
+    // every ratio downstream divide by zero. Floor it to 1 pixel so a bad font height degrades to
+    // unreadable rather than undefined.
+    if (pixelSize == 0) {
         DebugLog("Error, font %s being created with height %g at screen res of %dx%d which is %d pixels!", this->m_fontName, height, g_widthPixels, g_heightPixels, pixelSize);
+        pixelSize = 1;
+    } else if (pixelSize > GXU_FONT_MAX_PIXEL_SIZE) {
+        pixelSize = GXU_FONT_MAX_PIXEL_SIZE;
     }
 
+    // m_pixelSize is the size the caller asked for and the size one-to-one text is drawn at; the
+    // extent/wrap ratios divide by GetPixelSize(), which is the raster size, so those stay in raster
+    // units. Glyphs are rasterized at m_rasterSize and drawn at scale = screen / raster, which lands
+    // near 1/GXU_FONT_SUPERSAMPLE: linear filtering minifies a high-resolution raster instead of
+    // magnifying a low-resolution one.
     this->m_pixelSize = pixelSize;
+
+    // Supersample only when this font opted in. Everything downstream keys off m_rasterSize, so a font
+    // that opts out behaves exactly as the original did (raster == drawn size, scale == 1).
+    const uint32_t supersample = (this->m_fontFlags & GXU_FONTOPT_SUPERSAMPLE) ? GXU_FONT_SUPERSAMPLE : 1;
+    uint32_t rasterSize = pixelSize * supersample;
+
+    // Clamp against the RASTER ceiling, not GXU_FONT_MAX_PIXEL_SIZE. Using the on-screen cap here made
+    // supersampling a silent no-op: every font drawing at >= 32 px (all of them, on a high-res UI) had
+    // its raster clamped straight back to 32, so nothing was ever oversampled.
+    if (rasterSize > GXU_FONT_MAX_RASTER_SIZE) {
+        rasterSize = GXU_FONT_MAX_RASTER_SIZE;
+    }
+
+    this->m_rasterSize = rasterSize;
 
     int32_t units = face->ascender + abs(face->descender);
 
@@ -82,18 +110,18 @@ int32_t CGxFont::UpdateDimensions() {
         return 0;
     }
 
-    this->m_cellHeight = pixelSize;
+    this->m_cellHeight = rasterSize;
 
-    float baseline = static_cast<float>(pixelSize * face->ascender) / units;
+    float baseline = static_cast<float>(rasterSize * face->ascender) / units;
     this->m_baseline = static_cast<uint32_t>(baseline + 0.5);
 
     if (this->m_fontFlags & 8) {
-        this->m_cellHeight = pixelSize + 4;
+        this->m_cellHeight = rasterSize + 4;
     } else if (this->m_fontFlags & 1) {
-        this->m_cellHeight = pixelSize + 2;
+        this->m_cellHeight = rasterSize + 2;
     }
 
-    int32_t result = FT_Set_Pixel_Sizes(face, pixelSize, 0) == 0;
+    int32_t result = FT_Set_Pixel_Sizes(face, rasterSize, 0) == 0;
 
     this->m_pixelsPerUnit = static_cast<float>(face->size->metrics.x_ppem) / static_cast<float>(face->units_per_EM);
 
@@ -104,7 +132,7 @@ int32_t CGxFont::UpdateDimensions() {
 // OFFSET: 0x006C2480
 bool CGxFont::GetGlyphData(GLYPHBITMAPDATA* data, uint32_t code) {
     FT_Face face = FontFaceGetFace(this->m_fontFaceHandle);
-    FT_Set_Pixel_Sizes(face, this->m_pixelSize, 0);
+    FT_Set_Pixel_Sizes(face, this->m_rasterSize, 0);
 
     uint32_t padding = 0;
 
@@ -114,19 +142,29 @@ bool CGxFont::GetGlyphData(GLYPHBITMAPDATA* data, uint32_t code) {
         padding = 2;
     }
 
-    return IGxuFontGlyphRenderGlyph(face, this->m_pixelSize, code, this->m_baseline, data, this->m_fontFlags & 2, padding);
+    return IGxuFontGlyphRenderGlyph(face, this->m_rasterSize, code, this->m_baseline, data, this->m_fontFlags & 2, padding);
 }
 
 // VERIFY: 3597e899 auto
 // OFFSET: 0x006C24F0
 float CGxFont::GetGlyphBearing(const CHARCODEDESC* desc, bool scaled, float height) {
+    // m_glyphBearing is measured in raster pixels, so the "unscaled" branch has to convert it the same
+    // way the scaled branch does. It returns ceil() of a raw bitmap bearing, which used to equal screen
+    // pixels because glyphs were rasterized at their drawn size; with supersampling it would be 2x too
+    // far right. The unscaled path is the billboarded/world-text one (m_flags & 0x80).
     if (!scaled) {
         float bearing = desc->m_bitmapData.m_glyphBearing;
+        float rasterSize = static_cast<float>(this->m_rasterSize);
+
+        if (rasterSize > 0.0f) {
+            bearing *= static_cast<float>(this->m_pixelSize) / rasterSize;
+        }
+
         return ceil(bearing);
     }
 
     float pixelHeight = ScreenToPixelHeight(1, height);
-    float scale = pixelHeight / this->m_pixelSize;
+    float scale = pixelHeight / this->m_rasterSize;
 
     return scale * desc->m_bitmapData.m_glyphBearing;
 }
@@ -198,7 +236,7 @@ void CGxFont::HandleScreenSizeChange() {
 
 // VERIFY: 4ab2e948 manual
 // OFFSET: 0x006C39A0
-CGxFont::CGxFont() : m_cellHeight(0), m_pixelsPerUnit(0.0f) {
+CGxFont::CGxFont() : m_cellHeight(0), m_pixelsPerUnit(0.0f), m_pixelSize(0), m_rasterSize(0) {
 }
 
 // VERIFY: b72018df manual
@@ -274,7 +312,13 @@ float CGxFont::ComputeStep(uint32_t code, uint32_t nextCode) {
     }
 
     node->m_flags |= 2;
-    node->m_proportionalSpacing = ceil(step);
+
+    // NOT IN BINARY behaviour change: no ceil() when supersampling. The cached spacing is in RASTER
+    // pixels but is later multiplied by scale (~0.5) to reach screen pixels, so ceil() there rounded every
+    // advance up to a whole raster pixel -- two whole screen pixels at 2x. Each glyph then jumped that far
+    // and the string visibly drifted against the unhinted bearing/width. Keeping the exact advance lets the
+    // fractional part ride along in pos.x, which is what subpixel positioning is supposed to do.
+    node->m_proportionalSpacing = (this->m_rasterSize > this->m_pixelSize) ? step : ceil(step);
 
     return node->m_proportionalSpacing;
 }
@@ -355,8 +399,10 @@ CHARCODEDESC* CGxFont::NewCodeDesc(uint32_t code) {
 
         if (!current->m_texture || !TextureGetGxTex(current->m_texture, 1, nullptr)) {
             cache = current;
-            cache->CreateTexture(this->m_fontFlags & 4);
+            // Initialize first: CreateTexture picks its filter from m_theFace's raster/drawn sizes, which
+            // Initialize is what assigns.
             cache->Initialize(this, this->m_cellHeight);
+            cache->CreateTexture(this->m_fontFlags & 4);
             desc = cache->AllocateNewGlyph(&data);
             break;
         }

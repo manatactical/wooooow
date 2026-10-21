@@ -11,7 +11,7 @@
 #include "Engine/Source/Storm/H/storm.h"
 
 // STATIC: 0x00C7D328
-static uint16_t s_textureData[256 * 256];
+static uint16_t s_textureData[GXU_FONT_ATLAS_SIZE * GXU_FONT_ATLAS_SIZE];
 
 // VERIFY: 7a9fdc75 manual
 // OFFSET: 0x006C8E70
@@ -19,11 +19,11 @@ void TEXTURECACHE::PasteGlyphOutlinedMonochrome(const GLYPHBITMAPDATA& data, uin
     const uint8_t* source = static_cast<const uint8_t*>(data.m_data);
     uint32_t thick = this->m_theFace->m_fontFlags & 8;
 
-    uint16_t buffer[256 * 36];
+    static thread_local uint16_t buffer[GXU_FONT_SCRATCH_WIDTH * GXU_FONT_MAX_RASTER_CELL];
     memset(buffer, 0, sizeof(buffer));
 
     uint32_t yStart = data.m_yStart;
-    uint16_t* line = &buffer[256 * yStart + 257];
+    uint16_t* line = &buffer[GXU_FONT_SCRATCH_WIDTH * yStart + 257];
 
     if (thick) {
         line++;
@@ -35,7 +35,7 @@ void TEXTURECACHE::PasteGlyphOutlinedMonochrome(const GLYPHBITMAPDATA& data, uin
         }
 
         source += data.m_glyphPitch;
-        line += 256;
+        line += GXU_FONT_SCRATCH_WIDTH;
     }
 
     uint32_t cellHeight = this->m_theFace->m_cellHeight;
@@ -117,8 +117,8 @@ void TEXTURECACHE::PasteGlyphOutlinedMonochrome(const GLYPHBITMAPDATA& data, uin
             }
         }
 
-        bufferRow += 256;
-        dest += 256;
+        bufferRow += GXU_FONT_SCRATCH_WIDTH;
+        dest += GXU_FONT_ATLAS_SIZE;
     }
 }
 
@@ -131,7 +131,7 @@ void TEXTURECACHE::PasteGlyphNonOutlinedMonochrome(const GLYPHBITMAPDATA& data, 
 
     for (uint32_t y = 0; y < data.m_yStart; y++) {
         memset(dest, 0, size);
-        dest += 256;
+        dest += GXU_FONT_ATLAS_SIZE;
     }
 
     for (uint32_t y = 0; y < data.m_glyphHeight; y++) {
@@ -139,8 +139,13 @@ void TEXTURECACHE::PasteGlyphNonOutlinedMonochrome(const GLYPHBITMAPDATA& data, 
             dest[x] = -(((source[x >> 3] >> (7 - (x & 7))) & 1) != 0);
         }
 
+        // NOT IN BINARY. Clear the remainder of the cell; see PasteGlyphNonOutlinedAA.
+        for (uint32_t x = data.m_glyphWidth; x < data.m_glyphCellWidth; x++) {
+            dest[x] = 0;
+        }
+
         source += pitch;
-        dest += 256;
+        dest += GXU_FONT_ATLAS_SIZE;
     }
 
     int32_t remaining = this->m_theFace->m_cellHeight - data.m_yStart - data.m_glyphHeight;
@@ -148,7 +153,7 @@ void TEXTURECACHE::PasteGlyphNonOutlinedMonochrome(const GLYPHBITMAPDATA& data, 
     if (remaining > 0) {
         for (uint32_t y = 0; y < static_cast<uint32_t>(remaining); y++) {
             memset(dest, 0, size);
-            dest += 256;
+            dest += GXU_FONT_ATLAS_SIZE;
         }
     }
 }
@@ -161,14 +166,14 @@ void TEXTURECACHE::PasteGlyphOutlinedAA(const GLYPHBITMAPDATA& data, uint16_t* d
     const uint8_t* source = static_cast<const uint8_t*>(data.m_data);
     uint32_t thick = this->m_theFace->m_fontFlags & 8;
 
-    uint16_t alpha[256 * 36];
-    uint16_t coverage[256 * 36];
-    uint16_t state[256 * 36];
+    static thread_local uint16_t alpha[GXU_FONT_SCRATCH_WIDTH * GXU_FONT_MAX_RASTER_CELL];
+    static thread_local uint16_t coverage[GXU_FONT_SCRATCH_WIDTH * GXU_FONT_MAX_RASTER_CELL];
+    static thread_local uint16_t state[GXU_FONT_SCRATCH_WIDTH * GXU_FONT_MAX_RASTER_CELL];
 
     memset(state, 0, sizeof(state));
     memset(coverage, 0, sizeof(coverage));
 
-    uint16_t* stateLine = &state[256 * data.m_yStart + 257];
+    uint16_t* stateLine = &state[GXU_FONT_SCRATCH_WIDTH * data.m_yStart + 257];
 
     if (thick) {
         stateLine++;
@@ -186,9 +191,9 @@ void TEXTURECACHE::PasteGlyphOutlinedAA(const GLYPHBITMAPDATA& data, uint16_t* d
             }
         }
 
-        coverageLine += 256;
+        coverageLine += GXU_FONT_SCRATCH_WIDTH;
         source += data.m_glyphPitch;
-        stateLine += 256;
+        stateLine += GXU_FONT_SCRATCH_WIDTH;
     }
 
     uint32_t cellHeight = this->m_theFace->m_cellHeight;
@@ -281,25 +286,26 @@ void TEXTURECACHE::PasteGlyphOutlinedAA(const GLYPHBITMAPDATA& data, uint16_t* d
         }
     }
 
-    uint32_t offset = 0;
-
+    // Two different strides: the scratch grid (state/coverage/alpha) is GXU_FONT_SCRATCH_WIDTH wide,
+    // the atlas is GXU_FONT_ATLAS_SIZE wide. They used to be the same 256 so one index served both;
+    // stepping them together reads the wrong scratch row and scrambles the glyph.
     for (uint32_t y = 0; y < this->m_theFace->m_cellHeight; y++) {
-        uint32_t index = offset;
+        uint32_t scratchIndex = y * GXU_FONT_SCRATCH_WIDTH;
+        uint32_t destIndex = y * GXU_FONT_ATLAS_SIZE;
 
         for (uint32_t x = 0; x < data.m_glyphCellWidth; x++) {
-            if (!state[index]) {
-                dest[index] = 0;
-            } else if (!coverage[index]) {
-                dest[index] = alpha[index] << 12;
+            uint32_t src = scratchIndex + x;
+            uint32_t dst = destIndex + x;
+
+            if (!state[src]) {
+                dest[dst] = 0;
+            } else if (!coverage[src]) {
+                dest[dst] = alpha[src] << 12;
             } else {
-                uint8_t gray = (255 * static_cast<uint8_t>(coverage[index])) >> 12;
-                dest[index] = ((((alpha[index] << 4) | gray) << 4 | gray) << 4) | gray;
+                uint8_t gray = (255 * static_cast<uint8_t>(coverage[src])) >> 12;
+                dest[dst] = ((((alpha[src] << 4) | gray) << 4 | gray) << 4) | gray;
             }
-
-            index++;
         }
-
-        offset += 256;
     }
 }
 
@@ -312,7 +318,7 @@ void TEXTURECACHE::PasteGlyphNonOutlinedAA(const GLYPHBITMAPDATA& data, uint16_t
 
     for (uint32_t y = 0; y < data.m_yStart; y++) {
         memset(dest, 0, size);
-        dest += 256;
+        dest += GXU_FONT_ATLAS_SIZE;
     }
 
     for (uint32_t y = 0; y < data.m_glyphHeight; y++) {
@@ -320,8 +326,15 @@ void TEXTURECACHE::PasteGlyphNonOutlinedAA(const GLYPHBITMAPDATA& data, uint16_t
             dest[x] = (source[x] << 8) | 0xFFF;
         }
 
+        // NOT IN BINARY. Clear the rest of the cell. Only m_glyphWidth texels are written above, but the
+        // quad samples the whole m_glyphCellWidth, and the atlas slot is reused after eviction -- so these
+        // columns kept the previous glyph's pixels and showed up as artifacts inside the letter box.
+        for (uint32_t x = data.m_glyphWidth; x < data.m_glyphCellWidth; x++) {
+            dest[x] = 0;
+        }
+
         source += pitch;
-        dest += 256;
+        dest += GXU_FONT_ATLAS_SIZE;
     }
 
     int32_t remaining = this->m_theFace->m_cellHeight - data.m_yStart - data.m_glyphHeight;
@@ -329,7 +342,7 @@ void TEXTURECACHE::PasteGlyphNonOutlinedAA(const GLYPHBITMAPDATA& data, uint16_t
     if (remaining > 0) {
         for (uint32_t y = 0; y < static_cast<uint32_t>(remaining); y++) {
             memset(dest, 0, size);
-            dest += 256;
+            dest += GXU_FONT_ATLAS_SIZE;
         }
     }
 }
@@ -339,7 +352,7 @@ void TEXTURECACHE::PasteGlyphNonOutlinedAA(const GLYPHBITMAPDATA& data, uint16_t
 void TEXTURECACHE::UpdateDirty() {
     if (this->m_anyDirtyGlyphs && this->m_texture) {
         CGxTex* gxTex = TextureGetGxTex(this->m_texture, 1, nullptr);
-        GxTexUpdate(gxTex, 0, 0, 256, 256, 1);
+        GxTexUpdate(gxTex, 0, 0, GXU_FONT_ATLAS_SIZE, GXU_FONT_ATLAS_SIZE, 1);
         this->m_anyDirtyGlyphs = 0;
     }
 }
@@ -378,7 +391,16 @@ void TEXTURECACHE::TextureCallback(EGxTexCommand command, uint32_t width, uint32
             }
 
             CGxFont* font = cache->m_theFace;
-            uint16_t* dest = &s_textureData[glyph->m_glyphStartPixel + ((glyph->m_rowNumber * font->m_cellHeight) << 8)];
+            uint32_t rowTop = glyph->m_rowNumber * font->m_cellHeight;
+
+            // NOT IN BINARY. The paste routines walk dest upward by GXU_FONT_ATLAS_SIZE per row and
+            // sideways across the cell, so both extents have to be inside the page.
+            if (rowTop + font->m_cellHeight > GXU_FONT_ATLAS_SIZE ||
+                glyph->m_glyphStartPixel + glyph->m_bitmapData.m_glyphCellWidth > GXU_FONT_ATLAS_SIZE) {
+                continue;
+            }
+
+            uint16_t* dest = &s_textureData[glyph->m_glyphStartPixel + rowTop * GXU_FONT_ATLAS_SIZE];
 
             if (font->m_fontFlags & 1) {
                 if (font->m_fontFlags & 2) {
@@ -391,29 +413,59 @@ void TEXTURECACHE::TextureCallback(EGxTexCommand command, uint32_t width, uint32
             } else {
                 cache->PasteGlyphNonOutlinedAA(glyph->m_bitmapData, dest);
             }
+
+            // NOT IN BINARY. Clear the reserved gutter to transparent. The paste routines only write the
+            // glyph's own cell, and the atlas slot is reused after eviction, so without this the gutter
+            // keeps stale texels from the previous glyph and linear sampling pulls them into the new one.
+            for (uint32_t gy = 0; gy < font->m_cellHeight; gy++) {
+                uint16_t* grow = dest + gy * GXU_FONT_ATLAS_SIZE + glyph->m_bitmapData.m_glyphCellWidth;
+
+                for (uint32_t gx = 0; gx < GXU_FONT_GLYPH_GUTTER; gx++) {
+                    if (glyph->m_glyphStartPixel + glyph->m_bitmapData.m_glyphCellWidth + gx < GXU_FONT_ATLAS_SIZE) {
+                        grow[gx] = 0;
+                    }
+                }
+            }
         }
     }
 
-    texelStrideInBytes = 512;
+    texelStrideInBytes = GXU_FONT_ATLAS_SIZE * 2;
     texels = s_textureData;
 }
 
 // VERIFY: 0f656a97 auto
 // OFFSET: 0x006CA050
 void TEXTURECACHE::CreateTexture(int32_t filter) {
-    CGxTexFlags flags(static_cast<EGxTexFilter>(filter != 0), 0, 0, 0, 0, 0, 1, 0, 0, 0);
-    this->m_texture = TextureCreate(256, 256, GxTex_Argb4444, GxTex_Argb4444, flags, this, TEXTURECACHE::TextureCallback, "GxuFont", 0);
+    // NOT IN BINARY behaviour change. The caller passes (m_fontFlags & 4), which is 0 for every UI
+    // font (outline 1 / thick outline 5 both drop the bit), so this used to always select GxTex_Nearest.
+    // That was correct while a glyph was rasterized at exactly its drawn size -- the sample landed on
+    // texel centers and nearest reproduced it pixel for pixel. With GXU_FONT_SUPERSAMPLE > 1 the quad is
+    // drawn at a fraction of the raster size, so nearest skips texels and the glyph aliases. Linear is
+    // required for any minification; keep nearest only for an explicit nearest request at 1:1.
+    const bool nearestRequested = filter != 0;
+    const bool mustFilter = this->m_theFace && this->m_theFace->m_rasterSize > this->m_theFace->m_pixelSize;
+    const EGxTexFilter texFilter = (nearestRequested && !mustFilter) ? GxTex_Nearest : GxTex_Linear;
+
+    CGxTexFlags flags(texFilter, 0, 0, 0, 0, 0, 1, 0, 0, 0);
+    this->m_texture = TextureCreate(GXU_FONT_ATLAS_SIZE, GXU_FONT_ATLAS_SIZE, GxTex_Argb4444, GxTex_Argb4444, flags, this, TEXTURECACHE::TextureCallback, "GxuFont", 0);
 }
 
 // VERIFY: ba005b39 manual
 // OFFSET: 0x006CA130
 void TEXTURECACHE::Initialize(CGxFont* face, uint32_t cellHeight) {
     this->m_theFace = face;
-    uint32_t rows = 256 / cellHeight;
+    uint32_t rows = GXU_FONT_ATLAS_SIZE / cellHeight;
+
+    // NOT IN BINARY. cellHeight >= GXU_FONT_ATLAS_SIZE would make the division zero and leave the cache
+    // with no rows, so no glyph could ever be allocated.
+    if (!rows) {
+        rows = 1;
+    }
+
     this->m_textureRows.SetCount(rows);
 
     for (uint32_t i = 0; i < rows; i++) {
-        this->m_textureRows.m_data[i].m_widestFreeSlot = 256;
+        this->m_textureRows.m_data[i].m_widestFreeSlot = GXU_FONT_ATLAS_SIZE;
     }
 }
 

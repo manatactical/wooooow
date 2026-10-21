@@ -259,10 +259,15 @@ void CGxString::InitializeTextLine(const char* text, uint32_t numBytes, CImVecto
     float scale = pixelHeight / this->m_currentFace->GetPixelSize();
     float cellHeight = ScreenToPixelHeight((this->m_flags >> 7) & 1, this->m_currentFontHeight);
 
+    // NOT IN BINARY: the +4/+2 below is the outline padding baked into m_cellHeight, which lives in
+    // raster pixels. cellHeight is screen pixels, so the padding has to be scaled the same way the cell
+    // width is (see the outline advance further down). While glyphs were rasterized at their drawn size
+    // scale was 1 and the two coincided; with supersampling the raw constant made outline quads taller
+    // than they should be.
     if (this->m_currentFace->m_fontFlags & 8) {
-        cellHeight = cellHeight + 4.0;
+        cellHeight = cellHeight + 4.0 * scale;
     } else if (this->m_currentFace->m_fontFlags & 1) {
-        cellHeight = cellHeight + 2.0;
+        cellHeight = cellHeight + 2.0 * scale;
     }
 
     if (parseInfo.m_state == HYPERLINKDISPLAY) {
@@ -478,13 +483,26 @@ void CGxString::InitializeTextLine(const char* text, uint32_t numBytes, CImVecto
                     }
 
                     uint32_t flags = this->m_flags;
+                    const bool supersampled = this->m_currentFace->m_rasterSize > this->m_currentFace->m_pixelSize;
 
-                    if (!(flags & 0x80)) {
+                    // x is a per-glyph INCREMENT (x = step * scale), consumed by pos.x = x + pos.x below.
+                    // Snapping it here rounds every advance independently and the error accumulates across
+                    // the string -- that is the drift. Leave the increment exact and let pos.x carry the
+                    // fraction; whole-pixel advances are what make the jitter visible.
+                    if (!(flags & 0x80) && !supersampled) {
                         x = x + 0.5;
                         x = floor(x);
                     }
 
                     pos.x = x + pos.x;
+
+                    // Vertical: the quad's top and bottom are pos.y + metric * scale, and nothing ever
+                    // snapped them. With linear filtering a fractional baseline samples between texel rows
+                    // and every glyph looks soft. Snapping the baseline puts the vertical sample back on
+                    // texel centres -- this is the blur fix.
+                    if (!(flags & 0x80)) {
+                        pos.y = floor(pos.y + 0.5);
+                    }
 
                     VERT vert;
                     vert.m_vc.x = pos.x;
@@ -496,14 +514,22 @@ void CGxString::InitializeTextLine(const char* text, uint32_t numBytes, CImVecto
 
                     float width = desc->m_bitmapData.m_glyphCellWidth * scale;
 
-                    if (!(this->m_flags & 0x80)) {
+                    // NOT IN BINARY: only floor the width at 1:1. Flooring it per glyph while the whole
+                    // string is drawn at a fraction of the raster size drops up to a pixel off each glyph's
+                    // own box, so advances no longer match ComputeStep's and the letters visibly shift
+                    // against each other. Fractional edges are what linear filtering antialiases.
+                    if (!(this->m_flags & 0x80) && !supersampled) {
                         width = floor(width);
                     }
 
+                    // NOT IN BINARY: scaled to match the outline advance above (4.0 * scale / scale +
+                    // scale). This is screen-space geometry, so the baked-in half-padding has to follow the
+                    // same raster-to-screen scale as the cell width; leaving it at a raw 2.0/1.0 put every
+                    // glyph one screen pixel low once glyphs were rasterized larger than they are drawn.
                     if (this->m_currentFace->m_fontFlags & 8) {
-                        vert.m_vc.y = vert.m_vc.y - 2.0;
+                        vert.m_vc.y = vert.m_vc.y - 2.0 * scale;
                     } else if (this->m_currentFace->m_fontFlags & 1) {
-                        vert.m_vc.y = vert.m_vc.y - 1.0;
+                        vert.m_vc.y = vert.m_vc.y - scale;
                     }
 
                     vert.m_vc.y = desc->m_bitmapData.m_yOffset * scale + vert.m_vc.y;

@@ -36,6 +36,12 @@ struct CGxFont : public TSLinkedNode<CGxFont> {
     /* 0188 */ float m_pixelsPerUnit;
     /* 018C */ TEXTURECACHE m_textureCache[8];
     /* 024C */ uint32_t m_pixelSize;
+    // NOT IN BINARY. The size glyphs are actually rasterized at: m_pixelSize * GXU_FONT_SUPERSAMPLE,
+    // clamped to GXU_FONT_MAX_PIXEL_SIZE. m_pixelSize stays the requested on-screen size (what
+    // GxuFontGetOneToOneHeight needs); GetPixelSize() returns m_rasterSize, because every glyph metric
+    // is measured at the raster size and the extent/wrap ratios divide by it. Appended after the binary
+    // fields on purpose, so the original layout is untouched.
+    uint32_t m_rasterSize;
 
     CGxFont();
     ~CGxFont();

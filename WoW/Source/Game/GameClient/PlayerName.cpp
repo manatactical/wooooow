@@ -7,6 +7,7 @@
 #include "Engine/Source/FrameScript/FrameScript.h"
 #include "Engine/Source/Gx/CGxTexFlags.h"
 #include "Engine/Source/Gxu/GxuFont.h"
+#include "Engine/Source/Gxu/GxuFontMiscClasses.h"
 #include "Engine/Source/Services/Texture.h"
 #include "Engine/Source/Storm/H/storm.h"
 #include "Engine/Source/Model2/M2Model.h"
@@ -96,7 +97,9 @@ void PlayerNameInitialize() {
     const char* fontName;
 
     if (FrameScript_GetVariable("UNIT_NAME_FONT", fontName)) {
-        GxuFontCreateFont(fontName, 0.99f, s_playerNameFont, 4);
+        // NOT IN BINARY: NPC/player name text opts into supersampling. Flag 4 is the caller's (outline
+        // padding) and GXU_FONTOPT_SUPERSAMPLE is the 2x raster; the two are independent bits.
+        GxuFontCreateFont(fontName, 0.99f, s_playerNameFont, 4 | GXU_FONTOPT_SUPERSAMPLE);
     }
 
     s_playerNameBatch = GxuFontCreateBatch(true, true);

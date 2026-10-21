@@ -10,6 +10,7 @@
 #endif
 #include <windows.h>
 
+#include "Engine/Source/BlizzardCore/SFile2-Core.h"
 #include "Engine/Source/FrameScript/FrameScript.h"
 #include "Engine/Source/Os/TimeManager.h"
 #include "Engine/Source/Os/Input.h"
@@ -68,6 +69,14 @@ namespace
     {
         ServerSpeeds m_speeds;
 
+        // The server announces a stack count on a timer, so between announces it is stale. These model
+        // the recharge locally from the announce anchor, which is what stops a press that SHOULD work
+        // from being refused by the client's own stale count.
+        int32_t  m_stacksBase = 0;
+        uint32_t m_stacksBaseMs = 0;
+        uint32_t m_stacksAtLastAnnounce = 0;
+        uint32_t m_stacksAnnounceMs = 0;
+
         // The last link message sent, so a steady state does not repeat itself.
         bool     m_sentAdvFly   = false;
         char     m_sentState    = 0;
@@ -114,6 +123,10 @@ namespace
     };
 
     State s_state;
+
+    // Defined with the boost send, but PublishHud needs it (the orb row shows the same estimate a press
+    // is judged on, so the two cannot disagree).
+    int32_t EffectiveStacks(uint32_t nowMs);
 
     lua_State* L()
     {
@@ -289,6 +302,22 @@ namespace
         s_state.m_speeds.m_maxStacks = static_cast<uint32_t>(values[4]);
         s_state.m_speeds.m_boostFadeMs = static_cast<uint32_t>(values[5]);
         s_state.m_speeds.m_stacks    = static_cast<uint32_t>(values[6]);
+        // The anchor moves with every announce, so a value only becomes "the server's truth" once it has
+        // actually changed; the local clock is then re-synced to it. Anything else would rewind the clock
+        // on every 5 s heartbeat.
+        const uint32_t announceMs = static_cast<uint32_t>(OsGetAsyncTimeMs());
+        const bool stackCountMoved = s_state.m_speeds.m_received
+            && static_cast<uint32_t>(values[6]) != s_state.m_stacksAtLastAnnounce;
+
+        s_state.m_stacksAtLastAnnounce = static_cast<uint32_t>(values[6]);
+        s_state.m_stacksAnnounceMs = announceMs;
+
+        if (!s_state.m_speeds.m_received || stackCountMoved)
+        {
+            s_state.m_stacksBase = static_cast<int32_t>(values[6]);
+            s_state.m_stacksBaseMs = announceMs;
+        }
+
         s_state.m_speeds.m_stackMs     = static_cast<uint32_t>(values[7]);
         s_state.m_speeds.m_stackDiveMs = static_cast<uint32_t>(values[8]);
         s_state.m_speeds.m_received  = true;
@@ -688,6 +717,8 @@ namespace
         {
             s_state.m_uiFill = fill;
             SetGlobalNumber("WXL_MountAnimFill", fill);
+            MODERN_ASSETS_LOG_INFO("hud: fill=%.3f pct=%.0f level=%.0f dive=%.0f boost=%.0f",
+                                   fill, pct, level, dive, boost);
         }
 
         // Where the boost tint starts: the dive ceiling's position on the same curve. The dive ceiling
@@ -698,9 +729,14 @@ namespace
             SetGlobalNumber("WXL_MountAnimDiveFrac", 0.5);
         }
 
-        if (static_cast<int32_t>(speeds.m_stacks) != s_state.m_uiStacks)
+        // The orb row shows the LOCAL estimate, not the raw announce value: the announce is only every few
+        // seconds, so the raw count sits stale between them and the row disagreed with what SPACE would
+        // actually accept. EffectiveStacks is the same function the press uses, so the two cannot disagree.
+        const int32_t shownStacks = EffectiveStacks(nowMs);
+
+        if (shownStacks != s_state.m_uiStacks)
         {
-            s_state.m_uiStacks = static_cast<int32_t>(speeds.m_stacks);
+            s_state.m_uiStacks = shownStacks;
             SetGlobalNumber("WXL_MountAnimStacks", s_state.m_uiStacks);
         }
 
@@ -709,8 +745,6 @@ namespace
             s_state.m_uiMaxStacks = static_cast<int32_t>(speeds.m_maxStacks);
             SetGlobalNumber("WXL_MountAnimMaxStacks", s_state.m_uiMaxStacks);
         }
-
-        (void)nowMs;
     }
 
     // The HUD's own settings, published once. These are the reference INI's Hud / HudX / HudY / DebugHUD
@@ -803,17 +837,64 @@ namespace
             return;
         }
 
-        // Same 200 ms floor as the state link: the server drops floods, and a chained SPACE should not outrun
-        // the cadence it asked for.
-        if (nowMs - s_state.m_lastSendMs < kSendIntervalMs)
-        {
-            return;
-        }
-
+        // No 200 ms floor here. A boost is not a state reiteration -- the server deliberately exempts it
+        // from its own flood guard because each press spends a stack and must be answered. Throttling it
+        // client-side is what made a held-stack press silently do nothing.
         SendLink("WXLMS", "1B");
 
         s_state.m_lastSendMs = nowMs;
         s_state.m_lastAnyMs = nowMs;
+    }
+
+    // How many stacks the server can have by now. The announce is the truth but it only arrives every few
+    // seconds, and it is also the only thing that ever told us the count -- so with the confirmed count alone
+    // a stack that has since recharged (or one that just got granted) reads as absent and the press is
+    // dropped. This extrapolates from the last announce using the same cadence the server uses.
+    int32_t EffectiveStacks(uint32_t nowMs)
+    {
+        const ServerSpeeds& speeds = s_state.m_speeds;
+
+        if (!speeds.m_received || speeds.m_maxStacks == 0)
+        {
+            return 0;
+        }
+
+        int32_t stacks = s_state.m_stacksBase;
+
+        // Dive recharges faster; use the cadence the current flight state implies.
+        const uint32_t interval = s_state.m_sentState == kStateDive
+            ? (speeds.m_stackDiveMs ? speeds.m_stackDiveMs : speeds.m_stackMs)
+            : speeds.m_stackMs;
+
+        if (!interval)
+        {
+            return stacks;
+        }
+
+        const uint32_t elapsed = nowMs - s_state.m_stacksBaseMs;
+        stacks += static_cast<int32_t>(elapsed / interval);
+
+        if (stacks < 0)
+        {
+            stacks = 0;
+        }
+
+        if (stacks > static_cast<int32_t>(speeds.m_maxStacks))
+        {
+            stacks = static_cast<int32_t>(speeds.m_maxStacks);
+        }
+
+        return stacks;
+    }
+
+    // Records a local spend so the estimate drops immediately instead of re-claiming the stack until the
+    // next announce lands.
+    void NoteLocalSpend(uint32_t nowMs)
+    {
+        const int32_t stacks = EffectiveStacks(nowMs);
+
+        s_state.m_stacksBase = stacks > 0 ? stacks - 1 : 0;
+        s_state.m_stacksBaseMs = nowMs;
     }
 
     // The talent panel's requests, raised by the addon through WXL_TalentToggle / WXL_TalentConfirm / etc.
@@ -1265,7 +1346,8 @@ namespace SpeedFlying
         // cannot, because the stock binding fires on the down-edge before this code runs. The binding may
         // only be swapped while the key is UP: changing it mid-press latches the ascend on permanently.
         const bool flying = (unit->m_movementData.m_flags & MOVEMENTFLAG_FLYING) != 0;
-        const bool wantSpaceBound = advFly && flying && s_state.m_speeds.m_stacks > 0;
+        const int32_t stacks = EffectiveStacks(timeMs);
+        const bool wantSpaceBound = advFly && flying && stacks > 0;
 
         if (!spaceNow && wantSpaceBound != s_state.m_uiSpaceBound)
         {
@@ -1273,21 +1355,16 @@ namespace SpeedFlying
             SetGlobalNumber("WXL_MountAnimSpaceBound", wantSpaceBound ? 1 : 0);
         }
 
-        if (spacePressed && s_state.m_speeds.m_stacks > 0 && flying)
+        if (spacePressed && stacks > 0 && flying)
         {
             SendBoost(advFly, timeMs);
             s_state.m_lastBoostMs = timeMs;
 
             // Force the flap clip from its start. Without this a chained burst plays nothing new, and
             // a burst during a climb or dive never shows at all.
-            unit->m_flgtBoostDirty = 1;
+            unit->m_flgtBoostRequestMs = timeMs ? timeMs : 1;
 
-            // Mirror the spend at once: an S: announce minted before the server processed this message
-            // still shows the old count, so the orb would briefly lie until the next announce.
-            if (s_state.m_speeds.m_stacks > 0)
-            {
-                --s_state.m_speeds.m_stacks;
-            }
+            NoteLocalSpend(timeMs);
         }
 
         // Every SPACE release stops the ascend, even when this module did not start it. While the

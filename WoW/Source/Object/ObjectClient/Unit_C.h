@@ -1051,10 +1051,11 @@ class CGUnit_C : public CGObject_C, public CGUnit {
     /* ---- */ uint32_t m_flgtBeatUntilMs = 0;
     /* ---- */ uint32_t m_flgtBeatNextMs = 0;
     /* ---- */ uint32_t m_flgtBeatRng = 0;
-    // Set when a boost must re-push the flap clip from its start even though that same clip is already
-    // playing: a chained burst otherwise inherits the previous burst's pose instead of flapping again.
-    // The module sets it on every boost press; ChooseMountFlightAnim consumes it.
-    /* ---- */ uint8_t  m_flgtBoostDirty = 0;
+    // When a boost press was requested. A TIMESTAMP, not a bool: if the applier cannot run that frame (the
+    // mount is not loaded yet, or the unit is in a state that excludes flight animation) a latch stayed set
+    // and fired the boost clip minutes later, which is the "boost animation plays on its own" bug. A request
+    // older than kBoostRequestMs is simply dropped.
+    /* ---- */ uint32_t m_flgtBoostRequestMs = 0;
     // When the boost clip ends. 0 = not boosting.
     /* ---- */ uint32_t m_flgtBoostUntilMs = 0;
     // Set by ChooseMountFlightAnim when the boost clip must be re-pushed from its start even though the

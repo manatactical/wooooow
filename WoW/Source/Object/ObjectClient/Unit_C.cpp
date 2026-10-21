@@ -4644,23 +4644,14 @@ namespace
         return false;
     }
 
-    // The wingbeat that breaks up a level glide. These ARE the one-shot flap ids: they play a single beat and
-    // stop, which is exactly what is wanted here and exactly wrong as a sustained clip.
-    constexpr uint32_t kBeatLadder[] = { 1680, 1702, 1726, 1638 };
-
-    // The button boost's clip: AdvFlyFlapForward. A boost is a deliberate override of the state clip and
-    // plays once, then hands the slot back -- the reference's BoostAnim default.
-    //
-    // 1706 must NOT appear in kBeatLadder. Every id here is a one-shot flap (docs/M2-ANIMATIONS.md), so a
-    // wingbeat that fell through to 1706 played the boost's own animation at random while gliding -- the
-    // boost looked like it fired on its own. The beat gets the other flaps only; a mount carrying nothing
-    // but 1706 simply does not beat, which is the honest answer.
+    // The button boost's clip: AdvFlyFlapForward. This is the ONLY spontaneous flap in the client. A
+    // randomised wingbeat over a level glide was layered here too, and because a level clip is a glide any
+    // one-shot flap on top of it is indistinguishable from the boost animation firing on its own -- which is
+    // exactly the bug that was reported. The beat layer is gone, so nothing flaps without a boost press.
     constexpr uint32_t kBoostLadder[] = { 1706 };
 
     // Level is a glide on a retail mount, and a glide that never changes reads as frozen. One beat every
     // 4-8 seconds, the reference module's interval, with a fresh random gap each time.
-    constexpr uint32_t kBeatMinMs = 4000;
-    constexpr uint32_t kBeatMaxMs = 8000;
 
     // A clip duration read from the file is data, not truth: a corrupt or hostile sequence with a huge
     // m_duration would pin one clip on screen for hours. The longest legitimate mount clip is under 5 s.
@@ -4930,16 +4921,28 @@ uint32_t CGUnit_C::ChooseMountFlightAnim(const M2Data* data, uint32_t riderAnim)
     //
     // A boost outranks the beat and every state clip. It is forced on every press, not only when the state
     // changes: a chained burst spent mid-flap would otherwise inherit the previous burst's pose instead of
-    // flapping forward again. m_flgtBoostDirty is that "just pressed" edge, set by the module.
+    // flapping forward again.
+    //
+    // The request is a timestamp so a stale one can expire. A latch was wrong: when this function was not
+    // reached on the press frame, the flag survived and played the boost clip much later, out of nowhere.
     {
         const uint32_t boostId = FirstPresentId(data, kBoostLadder, _countof(kBoostLadder));
 
-        if (boostId && (this->m_flgtBoostDirty || (this->m_flgtBoostUntilMs
+        // Anything older than this was never serviced; dropping it is what stops a late phantom boost.
+        constexpr uint32_t kBoostRequestMs = 250;
+
+        if (this->m_flgtBoostRequestMs
+            && static_cast<int32_t>(now - this->m_flgtBoostRequestMs) > static_cast<int32_t>(kBoostRequestMs))
+        {
+            this->m_flgtBoostRequestMs = 0;
+        }
+
+        if (boostId && (this->m_flgtBoostRequestMs || (this->m_flgtBoostUntilMs
             && static_cast<int32_t>(now - this->m_flgtBoostUntilMs) < 0)))
         {
-            if (this->m_flgtBoostDirty)
+            if (this->m_flgtBoostRequestMs)
             {
-                this->m_flgtBoostDirty = 0;
+                this->m_flgtBoostRequestMs = 0;
                 this->m_flgtBoostUntilMs = now + SequenceDuration(data, boostId, 1000);
                 this->m_flgtBeatUntilMs = 0;  // a beat in flight would replay the clip we are replacing
                 this->m_flgtBeatNextMs = 0;
@@ -4964,53 +4967,16 @@ uint32_t CGUnit_C::ChooseMountFlightAnim(const M2Data* data, uint32_t riderAnim)
             this->m_flgtBoostUntilMs = 0;
         }
     }
-    if (wanted == FLGT_LEVEL)
-    {
-        const uint32_t beatId = FirstPresentId(data, kBeatLadder, _countof(kBeatLadder));
-
-        if (beatId)
-        {
-            if (this->m_flgtBeatUntilMs)
-            {
-                if (static_cast<int32_t>(now - this->m_flgtBeatUntilMs) < 0)
-                {
-                    this->m_flgtAppliedState = wanted;
-                    this->m_flgtAppliedId = beatId;
-                    return beatId;
-                }
-
-                this->m_flgtBeatUntilMs = 0;
-
-                if (!this->m_flgtBeatRng)
-                {
-                    this->m_flgtBeatRng = now | 1u;
-                }
-
-                // xorshift: no seeding to get wrong, and the gap only has to look irregular.
-                this->m_flgtBeatRng ^= this->m_flgtBeatRng << 13;
-                this->m_flgtBeatRng ^= this->m_flgtBeatRng >> 17;
-                this->m_flgtBeatRng ^= this->m_flgtBeatRng << 5;
-                this->m_flgtBeatNextMs = now + kBeatMinMs + (this->m_flgtBeatRng % (kBeatMaxMs - kBeatMinMs + 1));
-            }
-            else if (!this->m_flgtBeatNextMs)
-            {
-                this->m_flgtBeatNextMs = now + kBeatMinMs;
-            }
-            else if (static_cast<int32_t>(now - this->m_flgtBeatNextMs) >= 0)
-            {
-                this->m_flgtBeatUntilMs = now + SequenceDuration(data, beatId, 900);
-                this->m_flgtAppliedState = wanted;
-                this->m_flgtAppliedId = beatId;
-                return beatId;
-            }
-        }
-    }
-    else
-    {
-        // Any real climb, dive, stop or sidestep cancels a beat in flight and re-arms the clock.
-        this->m_flgtBeatUntilMs = 0;
-        this->m_flgtBeatNextMs = 0;
-    }
+    // There is deliberately NO spontaneous flap layer here.
+    //
+    // A randomised one-shot flap over a level glide is what the reference does, and it is why a flap
+    // appeared out of nowhere: the level clip is a glide, so any one-shot flap layered on top reads as the
+    // boost animation firing by itself. The boost clip must be the only thing that ever flaps, so the mount
+    // simply holds its state clip until the player boosts.
+    //
+    // The beat clocks are still reset here so a stale one cannot fire after a boost ends.
+    this->m_flgtBeatUntilMs = 0;
+    this->m_flgtBeatNextMs = 0;
 
     this->m_flgtAppliedState = wanted;
     this->m_flgtAppliedId = anim;

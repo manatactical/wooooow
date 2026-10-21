@@ -20,6 +20,7 @@
 #include "Engine/Source/Tempest/CImVector.h"
 #include "WoW/Source/Game/GameClient/WTOBJECT.h"
 
+class M2Data;
 class CGPlayer_C;
 class CGWorldFrame;
 class CGPartyPetState;
@@ -267,6 +268,16 @@ class CGUnit_C : public CGObject_C, public CGUnit {
     /* 0984 */ CEffect* m_auraEffects;
     /* 0988 */ CMissile* unk_0988;
     /* 098C */ CM2Model* m_mountModel;
+
+    // NOT IN BINARY. Resolved flight clips for the current mount, one id per EFlgithRole (0 = none), plus the
+    // one-shot flap and the model the set was resolved from.
+    /* ---- */ uint32_t m_flightRoleIds[6] = {};
+    /* ---- */ uint32_t m_flightFlapId = 0;
+    /* ---- */ const void* m_flightRolesFor = nullptr;
+    /* ---- */ uint32_t m_flightBeatUntilMs = 0;
+    /* ---- */ uint32_t m_flightBeatNextMs = 0;
+    /* ---- */ uint32_t m_flightBeatRng = 0;
+    /* ---- */ uint32_t m_mountFlightApplied = 0xFFFFFFFF;
     /* 0990 */ float m_mountScale;
     /* 0994 */ uint8_t m_forceWorldModelAlpha;
     /* 0998 */ uint32_t m_virtualItemDisplayId [3];
@@ -570,6 +581,49 @@ class CGUnit_C : public CGObject_C, public CGUnit {
     uint32_t GetCurrentMountAnimId() const;
     void GetCurrentAnimationInfo(M2BoneSequenceInfo* mount, M2BoneSequenceInfo* base, M2BoneSequenceInfo* torso, int32_t keepFinished) const;
     int32_t FindDefaultAnimForTier(int32_t tier, uint32_t* anim) const;
+
+    /**
+     * @brief The flight movements a mount can be asked to perform.
+     *
+     * These are roles, not ids: which sequence carries a role is decided per model by ResolveFlightRole.
+     */
+    enum EFlgithRole
+    {
+        FLYROLE_HOVER = 0,
+        FLYROLE_FORWARD,
+        FLYROLE_BACKWARD,
+        FLYROLE_LEFT,
+        FLYROLE_RIGHT,
+        FLYROLE_COUNT,
+    };
+
+    /**
+     * @brief Resolves which of the model's sequences plays a given flight role.
+     *
+     * Names come from wowdev.wiki's M2/AnimationList, which is what makes this possible at all: the ids a
+     * modern mount carries are meaningless by number, but each one's fallback chain terminates on a stock id
+     * whose official name says what it is. Two signals are used, both read from the model:
+     *
+     *   1. the retail advanced-flying block (AdvFly*) -- present or not is a property of the model, and when
+     *      present it supplies the real glide/left/right clips;
+     *   2. otherwise the fallback chain -- the model's own id reaching the named stock sequence in the fewest
+     *      hops wins, so a spell animation that merely falls back to FlyStand cannot masquerade as hover.
+     *
+     * @return the sequence id for the role, or 0 when the model has no clip for it.
+     */
+    uint32_t ResolveFlightRole(const M2Data* data, EFlgithRole role);
+
+    /// One-shot wing-beat over the glide, at an irregular interval.
+    uint32_t ChooseMountWingBeat(const M2Data* data, uint32_t nowMs, uint32_t glideAnim);
+
+    /// Drives a flying mount's animation every frame from the rider's movement (see PreAnimate).
+    void UpdateMountFlightAnimation(uint32_t time);
+
+    /// Fills m_flightRoleIds for the current mount. Called when the mount changes or the set is stale.
+    void ResolveFlightRoles(const M2Data* data);
+
+    /// Whether the model's sequence table carries this id.
+    static bool ModelHasSequence(const M2Data* data, uint32_t id);
     CreatureModelDataRec* GetModelData() const;
     int32_t CanBeLooted(uint32_t time) const;
     void ModifyPredictedHealth(int32_t delta);

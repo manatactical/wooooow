@@ -1435,6 +1435,17 @@ void CGUnit_C::PreAnimate(CGWorldFrame* frame) {
         this->m_proceduralFadeStart = 0;
     }
 
+    // NOT IN BINARY. Per-frame mount animation for a flying unit.
+    //
+    // The mount clip used to be chosen only from PlayBaseAnimation, which runs on discrete animation
+    // changes. A mounted player model has no flight cycle, so while flying it picks ANIM_SWIM and that
+    // predicate rejected the frame -- the mount branch therefore almost never ran, and the mount kept
+    // whatever clip it started with. That is why a flying mount only ever glided, whatever the input.
+    //
+    // PreAnimate runs every frame, so the mount is driven from here instead: the rider's movement decides
+    // the role, the role decides the clip, and the clip is set only when it actually changes.
+    this->UpdateMountFlightAnimation(time);
+
     this->CGObject_C::PreAnimate(frame);
 
     while (this->m_pendingMissiles && static_cast<int32_t>(time - this->m_pendingMissiles->m_destroyTime) >= 0) {
@@ -4524,31 +4535,87 @@ void CGUnit_C::PlayBaseAnimation(uint32_t animId, int32_t flags) {
     }
 
     if (this->m_mountModel) {
-        if (IsFullBodyAnim(anim)) {
+        // NOT IN BINARY. The gate used to be IsFullBodyAnim(anim) alone, where anim is the *rider's* choice.
+        // A mounted player model has no flight cycle, so while flying it picks ANIM_SWIM (behaviour 42),
+        // which that predicate does not accept -- so the whole mount branch was skipped and the mount kept
+        // whatever clip it already had. That is why a flying mount only ever glided: nothing ever asked it
+        // to play anything else while moving. The mount decides its own animation when flying, so that is
+        // what gates here too.
+        const bool flyingMounted = (this->m_movementData.m_flags & MOVEMENTFLAG_FLYING) != 0;
+
+        if (flyingMounted || IsFullBodyAnim(anim)) {
             mountSlot = newSlot;
 
-            // NOT IN BINARY. The mount's animation was always derived from the *rider's* choice: anim is
-            // whatever ChooseMovementAnim picked for the player's own model, and it was then translated
-            // through the animation table for the mount. A player model has no flight cycle, so while
-            // flying it picks ANIM_SWIM (42) -- and the mount was told to swim too. That is why flying
-            // mounts paddle through the air.
+            // NOT IN BINARY. The mount's animation used to be derived from the *rider's* choice: anim is
+            // whatever ChooseMovementAnim picked for the player's own model, then translated through the
+            // animation table for the mount. A mounted player model has no flight cycle, so in the air it
+            // picks ANIM_SWIM and the mount was told to swim too -- which is why flying mounts paddled.
             //
-            // A mount that authors its own air sequence should play that sequence. The ids are read from
-            // the mount's own file, so whichever air cycle it actually carries is the one used, and a
-            // mount with none keeps the translated behaviour.
+            // The mount now answers for itself, from its own sequences, per flight movement.
             uint32_t mountAnim = 0xFFFFFFFF;
 
             if (this->m_movementData.m_flags & MOVEMENTFLAG_FLYING) {
                 const M2Data* mountData = this->m_mountModel->m_shared ? this->m_mountModel->m_shared->m_data : nullptr;
 
                 if (mountData) {
-                    const uint32_t airIds[] = { ANIM_FLY_RUN, ANIM_FLY_WALK, ANIM_FLY_STAND };
+                    this->ResolveFlightRoles(mountData);
 
-                    for (uint32_t airId : airIds) {
-                        if (this->m_mountModel->HasSequence(mountData, airId)) {
-                            mountAnim = airId;
-                            break;
+                    const uint32_t moveFlags = this->m_movementData.m_flags;
+                    uint32_t role = FLYROLE_FORWARD;
+
+                    // Strafe and reverse are deliberate short moves and each has its own authored clip;
+                    // with no forward input at all the mount is hovering, not travelling.
+                    if (moveFlags & MOVEMENTFLAG_STRAFE_LEFT) {
+                        role = FLYROLE_LEFT;
+                    } else if (moveFlags & MOVEMENTFLAG_STRAFE_RIGHT) {
+                        role = FLYROLE_RIGHT;
+                    } else if (moveFlags & MOVEMENTFLAG_BACKWARD) {
+                        role = FLYROLE_BACKWARD;
+                    } else if (!(moveFlags & MOVEMENTFLAG_FORWARD)) {
+                        role = FLYROLE_HOVER;
+                    }
+
+                    mountAnim = this->m_flightRoleIds[role];
+
+                    // TEMPORARY PROBE: the role actually chosen, once per distinct input.
+                    {
+                        static uint32_t lastRole = 0xFFFFFFFF;
+                        static uint32_t lastFlags = 0xFFFFFFFF;
+
+                        if (moveFlags != lastFlags || role != lastRole) {
+                            lastFlags = moveFlags;
+                            lastRole = role;
+
+                            char pb[240];
+                            SStrPrintf(pb, sizeof(pb), "mountrole: flags=0x%x role=%u anim=%u (hover=%u fwd=%u back=%u L=%u R=%u)",
+                                       moveFlags, role, mountAnim,
+                                       this->m_flightRoleIds[FLYROLE_HOVER],
+                                       this->m_flightRoleIds[FLYROLE_FORWARD],
+                                       this->m_flightRoleIds[FLYROLE_BACKWARD],
+                                       this->m_flightRoleIds[FLYROLE_LEFT],
+                                       this->m_flightRoleIds[FLYROLE_RIGHT]);
+                            extern void ProbeLogMount(const char*);
+                            ProbeLogMount(pb);
                         }
+                    }
+
+                    // A model that has no clip for the requested role keeps travelling rather than freezing:
+                    // fall back through forward, then hover.
+                    if (!mountAnim) {
+                        mountAnim = this->m_flightRoleIds[FLYROLE_FORWARD];
+                    }
+
+                    if (!mountAnim) {
+                        mountAnim = this->m_flightRoleIds[FLYROLE_HOVER];
+                    }
+
+                    // A glide that never beats its wings reads as dead. Only forward travel is punctuated:
+                    // hover already loops a standing clip, and a strafe or reverse is a short move whose own
+                    // clip should not be interrupted.
+                    if (role == FLYROLE_FORWARD && this->m_flightFlapId && mountAnim) {
+                        mountAnim = this->ChooseMountWingBeat(mountData, OsGetAsyncTimeMs(), mountAnim);
+                    } else {
+                        this->m_flightBeatUntilMs = 0;
                     }
                 }
             }
@@ -4707,6 +4774,29 @@ void CGUnit_C::PlayBaseAnimation(uint32_t animId, int32_t flags) {
         updateTorso = 0;
         previousAnim = 0xFFFFFFFF;
         this->UnsetKeyBoneSequence(this->m_worldModel, this->m_torsoKeyBone, 1, 0, 0);
+    }
+
+    if (this->m_mountModel && (this->m_movementData.m_flags & MOVEMENTFLAG_FLYING)) {
+        // TEMPORARY PROBE: log once per distinct input combination, so every direction is seen and the log
+        // stays readable. up = the movement bits only, which is what the role selection keys off.
+        const uint32_t up = this->m_movementData.m_flags & 0xF;
+        static uint32_t seenInputs = 0;
+        static uint32_t lastUp = 0xFFFFFFFF;
+
+        if (up != lastUp) {
+            lastUp = up;
+
+            if (up < 32) {
+                seenInputs |= (1u << up);
+            }
+
+            char pb[240];
+            SStrPrintf(pb, sizeof(pb), "mountanim: up=0x%x (F=%d B=%d L=%d R=%d) want=%u cur=%u upd=%u",
+                       up, (up & 1) ? 1 : 0, (up & 2) ? 1 : 0, (up & 4) ? 1 : 0, (up & 8) ? 1 : 0,
+                       mountSlot.m_sequenceId, mount.m_sequenceId, updateMount ? 1u : 0u);
+            extern void ProbeLogMount(const char*);
+            ProbeLogMount(pb);
+        }
     }
 
     if (updateMount && this->m_mountModel && mountSlot.m_sequenceId != 0xFFFFFFFF && (mount.m_sequenceId != mountSlot.m_sequenceId || fabsf(mount.m_speed - mountSlot.m_speed) > 0.01f)) {
@@ -6991,6 +7081,512 @@ void CGUnit_C::GetCurrentAnimationInfo(M2BoneSequenceInfo* mount, M2BoneSequence
         torso->m_variationIndex = 0xFFFFFFFF;
         torso->m_time = 0;
     }
+}
+
+namespace
+{
+    /**
+     * @brief Which flight role each official animation name satisfies.
+     *
+     * Names are wowdev.wiki's /M2/AnimationList, which is what makes a mount's ids interpretable: the numbers
+     * mean nothing on their own, but every one of them falls back onto a stock id whose official name does.
+     * Several names are accepted per role because the stock, Mount*, Fly* and AdvFly* families each spell the
+     * same movement differently.
+     *
+     * Note the direction of the left/right pair: FlyRunLeft is 322 and FlyRunRight is 321.
+     */
+    struct FlightNameRole
+    {
+        const char* name;
+        int         role;
+    };
+
+    constexpr int kRoleHover    = 0;
+    constexpr int kRoleForward  = 1;
+    constexpr int kRoleBackward = 2;
+    constexpr int kRoleLeft     = 3;
+    constexpr int kRoleRight    = 4;
+
+    // Role ladders, best first. A movement is resolved by walking this list and taking the first name the
+    // model actually carries (checked against its own sequence table), so a mount that lacks the ideal clip
+    // still gets the most movement-appropriate one it has.
+    //
+    // SWIM ANIMATIONS ARE DELIBERATELY ABSENT. Every Swim* / MountSwim* name is excluded on purpose: a
+    // downported mount often has only the swim set available, and playing those in the air makes a flying
+    // mount paddle. A role with no non-swim clip stays unresolved and the caller keeps the previous clip.
+    const FlightNameRole s_flightNameRoles[] = {
+        // hover: a held flight pose
+        { "FlyStand",               kRoleHover },
+        { "FlyStop",                kRoleHover },
+        { "DragonSpitHover",        kRoleHover },
+        { "AdvFlyUp",               kRoleHover },
+        { "Stand",                  kRoleHover },
+
+        // forward: continuous wingbeats first, held glides only as a fallback
+        { "FlyRun",                 kRoleForward },
+        { "FlyFly",                 kRoleForward },
+        { "MountFlightRun",         kRoleForward },
+        { "MountFlightWalk",        kRoleForward },
+        { "AdvFlyForwardGlide",     kRoleForward },
+        { "AdvFlyForwardGlideSlow", kRoleForward },
+        { "AdvFlyForwardGlideFast", kRoleForward },
+        { "AdvFlyForward",          kRoleForward },
+        { "Run",                    kRoleForward },
+
+        // backward
+        { "MountFlightBackwards",   kRoleBackward },
+        { "FlyWalkbackwards",       kRoleBackward },
+        { "RunBackwards",           kRoleBackward },
+        { "Walkbackwards",          kRoleBackward },
+        { "AdvFlyRollEnd",          kRoleBackward },
+
+        // lateral: flight gaits, not retail drift
+        { "MountFlightLeft",        kRoleLeft },
+        { "FlyRunLeft",             kRoleLeft },
+        { "MountSelfRunLeft",       kRoleLeft },
+        { "AdvFlyLeft",             kRoleLeft },
+        { "RunLeft",                kRoleLeft },
+
+        { "MountFlightRight",       kRoleRight },
+        { "FlyRunRight",            kRoleRight },
+        { "MountSelfRunRight",      kRoleRight },
+        { "AdvFlyRight",            kRoleRight },
+        { "RunRight",               kRoleRight },
+    };
+
+    constexpr uint32_t kAdvFlyGlide      = 1532;
+    constexpr uint32_t kAdvFlyGlideSlow  = 1722;
+    constexpr uint32_t kAdvFlyGlideFast  = 1724;
+    constexpr uint32_t kAdvFlyLeft       = 1520;
+    constexpr uint32_t kAdvFlyRight      = 1522;
+    constexpr uint32_t kAdvFlyDown       = 1530;
+    constexpr uint32_t kAdvFlyFlapUp     = 1702;
+
+    constexpr uint32_t kFlapWave[] = { 1706, 1680, 1702, 1726, 1638 };
+
+    /**
+     * @brief Official name of a sequence id, or null.
+     *
+     * Only the ids in the flight vocabulary are listed. That is deliberate: this resolver only ever asks
+     * "does this chain end on a flight movement", so the other ~1760 names would be dead weight.
+     */
+    const char* FlightIdName(uint32_t id)
+    {
+        switch (id)
+        {
+            // hover
+            case 229: return "FlyStand";
+            case 232: return "FlyStop";
+            case 183: return "DragonSpitHover";
+            case 1528: return "AdvFlyUp";
+            case 0:   return "Stand";
+
+            // forward
+            case 234: return "FlyRun";
+            case 364: return "FlyFly";
+            case 558: return "MountFlightSprint";
+            case 560: return "MountFlightWalk";
+            case 1532: return "AdvFlyForwardGlide";
+            case 1722: return "AdvFlyForwardGlideSlow";
+            case 1724: return "AdvFlyForwardGlideFast";
+            case 1524: return "AdvFlyForward";
+            case 5:   return "Run";
+
+            // backward
+            case 550: return "MountFlightBackwards";
+            case 242: return "FlyWalkbackwards";
+            case 1146: return "RunBackwards";
+            case 13:  return "Walkbackwards";
+            case 1558: return "AdvFlyRollEnd";
+
+            // lateral
+            case 552: return "MountFlightLeft";
+            case 322: return "FlyRunLeft";
+            case 626: return "MountSelfRunLeft";
+            case 1520: return "AdvFlyLeft";
+            case 93:  return "RunLeft";
+
+            case 554: return "MountFlightRight";
+            case 321: return "FlyRunRight";
+            case 628: return "MountSelfRunRight";
+            case 1522: return "AdvFlyRight";
+            case 92:  return "RunRight";
+
+            default: return nullptr;
+        }
+    }
+
+    /// Role this name satisfies, or -1.
+    int FlightNameToRole(const char* name)
+    {
+        if (!name) return -1;
+
+        for (const FlightNameRole& entry : s_flightNameRoles)
+        {
+            if (std::strcmp(entry.name, name) == 0)
+            {
+                return entry.role;
+            }
+        }
+
+        return -1;
+    }
+}
+
+bool CGUnit_C::ModelHasSequence(const M2Data* data, uint32_t id)
+{
+    if (!data || !data->m_sequences.Data())
+    {
+        return false;
+    }
+
+    const uint32_t count = data->m_sequences.m_count;
+
+    // A modern mount carries a few hundred sequences; anything beyond this is a corrupt count, not a model.
+    if (!count || count > 4096)
+    {
+        return false;
+    }
+
+    for (uint32_t i = 0; i < count; i++)
+    {
+        if (data->m_sequences[i].m_id == id)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+namespace
+{
+    /**
+     * @brief Position of a name in the role ladder, or -1.
+     *
+     * The ladder is ordered best-first, so a lower index is a better clip for that role. Swim names are
+     * absent from the table entirely, which is what keeps them out of every selection.
+     */
+    int FlightNameRank(const char* name, int role)
+    {
+        if (!name) return -1;
+
+        int rank = 0;
+
+        for (const FlightNameRole& entry : s_flightNameRoles)
+        {
+            if (entry.role != role) continue;
+            if (std::strcmp(entry.name, name) == 0) return rank;
+            rank++;
+        }
+
+        return -1;
+    }
+
+    /// True when the official name belongs to the swim family, which must never be used in the air.
+    bool IsSwimName(const char* name)
+    {
+        return name && std::strstr(name, "Swim") != nullptr;
+    }
+}
+
+uint32_t CGUnit_C::ResolveFlightRole(const M2Data* data, EFlgithRole role)
+{
+    if (!data || !data->m_sequences.Data() || g_animationDataDB.m_numRecords <= 0)
+    {
+        return 0;
+    }
+
+    const uint32_t count = data->m_sequences.m_count;
+
+    if (!count || count > 4096)
+    {
+        return 0;
+    }
+
+    const uint32_t limit = static_cast<uint32_t>(g_animationDataDB.m_numRecords);
+
+    uint32_t best = 0;
+    int bestRank = 0x7FFFFFFF;
+    uint32_t bestSteps = 0xFFFFFFFF;
+
+    // Two passes over the same model ids.
+    //
+    // Pass 1 trusts a clip that carries its own official name: that name IS its identity, so it needs no
+    // chain. Pass 2 is for modern ids with no name of their own -- those are identified by where their
+    // fallback chain lands. Doing the name pass first is what stops a clip like 1542 WACurious (whose chain
+    // ends on Stand) from denying a model the FlyStand it also carries.
+    for (int pass = 0; pass < 2; pass++)
+    {
+        for (uint32_t i = 0; i < count; i++)
+        {
+            const uint32_t id = data->m_sequences[i].m_id;
+
+            // Never accept a swim clip, however the resolution reached it.
+            const char* own = FlightIdName(id);
+
+            if (IsSwimName(own))
+            {
+                continue;
+            }
+
+            if (pass == 0)
+            {
+                const int rank = FlightNameRank(own, static_cast<int>(role));
+
+                if (rank >= 0 && rank < bestRank)
+                {
+                    bestRank = rank;
+                    best = id;
+                    bestSteps = 0;
+                }
+
+                continue;
+            }
+
+            if (own)
+            {
+                // Named already handled in pass 1; do not follow its chain.
+                continue;
+            }
+
+            uint32_t cur = id;
+
+            for (uint32_t step = 1; step <= limit; step++)
+            {
+                AnimationDataRec* rec = g_animationDataDB.GetRecord(cur);
+
+                if (!rec)
+                {
+                    break;
+                }
+
+                const uint32_t next = static_cast<uint32_t>(rec->m_fallback);
+
+                if (next == cur)
+                {
+                    break;
+                }
+
+                cur = next;
+
+                const char* landed = FlightIdName(cur);
+
+                // A chain that runs into a swim clip is not a flight movement; treat it as a dead end.
+                if (IsSwimName(landed))
+                {
+                    break;
+                }
+
+                const int rank = FlightNameRank(landed, static_cast<int>(role));
+
+                if (rank < 0)
+                {
+                    continue;
+                }
+
+                if (rank < bestRank || (rank == bestRank && step < bestSteps))
+                {
+                    bestRank = rank;
+                    bestSteps = step;
+                    best = id;
+                }
+
+                break;
+            }
+        }
+
+        // A named clip of the best possible rank is final; no chain match can beat it.
+        if (best && bestRank == 0)
+        {
+            return best;
+        }
+    }
+
+    return best;
+}
+
+void CGUnit_C::ResolveFlightRoles(const M2Data* data)
+{
+    if (this->m_flightRolesFor == data)
+    {
+        return;
+    }
+
+    this->m_flightRolesFor = data;
+
+    for (uint32_t i = 0; i < FLYROLE_COUNT; i++)
+    {
+        this->m_flightRoleIds[i] = 0;
+    }
+
+    this->m_flightFlapId = 0;
+    this->m_flightBeatUntilMs = 0;
+    this->m_flightBeatNextMs = 0;
+
+    if (!data)
+    {
+        return;
+    }
+
+    this->m_flightRoleIds[FLYROLE_HOVER]    = CGUnit_C::ResolveFlightRole(data, FLYROLE_HOVER);
+    this->m_flightRoleIds[FLYROLE_FORWARD]  = CGUnit_C::ResolveFlightRole(data, FLYROLE_FORWARD);
+    this->m_flightRoleIds[FLYROLE_BACKWARD] = CGUnit_C::ResolveFlightRole(data, FLYROLE_BACKWARD);
+    this->m_flightRoleIds[FLYROLE_LEFT]     = CGUnit_C::ResolveFlightRole(data, FLYROLE_LEFT);
+    this->m_flightRoleIds[FLYROLE_RIGHT]    = CGUnit_C::ResolveFlightRole(data, FLYROLE_RIGHT);
+
+    // The flap that punctuates a glide. Only meaningful on a model whose forward clip is a glide.
+    for (uint32_t id : kFlapWave)
+    {
+        if (CGUnit_C::ModelHasSequence(data, id))
+        {
+            this->m_flightFlapId = id;
+            break;
+        }
+    }
+
+    MODERN_ASSETS_LOG_INFO("flight: roles hover=%u forward=%u back=%u left=%u right=%u flap=%u",
+                           this->m_flightRoleIds[FLYROLE_HOVER], this->m_flightRoleIds[FLYROLE_FORWARD],
+                           this->m_flightRoleIds[FLYROLE_BACKWARD], this->m_flightRoleIds[FLYROLE_LEFT],
+                           this->m_flightRoleIds[FLYROLE_RIGHT], this->m_flightFlapId);
+}
+
+// NOT IN BINARY. Drives a flying mount's animation every frame from the rider's movement.
+//
+// See the call site in PreAnimate for why this cannot be left to PlayBaseAnimation.
+void CGUnit_C::UpdateMountFlightAnimation(uint32_t time)
+{
+    if (!this->m_mountModel) {
+        return;
+    }
+
+    const uint32_t moveFlags = this->m_movementData.m_flags;
+
+    if (!(moveFlags & MOVEMENTFLAG_FLYING)) {
+        return;
+    }
+
+    if (!this->m_mountModel->IsLoaded(0, 0)) {
+        return;
+    }
+
+    const M2Data* mountData = this->m_mountModel->m_shared ? this->m_mountModel->m_shared->m_data : nullptr;
+
+    if (!mountData) {
+        return;
+    }
+
+    this->ResolveFlightRoles(mountData);
+
+    uint32_t role = FLYROLE_FORWARD;
+
+    if (moveFlags & MOVEMENTFLAG_STRAFE_LEFT) {
+        role = FLYROLE_LEFT;
+    } else if (moveFlags & MOVEMENTFLAG_STRAFE_RIGHT) {
+        role = FLYROLE_RIGHT;
+    } else if (moveFlags & MOVEMENTFLAG_BACKWARD) {
+        role = FLYROLE_BACKWARD;
+    } else if (!(moveFlags & MOVEMENTFLAG_FORWARD)) {
+        role = FLYROLE_HOVER;
+    }
+
+    uint32_t anim = this->m_flightRoleIds[role];
+
+    // No clip for this role: keep travelling rather than freezing.
+    if (!anim) {
+        anim = this->m_flightRoleIds[FLYROLE_FORWARD];
+    }
+
+    if (!anim) {
+        anim = this->m_flightRoleIds[FLYROLE_HOVER];
+    }
+
+    if (!anim) {
+        return;
+    }
+
+    // Beat only over forward travel: hover already loops a standing clip, and a strafe or reverse is a short
+    // move whose own clip should not be interrupted.
+    if (role == FLYROLE_FORWARD && this->m_flightFlapId) {
+        anim = this->ChooseMountWingBeat(mountData, time, anim);
+    } else {
+        this->m_flightBeatUntilMs = 0;
+    }
+
+    // Only touch the bone sequence when the clip actually changes: re-issuing the same id restarts the clip
+    // every frame, which would freeze it at its first frame.
+    if (this->m_mountFlightApplied == anim) {
+        return;
+    }
+
+    this->m_mountFlightApplied = anim;
+    this->SetKeyBoneSequence(this->m_mountModel, 0xFFFFFFFF, anim, 0xFFFFFFFF, 0, 1.0f, 1, 1, 0);
+
+    char pb[200];
+    SStrPrintf(pb, sizeof(pb), "mountfly: flags=0x%x role=%u anim=%u", moveFlags, role, anim);
+    extern void ProbeLogMount(const char*);
+    ProbeLogMount(pb);
+}
+
+// NOT IN BINARY. Plays the one-shot flap over the glide at an irregular interval, then hands the slot back.
+//
+// A retail flier's forward clip is AdvFlyForwardGlide -- a glide. Played alone the mount never beats its
+// wings, which reads as dead however cleanly it loops. Same shape as the wxl-mana-speedflying module's
+// LevelBeat: hold the glide, play the flap through once for its own duration, return to the glide. The gap is
+// randomised so the beat does not become a metronome.
+uint32_t CGUnit_C::ChooseMountWingBeat(const M2Data* data, uint32_t nowMs, uint32_t glideAnim)
+{
+    if (!this->m_flightFlapId) {
+        return glideAnim;
+    }
+
+    if (this->m_flightBeatUntilMs) {
+        // Still inside the beat. Signed comparison so it survives the millisecond counter wrapping.
+        if (static_cast<int32_t>(nowMs - this->m_flightBeatUntilMs) < 0) {
+            return this->m_flightFlapId;
+        }
+
+        this->m_flightBeatUntilMs = 0;
+
+        if (!this->m_flightBeatRng) {
+            this->m_flightBeatRng = nowMs | 1u;
+        }
+
+        // xorshift: no seeding to get wrong, and the interval only has to look irregular.
+        this->m_flightBeatRng ^= this->m_flightBeatRng << 13;
+        this->m_flightBeatRng ^= this->m_flightBeatRng >> 17;
+        this->m_flightBeatRng ^= this->m_flightBeatRng << 5;
+
+        this->m_flightBeatNextMs = nowMs + 4000 + this->m_flightBeatRng % 4001;
+        return glideAnim;
+    }
+
+    if (!this->m_flightBeatNextMs) {
+        this->m_flightBeatNextMs = nowMs + 4000;
+        return glideAnim;
+    }
+
+    if (static_cast<int32_t>(nowMs - this->m_flightBeatNextMs) < 0) {
+        return glideAnim;
+    }
+
+    // Hold the beat for its own duration so the clip is never cut off part-way.
+    uint32_t duration = 0;
+
+    if (data && data->m_sequences.Data() && data->m_sequences.m_count && data->m_sequences.m_count <= 4096)
+    {
+        for (uint32_t i = 0; i < data->m_sequences.m_count; i++)
+        {
+            if (data->m_sequences[i].m_id == this->m_flightFlapId)
+            {
+                duration = data->m_sequences[i].m_duration;
+                break;
+            }
+        }
+    }
+
+    this->m_flightBeatUntilMs = nowMs + (duration ? duration : 900);
+    return this->m_flightFlapId;
 }
 
 // VERIFY: 71fe5a98 manual

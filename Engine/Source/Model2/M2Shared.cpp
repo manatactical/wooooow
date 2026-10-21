@@ -1,3 +1,5 @@
+#include "Engine/Source/Os/OsFile.h"
+
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -2082,6 +2084,29 @@ int32_t CM2Shared::FinishLoading() {
     }
 
     this->m_data->m_flags &= ~0x60u;
+
+#if defined(WOWDECOMP_MODERN_ASSETS)
+    // TEMPORARY ANALYSIS DUMP. Writes every sequence this model authored to Logs\m2-sequences.csv, one row
+    // per sequence, so mount animation support can be compared across models from data instead of from
+    // guesses. Remove once the animation design is settled.
+    {
+        OsCreateDirectory("Logs", 0);
+
+        FILE* csv = std::fopen("Logs\\m2-sequences.csv", "a");
+
+        if (csv)
+        {
+            for (uint32_t i = 0; i < this->m_data->m_sequences.m_count; i++)
+            {
+                const M2Sequence* seq = &this->m_data->m_sequences[i];
+                std::fprintf(csv, "%s,%u,%u,%u,0x%x,%.3f\n", this->m_fileName, seq->m_id,
+                             seq->m_duration, seq->m_variationIndex, seq->m_flags, seq->m_moveSpeed);
+            }
+
+            std::fclose(csv);
+        }
+    }
+#endif
 
     if (!this->Initialize()) {
         DebugLog("Failed to initialize model: %s", this->m_fileName);

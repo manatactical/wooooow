@@ -159,7 +159,7 @@ void AddSelection(const WOWGUID& guid, CGUnit_C* player, bool mouseover) {
     }
 
     const bool isPlayer = (guid.m_guid >> 32) == 0;
-    CGObject_C* object = ClntObjMgrObjectPtr(guid, isPlayer ? TYPEMASK_PLAYER : TYPEMASK_OBJECT, __FILE__, __LINE__);
+    CGObject_C* object = ClntObjMgrObjectPtr(guid, isPlayer ? TYPE_PLAYER : TYPE_OBJECT, __FILE__, __LINE__);
 
     if (!object) {
         return;
@@ -167,7 +167,7 @@ void AddSelection(const WOWGUID& guid, CGUnit_C* player, bool mouseover) {
 
     // The cursor can be over a chest, a corpse or a herb as easily as a unit, and those have a different
     // layout: everything below reads unit fields, so a non-unit is skipped rather than cast into one.
-    if (!(object->m_obj->m_type & TYPEMASK_UNIT)) {
+    if (!(object->m_obj->m_type & TYPE_UNIT)) {
         return;
     }
 
@@ -219,7 +219,7 @@ void AddDoodadSelection(const WOWGUID& guid) {
         return;
     }
 
-    CGGameObject_C* object = static_cast<CGGameObject_C*>(ClntObjMgrObjectPtr(guid, TYPEMASK_GAMEOBJECT, __FILE__, __LINE__));
+    CGGameObject_C* object = static_cast<CGGameObject_C*>(ClntObjMgrObjectPtr(guid, TYPE_GAMEOBJECT, __FILE__, __LINE__));
 
     if (!object || !InterestingGameObject(object->m_gameObject)) {
         return;
@@ -256,7 +256,7 @@ int32_t QuestGiverEnumProc(WOWGUID guid, void* param) {
         return 0;
     }
 
-    CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(guid, TYPEMASK_UNIT, __FILE__, __LINE__));
+    CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(guid, TYPE_UNIT, __FILE__, __LINE__));
 
     if (!unit || unit->IsDeadOrGhost()) {
         return 1;
@@ -291,7 +291,7 @@ void CUnitOutlineGather::Update() {
     // The list that is about to be filled describes this frame; the engine empties it after compositing.
     CUnitOutline::BeginTargets();
 
-    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 
     if (!player) {
         return;
@@ -310,7 +310,7 @@ void CUnitOutlineGather::Update() {
     AddSelection(static_cast<CGUnit_C*>(viewer)->m_unit->m_unitFieldTarget, viewer, false);
 
     // The pet's target, so a hunter's pet reads the same as the player's own.
-    CGUnit_C* pet = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(CGPetInfo::m_pet, TYPEMASK_UNIT, __FILE__, __LINE__));
+    CGUnit_C* pet = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(CGPetInfo::m_pet, TYPE_UNIT, __FILE__, __LINE__));
 
     if (pet) {
         AddSelection(pet->m_unit->m_unitFieldTarget, viewer, false);
@@ -336,7 +336,7 @@ void CUnitOutlineGather::Update() {
     for (int32_t i = 0; i < s_questGiverCount; i++) {
         // Resolved again rather than remembered: a unit that despawned since the last walk answers null
         // here instead of being a dangling model pointer, and is simply left out.
-        CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(s_questGiverGuids[i], TYPEMASK_UNIT, __FILE__, __LINE__));
+        CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(s_questGiverGuids[i], TYPE_UNIT, __FILE__, __LINE__));
 
         if (unit) {
             AddUnitModels(unit, kQuestGiver, true);

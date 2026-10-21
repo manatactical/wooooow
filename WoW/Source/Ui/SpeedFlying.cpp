@@ -1209,7 +1209,7 @@ namespace SpeedFlying
         ProbeTalentFrameOnce(lua);
 
         CGPlayer_C* player = static_cast<CGPlayer_C*>(
-            ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+            ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 
         if (!player)
         {

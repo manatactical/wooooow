@@ -244,7 +244,7 @@ void AddActor(const C3Vector& position, float radius, float distanceSqr) {
 int32_t ActorEnumProc(WOWGUID guid, void* param) {
     (void)param;
 
-    CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(guid, TYPEMASK_UNIT, __FILE__, __LINE__));
+    CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(guid, TYPE_UNIT, __FILE__, __LINE__));
 
     if (!unit || !unit->m_unit) {
         return 1;

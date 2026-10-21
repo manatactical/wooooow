@@ -117,7 +117,8 @@ void AddGearModels(CM2Model* body, const float rgb[3], bool keepFull) {
 // models by exact pointer (see CUnitOutline::AddTarget), so both have to be recorded; recording only
 // GetObjectModel() would outline the mount alone and leave the rider bare. Gear hangs off the rider.
 void AddUnitModels(CGUnit_C* unit, const float rgb[3], bool keepFull) {
-    if (!unit) {
+    // A corpse gets no silhouette: the outline is a selection marker, and a dead unit is not selected.
+    if (!unit || unit->IsDeadOrGhost()) {
         return;
     }
 
@@ -257,7 +258,7 @@ int32_t QuestGiverEnumProc(WOWGUID guid, void* param) {
 
     CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(guid, TYPEMASK_UNIT, __FILE__, __LINE__));
 
-    if (!unit) {
+    if (!unit || unit->IsDeadOrGhost()) {
         return 1;
     }
 

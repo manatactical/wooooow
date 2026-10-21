@@ -366,11 +366,19 @@ static const char* s_combatTextTokens[MISS_NUMMISSTYPES] = { "COMBAT_TEXT_NONE",
 static const WORLDTEXT_STYLE s_combatTextTypes[MISS_NUMMISSTYPES] = { NUM_WORLDTEXTTYPES, WT_MISS, WT_MISS, WT_MISS, WT_MISS, WT_MISS, WT_MISS, WT_MISS, WT_MISS, WT_MISS, WT_ABSORB, WT_MISS };
 
 
-// STATIC: 0x00ADAA6C
-static uint32_t s_petSpellDamageColor = 0xFFFFDE00;
+// DragonUI's combat text palette and sizing (modules/combattext.lua): spells and anything a companion lands
+// read yellow, the player's own auto attacks white, misses and absorbs grey. Crits are 1.6x, spells another
+// 1.2x on top, physical 0.9x -- so a crit spell stays visibly bigger than a crit auto attack.
+// Replaces the client's own pet damage colours (0x00ADAA6C and 0x00ADAA70) on this path.
+// Stored as a packed CImVector (b, g, r, a), which on little-endian reads 0xAARRGGBB.
+static uint32_t s_dragonPhysicalColor = 0xFFFFFFFF;   // white
+static uint32_t s_dragonSpellColor = 0xFFFFD933;      // { 1, 0.85, 0.2 }
+static uint32_t s_dragonGreyColor = 0xFFB2B2B2;       // { 0.7, 0.7, 0.7 }
 
-// STATIC: 0x00ADAA70
-static uint32_t s_petMeleeDamageColor = 0xFFFF8400;
+static float DragonDamageScale(bool crit, bool spell) {
+    float scale = spell ? 1.2f : 0.9f;
+    return crit ? scale * 1.6f : scale;
+}
 
 // VERIFY: b3615d25 auto
 // OFFSET: 0x00716810
@@ -15792,30 +15800,20 @@ void CGUnit_C::AddWorldText(const WOWGUID& source, MISS_REASON reason, const Spe
         return;
     }
 
-    const CImVector* color;
+    if (melee && !isPlayer && !g_petMeleeDamageCVar->m_intValue) {
+        return;
+    }
 
-    if (melee) {
-        if (isPlayer) {
-            color = nullptr;
-        } else {
-            if (!g_petMeleeDamageCVar->m_intValue) {
-                return;
-            }
-
-            color = reinterpret_cast<const CImVector*>(&s_petMeleeDamageColor);
-        }
-    } else {
-        if (!isPlayer && !g_petSpellDamageCVar->m_intValue) {
-            return;
-        }
-
-        color = reinterpret_cast<const CImVector*>(&s_petSpellDamageColor);
+    if (!melee && !isPlayer && !g_petSpellDamageCVar->m_intValue) {
+        return;
     }
 
     const char* text = FrameScript_GetText(s_combatTextTokens[reason], -1, GENDER_NOT_APPLICABLE);
 
     if (text && *text) {
-        PlayerNameCreateText(this->m_nameDesc, s_combatTextTypes[reason], text, color, nullptr);
+        // A miss is words, not a number: the module draws it grey, at its normal size.
+        PlayerNameCreateText(this->m_nameDesc, s_combatTextTypes[reason], text,
+            reinterpret_cast<const CImVector*>(&s_dragonGreyColor), nullptr, 1.0f);
     }
 }
 
@@ -15831,27 +15829,19 @@ void CGUnit_C::AddWorldDamageText(const WOWGUID& source, int32_t amount, const S
 
     char text[32];
     SStrPrintf(text, sizeof(text), "%d", amount);
-    const CImVector* color;
 
-    if (melee) {
-        if (isPlayer) {
-            color = nullptr;
-        } else {
-            if (!g_petMeleeDamageCVar->m_intValue) {
-                return;
-            }
-
-            color = reinterpret_cast<const CImVector*>(&s_petMeleeDamageColor);
-        }
-    } else {
-        if (!isPlayer && !g_petSpellDamageCVar->m_intValue) {
-            return;
-        }
-
-        color = reinterpret_cast<const CImVector*>(&s_petSpellDamageColor);
+    if (melee && !isPlayer && !g_petMeleeDamageCVar->m_intValue) {
+        return;
     }
 
-    PlayerNameCreateText(this->m_nameDesc, crit ? WT_CRIT : WT_DAMAGE, text, color, nullptr);
+    if (!melee && !isPlayer && !g_petSpellDamageCVar->m_intValue) {
+        return;
+    }
+
+    // The player's own auto attack is the one white number; everything else is a spell hit and reads yellow.
+    const uint32_t* color = (melee && isPlayer) ? &s_dragonPhysicalColor : &s_dragonSpellColor;
+    PlayerNameCreateText(this->m_nameDesc, crit ? WT_CRIT : WT_DAMAGE, text,
+        reinterpret_cast<const CImVector*>(color), nullptr, DragonDamageScale(crit, !melee));
 }
 
 // VERIFY: 25d16696 auto
@@ -21208,7 +21198,8 @@ void CGUnit_C::AddWorldHealingText(const WOWGUID& source, int32_t amount, const 
     }
 
     char text[32];
-    SStrPrintf(text, sizeof(text), "+%d", amount);
+    // No leading "+": heals read as a plain number, as DragonUI draws them.
+    SStrPrintf(text, sizeof(text), "%d", amount);
 
     if (isPlayer) {
         PlayerNameCreateText(this->m_nameDesc, crit ? WT_CRIT_HEAL : WT_HEAL, text, nullptr, nullptr);

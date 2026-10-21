@@ -29,7 +29,7 @@ class PLAYERNAMEDESC {
 
     static int32_t ShouldRender(CGObject_C* object, uint32_t raidTarget);
 
-    void CreateWorldText(uint32_t type, const char* text, const CImVector* color, const int32_t* pvpRank);
+    void CreateWorldText(uint32_t type, const char* text, const CImVector* color, const int32_t* pvpRank, float sizeScale = 1.0f);
     void DeleteWorldText(uint32_t type);
     void UpdateWorldText(uint32_t time);
     void UpdateWorldTextIcons();
@@ -46,7 +46,7 @@ extern TSExplicitList<PLAYERNAMEDESC, offsetof(PLAYERNAMEDESC, m_link)> s_player
 PLAYERNAMEDESC* PlayerNameCreate(const WOWGUID& guid);
 void PlayerNameDelete(PLAYERNAMEDESC* desc);
 PLAYERNAMEDESC* ObjectNameCreate(const WOWGUID& guid);
-void PlayerNameCreateText(PLAYERNAMEDESC* desc, uint32_t type, const char* text, const CImVector* color, const int32_t* pvpRank);
+void PlayerNameCreateText(PLAYERNAMEDESC* desc, uint32_t type, const char* text, const CImVector* color, const int32_t* pvpRank, float sizeScale = 1.0f);
 void PlayerNameTriggerColorUpdateAll();
 void PlayerNameDeleteText(PLAYERNAMEDESC* desc, uint32_t type);
 

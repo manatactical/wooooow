@@ -22,6 +22,7 @@
 #include "Engine/Source/Storm/H/stpl.h"
 #include "Engine/Source/Storm/H/storm.h"
 #include "Engine/Source/Tempest/C2Vector.h"
+#include "Engine/Source/Tempest/CRandom.h"
 #include "Engine/Source/Tempest/C44Matrix.h"
 #include "Engine/Source/Tempest/C4Vector.h"
 #include "Engine/Source/Tempest/CRect.h"
@@ -39,12 +40,14 @@ static float s_critHeightCurve[3][4] = {
     { 0.2f, 1.0f, 1.0f, 1.0f },
 };
 
-// STATIC: 0x00AF4748
+// The damage family (WT_DAMAGE, WT_ABSORB, WT_CRIT, WT_MISS) uses DragonUI's timing: 0.6 s on screen, no
+// fade in, opaque until 0.45 s and then a straight ramp to nothing over the last 0.15 s. Its rise is instead
+// applied in screen space (see DragonScreenDrift), so the world-space ascent the other styles use is zero here.
 static WORLDTEXTTYPE s_worldTextTypes[NUM_WORLDTEXTTYPES] = {
-    { 2.0f, 150, 760, 1500, 0.018333333f, 0.018333333f, CImVector(0xFF, 0xFF, 0xFF, 0xFF) },
-    { 2.0f, 150, 90, 1500, 0.018333333f, 0.018333333f, CImVector(0xFF, 0xFF, 0xFF, 0xFF) },
-    { 0.0f, 150, 1000, 1500, 0.0f, 0.027499998f, CImVector(0xFF, 0xFF, 0xFF, 0xFF) },
-    { 2.0f, 150, 1000, 1500, 0.018333333f, 0.018333333f, CImVector(0xFF, 0xFF, 0xFF, 0xFF) },
+    { 0.0f, 0, 450, 600, 0.018333333f, 0.018333333f, CImVector(0xFF, 0xFF, 0xFF, 0xFF) },
+    { 0.0f, 0, 450, 600, 0.018333333f, 0.018333333f, CImVector(0xFF, 0xFF, 0xFF, 0xFF) },
+    { 0.0f, 0, 450, 600, 0.018333333f, 0.018333333f, CImVector(0xFF, 0xFF, 0xFF, 0xFF) },
+    { 0.0f, 0, 450, 600, 0.018333333f, 0.018333333f, CImVector(0xFF, 0xFF, 0xFF, 0xFF) },
     { 0.0f, 500, 2000, 4500, 0.018333333f, 0.018333333f, CImVector(0x8B, 0x00, 0x94, 0x80) },
     { 0.0f, 500, 2000, 4500, 0.018333333f, 0.018333333f, CImVector(0x0A, 0xCA, 0xE0, 0xFF) },
     { 2.0f, 150, 760, 1500, 0.018333333f, 0.018333333f, CImVector(0x00, 0xFF, 0x00, 0xFF) },
@@ -53,6 +56,65 @@ static WORLDTEXTTYPE s_worldTextTypes[NUM_WORLDTEXTTYPES] = {
     { 6.0f, 150, 760, 1500, 0.027499998f, 0.027499998f, CImVector(0x00, 0xFF, 0x00, 0xFF) },
     { 2.0f, 150, 760, 1500, 0.018333333f, 0.018333333f, CImVector(0x00, 0x99, 0xFF, 0xFF) },
 };
+
+// STATIC: 0x00AF4748
+
+// DragonUI's floating combat text look (modules/combattext.lua), applied to the damage-family styles only:
+// WT_DAMAGE, WT_CRIT, WT_ABSORB, WT_MISS. Healing, XP, honor, threat and building text keep the client's own
+// styles, because the module leaves heals to Blizzard's world text and draws nothing else of that kind.
+//
+// Drift is the module's spread at half distance: offsetX 14 px of horizontal jitter, verticalSpread 12 px of
+// vertical jitter, and a per-number DRIFT_SPEED of 0.7 to 1.4. Pixels are of a 768-tall UI, as in the module.
+static const float s_dragonDriftX = 14.0f / 768.0f;
+static const float s_dragonDriftY = 12.0f / 768.0f;
+static const float s_dragonDriftSpeedMin = 0.7f;
+static const float s_dragonDriftSpeedMax = 1.4f;
+// The module draws at textSize 14 in screen pixels, not as a fraction of the resolution like the client's own
+// styles do (0.0183 * screen height), so the numbers stay the same size at every resolution. 12 here to read
+// a touch smaller than the module without going down to the next full font size.
+static const float s_dragonFontPixels = 12.0f;
+// A crit appears at CRIT_GROW_FROM of its size and snaps up to the full one over CRIT_GROW_DURATION, then holds.
+static const float s_dragonCritGrowFrom = 0.4f;
+static const uint32_t s_dragonCritGrowDuration = 60;
+
+bool IsDragonWorldTextStyle(uint32_t type) {
+    return type == WT_DAMAGE || type == WT_CRIT || type == WT_ABSORB || type == WT_MISS;
+}
+
+// Only a crit pulses in size; everything else just drifts.
+static bool IsCritStyle(uint32_t type) {
+    return type == WT_CRIT;
+}
+
+// The module's drift, applied to the projected screen point: an eased move from where the number spawned to
+// its offset resting place, with its own speed per number so a burst does not travel in lockstep. Crits are
+// pinned to the spawn point and only pulse in size.
+static void DragonScreenDrift(WORLDTEXTSTRING* string, uint32_t elapsed, float* x, float* y) {
+    const WORLDTEXTTYPE& type = s_worldTextTypes[string->m_type];
+    float t = static_cast<float>(elapsed) / static_cast<float>(type.m_duration);
+    float speed = t * string->m_driftSpeed;
+    if (speed > 1.0f) {
+        speed = 1.0f;
+    }
+
+    float ease = 1.0f - (1.0f - speed) * (1.0f - speed);
+    *x = *x + DDCToNDCWidth(string->m_driftX * ease);
+    *y = *y + DDCToNDCHeight(string->m_driftY * ease);
+}
+
+// The module's spread and drift, randomised per number so a burst fans out instead of moving in lockstep.
+static void DragonSeedDrift(WORLDTEXTSTRING* string) {
+    if (IsCritStyle(string->m_type)) {
+        // A crit stays on the unit: no spread, no horizontal travel.
+        string->m_driftX = 0.0f;
+        string->m_driftY = 0.0f;
+    } else {
+        string->m_driftX = CRandom::sfloat_(g_rndSeed) * s_dragonDriftX;
+        string->m_driftY = CRandom::sfloat_(g_rndSeed) * s_dragonDriftY;
+    }
+
+    string->m_driftSpeed = s_dragonDriftSpeedMin + CRandom::ufloat_(g_rndSeed) * (s_dragonDriftSpeedMax - s_dragonDriftSpeedMin);
+}
 
 // STATIC: 0x00AF487C
 static C2Vector s_shadowOffset = C2Vector(0.002f, 0.002f);
@@ -99,6 +161,10 @@ inline WORLDTEXTSTRING::WORLDTEXTSTRING() {
     this->m_string = nullptr;
     this->m_fontHeight = -1.0f;
     this->m_pvpRank = 0;
+    this->m_sizeScale = 1.0f;
+    this->m_driftX = 0.0f;
+    this->m_driftY = 0.0f;
+    this->m_driftSpeed = 1.0f;
     this->m_text[0] = '\0';
 }
 
@@ -273,7 +339,17 @@ void WORLDTEXTSTRING::CalculateTextHeight(uint32_t elapsed) {
     float progress = static_cast<float>(elapsed) / static_cast<float>(type.m_duration);
     float height;
 
-    if (this->m_type == WT_CRIT || this->m_type == WT_CRIT_HEAL) {
+    if (IsDragonWorldTextStyle(this->m_type)) {
+        // One size for the whole life instead of the client's swell, plus the crit punch: a crit appears at
+        // CRIT_GROW_FROM of its size and snaps up to the full one over CRIT_GROW_DURATION, then holds.
+        float scale = this->m_sizeScale;
+        if (IsCritStyle(this->m_type) && elapsed < s_dragonCritGrowDuration) {
+            float pe = static_cast<float>(elapsed) / static_cast<float>(s_dragonCritGrowDuration);
+            float grown = 1.0f - (1.0f - pe) * (1.0f - pe);
+            scale *= s_dragonCritGrowFrom + (1.0f - s_dragonCritGrowFrom) * grown;
+        }
+        height = s_dragonFontPixels / static_cast<float>(g_heightPixels) * scale;
+    } else if (this->m_type == WT_CRIT || this->m_type == WT_CRIT_HEAL) {
         float scale = 1.0f;
 
         for (uint32_t i = 0; i < 3; i++) {
@@ -300,7 +376,7 @@ void WORLDTEXTSTRING::CalculateTextHeight(uint32_t elapsed) {
 
 // VERIFY: 9e3ba832 auto
 // OFFSET: 0x007E6DC0
-WORLDTEXTSTRING* WorldTextCreate(uint32_t type, const C3Vector& position, const char* text, const CImVector* color, const int32_t* pvpRank) {
+WORLDTEXTSTRING* WorldTextCreate(uint32_t type, const C3Vector& position, const char* text, const CImVector* color, const int32_t* pvpRank, float sizeScale) {
     if (!text || !*text) {
         return nullptr;
     }
@@ -316,6 +392,11 @@ WORLDTEXTSTRING* WorldTextCreate(uint32_t type, const C3Vector& position, const 
     string->m_position = position;
     string->m_type = type;
     string->m_startTime = OsGetAsyncTimeMs();
+    string->m_sizeScale = sizeScale;
+
+    if (IsDragonWorldTextStyle(type)) {
+        DragonSeedDrift(string);
+    }
     SStrCopy(string->m_text, text, sizeof(string->m_text));
 
     if (type == WT_HONORGAIN && pvpRank) {
@@ -380,6 +461,10 @@ bool WORLDTEXTSTRING::Update(uint32_t time) {
 
     screen.x = screen.x + frameRect.minX;
     screen.y = screen.y + frameRect.minY;
+
+    if (IsDragonWorldTextStyle(this->m_type)) {
+        DragonScreenDrift(this, elapsed, &screen.x, &screen.y);
+    }
 
     float halfWidth = this->m_halfWidth;
     float halfHeight = this->m_halfHeight;

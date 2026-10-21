@@ -568,7 +568,7 @@ void PlayerNameTriggerColorUpdateAll() {
 
 // VERIFY: f804daea manual
 // OFFSET: 0x007E5C30
-void PLAYERNAMEDESC::CreateWorldText(uint32_t type, const char* text, const CImVector* color, const int32_t* pvpRank) {
+void PLAYERNAMEDESC::CreateWorldText(uint32_t type, const char* text, const CImVector* color, const int32_t* pvpRank, float sizeScale) {
     uint32_t slot = 0;
 
     do {
@@ -591,6 +591,13 @@ void PLAYERNAMEDESC::CreateWorldText(uint32_t type, const char* text, const CImV
 
     C3Vector position = object->GetNamePosition();
     position.z = position.z - 0.33333334f;
+
+    // Blizzard hangs the number under the name anchor, which sits above the model's head. DragonUI draws over
+    // the body instead, so the damage-family numbers come down by a share of the unit's own height -- a fixed
+    // offset would sit under the head of a gnome and over the shoulders of a boss.
+    if (IsDragonWorldTextStyle(type)) {
+        position.z = position.z - object->m_height * object->m_scale * 0.5f;
+    }
 
     C3Vector corners[8];
     World::GetFrustumCorners(corners);
@@ -635,7 +642,7 @@ void PLAYERNAMEDESC::CreateWorldText(uint32_t type, const char* text, const CImV
         }
     }
 
-    this->m_worldText[slot] = WorldTextCreate(type, position, text, color, pvpRank);
+    this->m_worldText[slot] = WorldTextCreate(type, position, text, color, pvpRank, sizeScale);
 }
 
 // VERIFY: a695ce6e manual
@@ -655,7 +662,7 @@ PLAYERNAMEDESC* ObjectNameCreate(const WOWGUID& guid) {
 
 // VERIFY: 037184fa auto
 // OFFSET: 0x007E6030
-void PlayerNameCreateText(PLAYERNAMEDESC* desc, uint32_t type, const char* text, const CImVector* color, const int32_t* pvpRank) {
+void PlayerNameCreateText(PLAYERNAMEDESC* desc, uint32_t type, const char* text, const CImVector* color, const int32_t* pvpRank, float sizeScale) {
     if (!desc) {
         return;
     }
@@ -663,7 +670,7 @@ void PlayerNameCreateText(PLAYERNAMEDESC* desc, uint32_t type, const char* text,
     CGCamera* camera = CGWorldFrame::s_currentWorldFrame->m_camera;
 
     if ((desc->m_guid != camera->m_targetGUID || !camera->IsFirstPersonView()) && !ClntObjMgrGetPlayerType()) {
-        desc->CreateWorldText(type, text, color, pvpRank);
+        desc->CreateWorldText(type, text, color, pvpRank, sizeScale);
     }
 }
 

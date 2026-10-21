@@ -55,6 +55,12 @@ struct WORLDTEXTSTRING : public CHandleObject {
     /* 0030 */ C3Vector m_screenPosition;
     /* 003C */ char m_text[64];
     /* 007C */ int32_t m_pvpRank;
+    // Size multiplier (spells read larger than the player's own auto attacks) and the per-number drift,
+    // in screen DDC pixels, ending where the number comes to rest.
+    /* 0080 */ float m_sizeScale;
+    /* 0084 */ float m_driftX;
+    /* 0088 */ float m_driftY;
+    /* 008C */ float m_driftSpeed;
 
     ~WORLDTEXTSTRING() override;
 
@@ -67,8 +73,11 @@ struct WORLDTEXTSTRING : public CHandleObject {
     bool Update(uint32_t time);
 };
 
+// True for the damage-family styles that carry DragonUI's look (damage, crit, absorb, miss).
+bool IsDragonWorldTextStyle(uint32_t type);
+
 void WorldTextAddIcon(WORLDTEXTSTRING* text);
-WORLDTEXTSTRING* WorldTextCreate(uint32_t type, const C3Vector& position, const char* text, const CImVector* color, const int32_t* pvpRank);
+WORLDTEXTSTRING* WorldTextCreate(uint32_t type, const C3Vector& position, const char* text, const CImVector* color, const int32_t* pvpRank, float sizeScale = 1.0f);
 void WorldTextDelete(WORLDTEXTSTRING* text);
 float WorldTextGetAscendDistance(uint32_t type);
 uint32_t WorldTextGetType(WORLDTEXTSTRING* text);

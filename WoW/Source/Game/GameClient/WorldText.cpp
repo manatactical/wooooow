@@ -144,6 +144,13 @@ static CGxStringBatch* s_worldTextBatch;
 // STATIC: 0x00D380CC
 static HTEXTFONT s_worldTextFont;
 
+// NOT IN BINARY. A second font for the Dragon damage-family styles (damage/crit/absorb/miss). Those draw at
+// a fixed s_dragonFontPixels regardless of resolution, while everything else draws at a fraction of the
+// screen height, so ONE font cannot rasterize near both. Sharing s_worldTextFont meant the 12px damage
+// numbers were minified from a ~60px raster -- a 5x bilinear downscale, which is the pixelation. This font
+// is created so its raster is exactly 2x the drawn size.
+static HTEXTFONT s_dragonWorldTextFont;
+
 // STATIC: 0x00D380D0
 static CTexture* s_pvpRankTextures[15];
 
@@ -206,7 +213,13 @@ void WORLDTEXTSTRING::RecreateString() {
 
     this->m_string = nullptr;
 
-    CGxFont* font = TextBlockGetFontPtr(s_worldTextFont);
+    // Dragon-styled numbers get their own font, built so its raster is 2x the size they draw at. Everything
+    // else keeps the shared font.
+    HTEXTFONT fontHandle = IsDragonWorldTextStyle(this->m_type) && s_dragonWorldTextFont
+        ? s_dragonWorldTextFont
+        : s_worldTextFont;
+
+    CGxFont* font = TextBlockGetFontPtr(fontHandle);
     float fontHeight = DDCToNDCHeight(this->m_fontHeight);
 
     C2Vector shadow;
@@ -286,8 +299,13 @@ void WORLDTEXTSTRING::CalculateNewColor(uint32_t elapsed) {
 void WorldTextShutdown() {
     if (s_worldTextFont) {
         HandleClose(reinterpret_cast<HOBJECT>(s_worldTextFont));
+        s_worldTextFont = nullptr;
     }
 
+    if (s_dragonWorldTextFont) {
+        HandleClose(reinterpret_cast<HOBJECT>(s_dragonWorldTextFont));
+        s_dragonWorldTextFont = nullptr;
+    }
     s_freeStrings.Clear(typeid(WORLDTEXTSTRING).raw_name(), SLOG_OBJECT, 1);
     GxuFontDestroyBatch(s_worldTextBatch);
 
@@ -655,7 +673,26 @@ void WorldTextInitialize() {
     const char* fontName = FrameScript_GetText("DAMAGE_TEXT_FONT", -1, GENDER_NOT_APPLICABLE);
     // NOT IN BINARY: combat numbers opt into supersampling. They are the largest text on screen and the
     // ones that read as "HD" when they are sharp, so they get the 2x raster while small UI text keeps 1:1.
-    s_worldTextFont = TextBlockGenerateFont(fontName, GXU_FONTOPT_SUPERSAMPLE, DDCToNDCHeight(0.018333333f));
+    //
+    // The height must be at least the largest size these numbers are DRAWN at. CGxFont rasterizes at (and
+    // caches glyphs by) whatever pixelSize this resolves to, while RecreateString draws each style at its
+    // own height -- heal and crit-heal draw at ~30px, the dragon damage styles at 12px. Building the font
+    // too small makes the big styles UPSAMPLE a tiny glyph, which is the worst case; building it for the
+    // biggest style leaves every style a downsample.
+    //
+    // The old DDCToNDCHeight(DDCToNDCHeight(0.018333)) ask rasterized at 54-109px while everything drew at
+    // 12-30px: a 3-5x minification that bilinear filtering cannot resolve, which is why combat text kept
+    // aliasing regardless of filter settings.
+    const float worldTextMaxDrawPixels = 0.027499998f * static_cast<float>(g_heightPixels);
+    s_worldTextFont = TextBlockGenerateFont(fontName, GXU_FONTOPT_SUPERSAMPLE, worldTextMaxDrawPixels / static_cast<float>(g_heightPixels));
+
+    // NOT IN BINARY. Dedicated font for the Dragon damage-family styles. They draw at a fixed
+    // s_dragonFontPixels instead of a fraction of screen height, so they need a font whose raster is sized
+    // to THAT, not to the heals. With pixelSize == s_dragonFontPixels the supersampled raster is exactly
+    // 2x the drawn size -- a 2x2 bilinear footprint, which is the only downsample ratio the hardware filter
+    // can resolve cleanly. This is what removes the pixelation: previously these numbers minified ~5x.
+    s_dragonWorldTextFont = TextBlockGenerateFont(fontName, GXU_FONTOPT_SUPERSAMPLE, s_dragonFontPixels / static_cast<float>(g_heightPixels));
+
     s_worldTextBatch = GxuFontCreateBatch(false, false);
 
     CStatus status;

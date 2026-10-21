@@ -42,6 +42,9 @@ CVar* CWorldParam::cvar_shadowBandRange;
 // Not in the original binary. See CUnitOutline::Enabled.
 CVar* CWorldParam::cvar_unitOutline;
 
+// Not in the original binary. See LootBeam::Update.
+CVar* CWorldParam::cvar_lootBeam;
+
 // Not in the original binary. See CAntiAlias::Enabled.
 CVar* CWorldParam::cvar_antiAlias;
 
@@ -833,6 +836,12 @@ void CWorldParam::Initialize() {
     // while the login screen is up, which is before any world frame exists, and GetCVarDefault raises on an
     // unregistered name. CUnitOutline::Init registers it too, so Init order cannot be got wrong.
     CWorldParam::cvar_unitOutline = CVar::Register("unitOutline", "Outline the mouseover and target units", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+
+    // Not in the original binary. The loot beam's master switch, read from the render path by
+    // LootBeam::Update. Registered here for the same reason as unitOutline: the Advanced panel asks for
+    // its default while the login screen is up, before any world frame exists. LootBeam::Init registers
+    // it too, and Register reuses an existing var, so Init order cannot be got wrong.
+    CWorldParam::cvar_lootBeam = CVar::Register("lootBeam", "Draw a beam of light over lootable corpses", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
     // Not in the original binary. The anti-aliasing mode: 0 off, 1 FXAA. Unlike the unit outline this one
     // defaults to 0, so a client that never touches the options draws exactly what the stock 3.3.5a client

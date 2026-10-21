@@ -48,6 +48,11 @@ class CWorldParam {
     // login and GetCVarDefault raises on a name that is not registered yet.
     static CVar* cvar_unitOutline;
 
+    // Not in the original binary. The loot beam's master switch, read by LootBeam::Update from the render
+    // path. Registered here for the same reason as cvar_unitOutline: the Advanced panel asks for its
+    // default while the login screen is up, before any world frame exists.
+    static CVar* cvar_lootBeam;
+
     // Not in the original binary. The anti-aliasing mode, read by CAntiAlias from the render path. Registered
     // here for the same reason as cvar_unitOutline: the options dropdown asks for its default at the login
     // screen, before any world frame exists. CAntiAlias::Init registers it too, so Init order cannot be wrong.

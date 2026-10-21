@@ -74,6 +74,7 @@
 #include "WoW/Source/Ui/CommentatorFrame.h"
 #include "WoW/Source/Ui/DressUpModelFrame.h"
 #include "WoW/Source/Ui/GameUI.h"
+#include "WoW/Source/Ui/LootBeam.h"
 #include "WoW/Source/Ui/UnitOutlineGather.h"
 #include "WoW/Source/Ui/MailInfo.h"
 #include "WoW/Source/Ui/MinimapFrame.h"
@@ -1270,6 +1271,8 @@ CGWorldFrame::CGWorldFrame(CSimpleFrame* parent) : CSimpleFrame(parent) {
     CUnitOutline::Init();
     // Registers the antiAlias cvar and the device-restored callback. Idempotent for the same reason.
     CAntiAlias::Init();
+    // Registers the lootBeam cvar. Idempotent for the same reason.
+    LootBeam::Init();
 
     CGWorldFrame::ffxEffectGlow = new (__FILE__, __LINE__) EffectGlow();
     CGWorldFrame::ffxEffectDeath = new (__FILE__, __LINE__) EffectDeath();
@@ -1820,6 +1823,12 @@ void CGWorldFrame::OnWorldRender() {
     if (CWorld::enables & 0x20000000) {
         GxMasterEnableSet(GxMasterEnable_PolygonFill, 1);
     }
+
+    // The loot beam draws additively onto the finished 3D view while the world's own view and projection
+    // are still the ones on the device -- which is exactly here, at the world -> interface boundary, and
+    // nowhere later in the frame. It is purely additive and depth-free: the beacon is a marker to be
+    // found, not a piece of world geometry, and its occlusion test is the CPU trace inside it.
+    LootBeam::Update(this->m_elapsedSec);
 
     // The world -> interface boundary: the outline is composited here so the interface draws over it, and the
     // shared depth is given back first so nothing past this point tests against the world.

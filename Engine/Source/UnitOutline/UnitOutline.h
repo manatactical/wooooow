@@ -89,6 +89,13 @@ class CUnitOutline {
     static void BeginDepthPass();
     static void EndDepthPass();
 
+    // Not in the original binary. Whether this frame's shared depth is still bound, i.e. whether a draw
+    // made between BeginDepthPass and EndDepthPass can depth-test against terrain, world objects and every
+    // model the frame has drawn so far. The loot beam asks this before it draws with a depth test: without
+    // it the test would run against whatever surface the device happened to hold, which rejects every
+    // pixel silently. False on a device that cannot pair the depth texture with the colour target.
+    static bool IsDepthPassBound();
+
     private:
     static bool Enabled();
     static bool EnsureResources();

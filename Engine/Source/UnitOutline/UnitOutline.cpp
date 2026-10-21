@@ -885,6 +885,11 @@ void CUnitOutline::EndDepthPass() {
     RestoreSavedDepth();
 }
 
+// Not in the original binary. See the declaration: what a draw between the two calls can test against.
+bool CUnitOutline::IsDepthPassBound() {
+    return s_depthBound;
+}
+
 // ---------------------------------------------------------------------------------------------
 // The mask
 // ---------------------------------------------------------------------------------------------

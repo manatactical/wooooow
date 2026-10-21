@@ -39,10 +39,10 @@ namespace {
 // the video options tab carries only the master switch, so they are constants here. Distances are in
 // screen pixels.
 // ---------------------------------------------------------------------------------------------
-constexpr float kThickness = 2.75f;   // edge width
-constexpr float kIntensity = 7.0f;    // edge accumulation weight (brightness)
+constexpr float kThickness = 2.0f;    // edge width
+constexpr float kIntensity = 1.0f;    // final outline alpha scale
 constexpr float kOpacity   = 1.0f;    // final outline alpha scale
-constexpr float kSoftness  = 0.25f;   // blur radius, times kSoftnessScale
+constexpr float kSoftness  = 0.5f;    // blur radius, times kSoftnessScale
 constexpr float kThreshold = 0.0f;    // clip cutoff; trims faint pixels
 
 // Blur radius, in mask texels, that kSoftness maps to. The mask is back-buffer sized, so one texel is
@@ -51,8 +51,11 @@ constexpr float kThreshold = 0.0f;    // clip cutoff; trims faint pixels
 constexpr float kSoftnessScale = 2.0f;
 
 constexpr int32_t kMaxTargets   = 64;  // selections and quest givers, each up to two models plus gear
-constexpr uint32_t kFadeMs         = 700;
-constexpr float    kFadeEndOpacity = 0.75f;
+// The fade a selection plays after it goes idle. Source RGB only, so the line dims rather than disappears
+// (see StampSilhouette); 0.35 is a 65% drop, which is what makes the fade actually readable -- at 0.75 it
+// was a 25% dim and effectively invisible.
+constexpr uint32_t kFadeMs         = 800;
+constexpr float    kFadeEndOpacity = 0.45f;
 
 // ---------------------------------------------------------------------------------------------
 // The shaders. Ported from the WXL module's hlsl (its Hlsl.hpp); the port change is that they are
@@ -100,35 +103,83 @@ const char* const kCutoutColorHLSL =
 // brightness vary (the fade). rgb/alpha recovers the colour; the interior test is center-vs-average, so
 // it stays correct whatever the weight is.
 //
-// The tap ring is blown up to BLUR_TAP times the configured thickness and its weight rolled off towards
-// the ring's outside, so a pointy model's edge (shoulders, spikes, weapon tips) lands as a soft gradient
-// instead of a hard 1-pixel step. The line still thins and thickens with the setting, because the ring
-// and the roll-off both scale with px.z.
+// Four rings at increasing radius, summed and saturated ONCE.
+//
+// Each ring is tested against the centre on its own: its mean coverage minus the centre's, i.e. how much
+// of the silhouette its taps straddle. That per-ring test is what makes a thin ring work at all. The old
+// code formed ONE ring and asked the same question -- fine at 2.75 * 1.7 = 4.7 px, because the ring sat well
+// outside the ~2 px mask blur. A thinner ring lands INSIDE that ramp, where the centre is already as covered
+// as the ring, so the test cancels it and the outline all but disappears.
+//
+// The ring radii are CORE_TAP * {1,2,3,4} * thickness. A pixel d pixels outside the silhouette is covered
+// only by the rings whose radius still reaches it, so the summed band falls off as d grows -- which is the
+// brightness decay this wants. Saturating each ring individually first was the bug behind the earlier flat
+// plateau: every ring clamped to full, so the sum stayed full for 10+ px and then dropped off a cliff.
+//
+// RING_GAIN exists because a band is a mean over 8 taps of an already-blurred mask and peaks near 0.19, not
+// 1: it lifts the sum back to a usable alpha. The original shader peaked at 0.27 alpha, which is why the
+// outline read as a ~5% grey line.
 const char* const kEdgeHLSL =
     "sampler2D m : register(s0);\n"
     "sampler2D occ : register(s1);\n"
     "sampler2D vis : register(s2);\n"
     "float4 px : register(c0);\n"
     "float4 par : register(c1);\n"
-    "#define BLUR_TAP 1.7\n"
+    "#define CORE_TAP 1.7\n"
+    "#define RING_GAIN 0.75\n"
+    "#define CORE_GAIN 11.0\n"
+    "#define TAIL_POW 1.6\n"
+    "#define CORE_POP 1.55\n"
+    "float4 Ring(sampler2D s, float2 uv, float2 o) {\n"
+    "  return tex2D(s,uv+float2(o.x,0)) + tex2D(s,uv+float2(-o.x,0))\n"
+    "       + tex2D(s,uv+float2(0,o.y)) + tex2D(s,uv+float2(0,-o.y))\n"
+    "       + tex2D(s,uv+float2(o.x,o.y)) + tex2D(s,uv+float2(-o.x,-o.y))\n"
+    "       + tex2D(s,uv+float2(o.x,-o.y)) + tex2D(s,uv+float2(-o.x,o.y));\n"
+    "}\n"
+    "// This ring's mean coverage, i.e. how much silhouette area its taps cover.\n"
+    "float RingAvg(float ringAlpha) {\n"
+    "  return ringAlpha * 0.125;\n"
+    "}\n"
+    "// Gradient magnitude of the blurred mask. This is what centres the line ON the silhouette: the\n"
+    "// steepest slope of a blurred edge is exactly at the edge, so it peaks at distance 0 and falls off\n"
+    "// both ways. The old ring-ratio term did NOT do this -- a ring is strongest where its circumference\n"
+    "// touches the boundary, i.e. one ring-radius away, which is why the colour vanished next to the\n"
+    "// model and bloomed a few pixels out.\n"
+    "float Gradient(float2 uv, float2 e) {\n"
+    "  float gx = tex2D(m, uv + float2(e.x, 0)).a - tex2D(m, uv - float2(e.x, 0)).a;\n"
+    "  float gy = tex2D(m, uv + float2(0, e.y)).a - tex2D(m, uv - float2(0, e.y)).a;\n"
+    "  return sqrt(gx * gx + gy * gy);\n"
+    "}\n"
     "float4 main(float2 uv : TEXCOORD0) : COLOR0 {\n"
-    "  float2 o = px.xy * px.z * BLUR_TAP;\n"
-    "  float4 a = tex2D(m,uv+float2(o.x,0)) + tex2D(m,uv+float2(-o.x,0))\n"
-    "           + tex2D(m,uv+float2(0,o.y)) + tex2D(m,uv+float2(0,-o.y))\n"
-    "           + tex2D(m,uv+float2(o.x,o.y)) + tex2D(m,uv+float2(-o.x,-o.y))\n"
-    "           + tex2D(m,uv+float2(o.x,-o.y)) + tex2D(m,uv+float2(-o.x,o.y));\n"
-    "  float4 v = tex2D(vis,uv) + tex2D(vis,uv+float2(o.x,0)) + tex2D(vis,uv+float2(-o.x,0))\n"
-    "           + tex2D(vis,uv+float2(0,o.y)) + tex2D(vis,uv+float2(0,-o.y))\n"
-    "           + tex2D(vis,uv+float2(o.x,o.y)) + tex2D(vis,uv+float2(-o.x,-o.y))\n"
-    "           + tex2D(vis,uv+float2(o.x,-o.y)) + tex2D(vis,uv+float2(-o.x,o.y));\n"
+    "  float2 o = px.xy * px.z * CORE_TAP;\n"
     "  float center = tex2D(m, uv).a;\n"
-    "  float inside = a.a > 0.0 ? saturate(center * 8.0 / a.a) : 0.0;\n"
-    "  float outline = saturate(a.a * (0.125 / BLUR_TAP) * px.w) * (1.0 - inside);\n"
-    "  outline *= par.w > 0.5 ? saturate(v.a * 0.125) : 1.0;\n"
+    "  // Outside the body only: the gradient is symmetric, so without this it would also light the\n"
+    "  // model's interior. center is 0.5 exactly on the boundary.\n"
+    "  float outside = smoothstep(0.30, 0.50, 1.0 - center);\n"
+    "  float4 a = Ring(m, uv, o);\n"
+    "  float4 r2 = Ring(m, uv, o * 2.0);\n"
+    "  float4 r3 = Ring(m, uv, o * 3.0);\n"
+    "  float4 r4 = Ring(m, uv, o * 4.0);\n"
+    "  // Core: pinned to the silhouette by the gradient.\n"
+    "  float core = saturate(Gradient(uv, px.xy * px.z * 0.6) * CORE_GAIN) * outside;\n"
+    "  // Tail: the rings carry the line OUTWARD, where the gradient has already died. TAIL_POW steepens\n"
+    "  // the falloff so the tail gives up its brightness sooner than the core does.\n"
+    "  float tail = saturate((RingAvg(a.a) + RingAvg(r2.a) + RingAvg(r3.a) + RingAvg(r4.a))\n"
+    "                        * RING_GAIN) * outside;\n"
+    "  tail = pow(tail, TAIL_POW);\n"
+    "  a += r2 + r3 + r4;\n"
+    "  float outline = saturate(max(core, tail));\n"
+    "  if (par.w > 0.5) {\n"
+    "    outline *= saturate(Ring(vis, uv, o).a * 0.125);\n"
+    "  }\n"
     "  clip(outline - par.y);\n"
     "  float3 col = a.a > 0.001 ? a.rgb / a.a : float3(1,1,1);\n"
+    "  // With alpha-over blending the core pixel is already the exact colour, so this is purely a saturation\n"
+    "  // top-up: CORE_POP past 1 pushes the core channels up and, being gated on outline squared, leaves\n"
+    "  // the tail at its true colour.\n"
+    "  col *= 1.0 + (CORE_POP - 1.0) * outline * outline;\n"
     "  float om = tex2D(occ, uv).a * par.z;\n"
-    "  return float4(col, saturate(outline * 1.4 * par.x) * (1.0 - om));\n"
+    "  return float4(col, saturate(outline * par.x) * (1.0 - om));\n"
     "}\n";
 
 // A separable gaussian tap for the softening pass: 5 explicit samples along one axis, written out rather
@@ -1027,7 +1078,13 @@ void CUnitOutline::EdgePass() {
     float c1[4] = { kOpacity, kThreshold, s_playerMaskCleared ? 1.0f : 0.0f, s_visMaskCleared ? 1.0f : 0.0f };
 
     GxRsSet(GxRs_PixelShader, s_edgePS);
-    // The line is blended over the frame it was made from.
+    // GxBlend_Alpha is SRCALPHA / INVSRCALPHA: result = col * alpha + background * (1 - alpha).
+    //
+    // That is the right blend for this line, even though it is not the flashiest. In the core alpha is 1, so
+    // the pixel IS the exact outline colour at full strength -- the reaction colours are not washed toward
+    // white and the hue is the one the game chose. Additive (GxBlend_Add) does look brighter, but it sums
+    // onto the frame, so it clips to white over snow and water and the red reads orange; and opaque
+    // (GxBlend_Opaque) cannot fade at all, since the alpha channel is ignored and the soft gradient with it.
     GxRsSet(GxRs_BlendingMode, GxBlend_Alpha);
     GxRsSet(GxRs_AlphaRef, 0);
     GxRsSet(GxRs_Texture0, s_mask);

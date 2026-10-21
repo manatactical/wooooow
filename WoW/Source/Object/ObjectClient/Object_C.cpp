@@ -1,4 +1,5 @@
 #include "Object_C.h"
+#include "WoW/Source/UIUtil/Types.h"
 #include "Engine/Source/Gx/Gx.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "WoW/Source/Game/GameClient/ProjectTex.h"
@@ -33,9 +34,9 @@
 #include "WoW/Source/Ui/PetInfo.h"
 #include "WoW/Source/Game/GameClient/PlayerName.h"
 #include "WoW/Source/Ui/MinimapFrame.h"
-#include "WoW/Source/Ui/MinimapFrame.h"
 #include "Engine/Source/Tempest/CMath.h"
 #include "WoW/Source/Magic/MagicClient/Spell_C.h"
+#include "WoW/Source/Magic/MagicClient/SpellEnums.h"
 #include <cmath>
 #include "WoW/Source/Object/ObjectClient/Player_C.h"
 #include "WoW/Source/SoundInterface/SoundInterface2.h"
@@ -93,7 +94,7 @@ static void LoadInteractIcons(int32_t load) {
 // VERIFY: 22da9b4a manual
 // OFFSET: 0x007440B0
 static int32_t UpdateAllWorldObjectsCallback(WOWGUID guid, void* param) {
-    CGObject_C* object = ClntObjMgrObjectPtr(guid, TYPEMASK_OBJECT, __FILE__, __LINE__);
+    CGObject_C* object = ClntObjMgrObjectPtr(guid, TYPE_OBJECT, __FILE__, __LINE__);
 
     if (object) {
         object->UpdateWorldObject(0);
@@ -105,7 +106,7 @@ static int32_t UpdateAllWorldObjectsCallback(WOWGUID guid, void* param) {
 // VERIFY: 8897bbb7 manual
 // OFFSET: 0x00744100
 static int32_t UpdateAllObjectEffectManagersCallback(WOWGUID guid, void* param) {
-    CGObject_C* object = ClntObjMgrObjectPtr(guid, TYPEMASK_OBJECT, __FILE__, __LINE__);
+    CGObject_C* object = ClntObjMgrObjectPtr(guid, TYPE_OBJECT, __FILE__, __LINE__);
 
     if (object && object->m_effectManager) {
         object->m_effectManager->UpdateAllPlayingEffects();
@@ -117,7 +118,7 @@ static int32_t UpdateAllObjectEffectManagersCallback(WOWGUID guid, void* param) 
 // VERIFY: 75bf5d26 manual
 // OFFSET: 0x00744E10
 static int32_t ScaleUpdateHandler(WOWGUID guid, uint32_t fieldOffset, uint32_t fieldSize, const void* oldValue, void* param) {
-    CGObject_C* object = ClntObjMgrObjectPtr(guid, TYPEMASK_OBJECT, __FILE__, __LINE__);
+    CGObject_C* object = ClntObjMgrObjectPtr(guid, TYPE_OBJECT, __FILE__, __LINE__);
 
     if (object) {
         object->HandleScaleUpdate(*static_cast<const float*>(oldValue));
@@ -170,21 +171,21 @@ void CGObject_C::AddWorldObject() {
     }
 
     if (this->m_worldObject) {
-        SysMsgPrintf(STATUS_WARNING, 2, "OBJECTALREADYACTIVE|0x%016I64X", this->m_obj->m_guid.m_guid);
+        SysMsgPrintf(SYSMSG_WARNING, 2, "OBJECTALREADYACTIVE|0x%016I64X", this->m_obj->m_guid.m_guid);
         return;
     }
 
     uint32_t flags = 0;
 
-    if (this->m_obj->m_type & TYPEMASK_GAMEOBJECT) {
+    if (this->m_obj->m_type & TYPE_GAMEOBJECT) {
         flags = 11;
-    } else if (this->m_obj->m_type & TYPEMASK_DYNAMICOBJECT) {
+    } else if (this->m_obj->m_type & TYPE_DYNAMICOBJECT) {
         flags = 10;
-    } else if (this->m_obj->m_type & TYPEMASK_CORPSE) {
+    } else if (this->m_obj->m_type & TYPE_CORPSE) {
         if (static_cast<CGCorpse_C*>(this)->m_corpse->m_corpseFieldFlags & 0x1) {
             flags = 2;
         }
-    } else if (this->m_obj->m_type & TYPEMASK_UNIT) {
+    } else if (this->m_obj->m_type & TYPE_UNIT) {
         CGUnit_C* unit = static_cast<CGUnit_C*>(this);
 
         if (unit->IsLinkAll()) {
@@ -197,7 +198,7 @@ void CGObject_C::AddWorldObject() {
 
         flags |= 0x10;
 
-        if (this->m_obj->m_type & TYPEMASK_PLAYER) {
+        if (this->m_obj->m_type & TYPE_PLAYER) {
             flags |= 0x20;
         }
     }
@@ -958,17 +959,17 @@ int32_t CGObject_C::GetQuestGiverCursor(int32_t highlighted) {
         case 5:
         case 7:
         case 8:
-            return highlighted ? 49 : 23;
+            return highlighted ? QUEST_ERROR_CURSOR : QUEST_CURSOR;
 
         case 6:
-            return highlighted ? 50 : 24;
+            return highlighted ? QUEST_REPEATABLE_ERROR_CURSOR : QUEST_REPEATABLE_CURSOR;
 
         case 9:
         case 10:
-            return highlighted ? 51 : 25;
+            return highlighted ? QUEST_TURNIN_ERROR_CURSOR : QUEST_TURNIN_CURSOR;
 
         default:
-            return 0;
+            return NO_CURSOR;
     }
 }
 
@@ -1176,35 +1177,35 @@ void CGObject_C::SetTypeID(OBJECT_TYPE_ID typeId) {
 
     switch (typeId) {
         case ID_OBJECT:
-            this->m_obj->m_type = TYPEMASK_OBJECT;
+            this->m_obj->m_type = HEIR_TYPE_OBJECT;
             break;
 
         case ID_ITEM:
-            this->m_obj->m_type = static_cast<TypeMask>(TYPEMASK_OBJECT | TYPEMASK_ITEM);
+            this->m_obj->m_type = HEIR_TYPE_ITEM;
             break;
 
         case ID_CONTAINER:
-            this->m_obj->m_type = static_cast<TypeMask>(TYPEMASK_OBJECT | TYPEMASK_ITEM | TYPEMASK_CONTAINER);
+            this->m_obj->m_type = HEIR_TYPE_CONTAINER;
             break;
 
         case ID_UNIT:
-            this->m_obj->m_type = static_cast<TypeMask>(TYPEMASK_OBJECT | TYPEMASK_UNIT);
+            this->m_obj->m_type = HEIR_TYPE_UNIT;
             break;
 
         case ID_PLAYER:
-            this->m_obj->m_type = static_cast<TypeMask>(TYPEMASK_OBJECT | TYPEMASK_UNIT | TYPEMASK_PLAYER);
+            this->m_obj->m_type = HEIR_TYPE_PLAYER;
             break;
 
         case ID_GAMEOBJECT:
-            this->m_obj->m_type = static_cast<TypeMask>(TYPEMASK_OBJECT | TYPEMASK_GAMEOBJECT);
+            this->m_obj->m_type = HEIR_TYPE_GAMEOBJECT;
             break;
 
         case ID_DYNAMICOBJECT:
-            this->m_obj->m_type = static_cast<TypeMask>(TYPEMASK_OBJECT | TYPEMASK_DYNAMICOBJECT);
+            this->m_obj->m_type = HEIR_TYPE_DYNAMICOBJECT;
             break;
 
         case ID_CORPSE:
-            this->m_obj->m_type = static_cast<TypeMask>(TYPEMASK_OBJECT | TYPEMASK_CORPSE);
+            this->m_obj->m_type = HEIR_TYPE_CORPSE;
             break;
 
         default:
@@ -1402,17 +1403,17 @@ void CGObject_C::ConnectToLightningThisFrame(uint32_t spellId, int32_t attachmen
 // VERIFY: abf45c20 manual
 // OFFSET: 0x007450B0
 CGObject_C* CGObject_C::GetFocusObject() {
-    CGObject_C* object = ClntObjMgrObjectPtr(CGUnit_C::s_activeMover, TYPEMASK_UNIT, __FILE__, __LINE__);
+    CGObject_C* object = ClntObjMgrObjectPtr(CGUnit_C::s_activeMover, TYPE_UNIT, __FILE__, __LINE__);
 
     if (!object) {
-        object = ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__);
+        object = ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__);
 
         if (!object) {
             return nullptr;
         }
     }
 
-    if (!(object->m_obj->m_type & TYPEMASK_PLAYER) || !(static_cast<CGPlayer_C*>(object)->m_combatModeFlags & 1)) {
+    if (!(object->m_obj->m_type & TYPE_PLAYER) || !(static_cast<CGPlayer_C*>(object)->m_combatModeFlags & 1)) {
         return object;
     }
 
@@ -1422,7 +1423,7 @@ CGObject_C* CGObject_C::GetFocusObject() {
         return object;
     }
 
-    CGObject_C* target = ClntObjMgrObjectPtr(WOWGUID{ farSight }, TYPEMASK_OBJECT, __FILE__, __LINE__);
+    CGObject_C* target = ClntObjMgrObjectPtr(WOWGUID{ farSight }, TYPE_OBJECT, __FILE__, __LINE__);
     return target ? target : object;
 }
 
@@ -1611,15 +1612,15 @@ void CGObject_C::PlaySpellVisualKit(const PlaySpellVisuaKitData& data) {
             callback = &CGObject_C::AuraEffectHandler;
 
             if (spell) {
-                if (spell->m_effectAura[0] == 78) {
+                if (spell->m_effectAura[0] == SPELL_AURA_MOUNTED) {
                     flags |= 0x800000;
                 }
 
-                if (spell->m_effectAura[1] == 78) {
+                if (spell->m_effectAura[1] == SPELL_AURA_MOUNTED) {
                     flags |= 0x800000;
                 }
 
-                if (spell->m_effectAura[2] == 78) {
+                if (spell->m_effectAura[2] == SPELL_AURA_MOUNTED) {
                     flags |= 0x800000;
                 }
             }
@@ -1668,7 +1669,7 @@ void CGObject_C::PlaySpellVisualKit(const PlaySpellVisuaKitData& data) {
 
         if (data.m_spellRec && !data.m_position) {
             for (uint32_t i = 0; i < 3; i++) {
-                if (data.m_spellRec->m_effectAura[i] == 26) {
+                if (data.m_spellRec->m_effectAura[i] == SPELL_AURA_MOD_ROOT) {
                     flags |= 0x4000;
                     break;
                 }
@@ -1801,7 +1802,7 @@ attachments:
 
             if (data.m_spellRec && !data.m_position) {
                 for (uint32_t j = 0; j < 3; j++) {
-                    if (data.m_spellRec->m_effectAura[j] == 26) {
+                    if (data.m_spellRec->m_effectAura[j] == SPELL_AURA_MOD_ROOT) {
                         flags |= 0x4000;
                         break;
                     }

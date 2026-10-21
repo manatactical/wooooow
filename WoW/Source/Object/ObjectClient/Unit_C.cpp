@@ -1430,21 +1430,97 @@ void CGUnit_C::PreAnimate(CGWorldFrame* frame) {
     PlayerNameUpdateDrawCallback(this->m_nameDesc);
     this->UpdateModelTint(time);
 
+    // NOT IN BINARY. Apply a flying mount's flight-state animation.
+    //
+    // PlayBaseAnimation is the only thing that fills the mount slot, but it runs on discrete events, and the
+    // mount write path is gated on `updateMount` (state & 0x10), which is set only by ModelLoaded and
+    // OnBaseAnimEnd. A looping mount clip never ends, so while actually flying neither ever fires: the flight
+    // state could be computed and never applied.
+    //
+    // This is the one per-frame entry, and it is deliberately minimal -- it writes ONLY when the id chosen for
+    // the current state differs from the one already on the model, so a steady state issues exactly one call.
+    // It does not own the mount's playback: blending, loop points and timing stay the client's.
+    //
+    // The airborne latch is maintained HERE, unconditionally, not inside ChooseMountFlightAnim. That function
+    // is only ever reached while MOVEMENTFLAG_FLYING is set, so a reset placed inside it could never run on
+    // the ground: the takeoff would fire once per login and never again, and the mount would keep its last
+    // air state across every landing.
+    if (this->m_mountModel)
+    {
+        // CAN_FLY is deliberately NOT in this mask. It is a persistent server-granted capability that stays
+        // set on a flying mount while it stands on the ground, so including it meant this branch never ran
+        // and the takeoff fired only once per mount session. FLYING or any actual vertical motion is what
+        // distinguishes "in the air" from "parked on the ground".
+        constexpr uint32_t kAirborneMask = MOVEMENTFLAG_FLYING | MOVEMENTFLAG_ASCENDING
+                                         | MOVEMENTFLAG_DESCENDING | MOVEMENTFLAG_FALLING;
+
+        const uint32_t flagsNow = this->m_movementData.m_flags;
+
+        if (flagsNow & MOVEMENTFLAG_FLYING)
+        {
+            this->m_flgtAirborne = 1;
+        }
+        else if (!(flagsNow & kAirborneMask))
+        {
+            // Genuinely down: the next period of flight gets a fresh takeoff, and any beat is dropped.
+            const bool wasAirborne = this->m_flgtAirborne != 0;
+
+            this->m_flgtAirborne = 0;
+            this->m_flgtLaunched = 0;
+            this->m_flgtLaunchUntilMs = 0;
+            this->m_flgtBeatUntilMs = 0;
+            this->m_flgtBeatNextMs = 0;
+
+            // Hand the mount back to its ground animation, once, on the landing frame.
+            //
+            // While flying the per-frame applier owns the mount bone. On landing PlayBaseAnimation is the only
+            // writer and it is gated on `updateMount` (state & 0x10), which is set only by ModelLoaded and
+            // OnBaseAnimEnd -- and a looping air clip never ends, so that write never comes and the mount kept
+            // its last air clip (a climb, or a takeoff) for as long as it stood there. Clearing the applied
+            // state as well means the next flight re-applies cleanly instead of believing its clip is up.
+            if (wasAirborne)
+            {
+                this->m_flgtAppliedState = 0xFFFFFFFF;
+                this->m_flgtAppliedId = 0;
+                this->m_flgtPendingState = 0xFFFFFFFF;
+
+                const uint32_t groundAnim = this->ResolveAnimForModel(ANIM_STAND, this->m_mountModel);
+                this->SetKeyBoneSequence(this->m_mountModel, 0xFFFFFFFF, groundAnim, 0, 0, 1.0f, 1, 1, 0);
+            }
+        }
+    }
+
+    // Do not fight a death or a scripted animation. PlayBaseAnimation refuses to run in these states, and
+    // the per-frame applier must respect the same conditions or it would override a dying or vehicle-mounted
+    // animation every frame just because the FLYING bit is still set.
+    const bool mountFlightAllowed = this->m_mountModel && this->m_mountModel->IsLoaded(0, 0)
+                                 && (this->m_movementData.m_flags & MOVEMENTFLAG_FLYING)
+                                 && !this->IsDeadOrAttachmentDying()
+                                 && !(this->m_animationState & (0xC0000 | 0x2000000 | 0x20000));
+
+    if (mountFlightAllowed)
+    {
+        const M2Data* mountData = this->m_mountModel->m_shared ? this->m_mountModel->m_shared->m_data : nullptr;
+
+        if (mountData)
+        {
+            const uint32_t anim = this->ChooseMountFlightAnim(mountData, this->GetCurrentBaseAnimId());
+
+            if (anim != 0xFFFFFFFF && anim != this->m_mountModel->GetBoneSequenceId(0xFFFFFFFF))
+            {
+                // Variation 0, never 0xFFFFFFFF. That sentinel makes CM2Model::SetBoneSequence pick a
+                // variation *at random*, and a mount can carry several variations of one id with completely
+                // different content -- the netherwing's 556 has a 1667 ms flight run and a 4366 ms ground
+                // stride. Random selection put the ground stride on a flying mount half the time.
+                this->SetKeyBoneSequence(this->m_mountModel, 0xFFFFFFFF, anim, 0, 0, 1.0f, 1, 1, 0);
+            }
+        }
+    }
+
     if (this->m_proceduralFadeStart && static_cast<int32_t>(time - this->m_proceduralFadeDuration - this->m_proceduralFadeStart) >= 0) {
         this->DoFade(this->GetBaseAlpha(), this->m_proceduralFadeEndAlpha);
         this->m_proceduralFadeStart = 0;
     }
-
-    // NOT IN BINARY. Per-frame mount animation for a flying unit.
-    //
-    // The mount clip used to be chosen only from PlayBaseAnimation, which runs on discrete animation
-    // changes. A mounted player model has no flight cycle, so while flying it picks ANIM_SWIM and that
-    // predicate rejected the frame -- the mount branch therefore almost never ran, and the mount kept
-    // whatever clip it started with. That is why a flying mount only ever glided, whatever the input.
-    //
-    // PreAnimate runs every frame, so the mount is driven from here instead: the rider's movement decides
-    // the role, the role decides the clip, and the clip is set only when it actually changes.
-    this->UpdateMountFlightAnimation(time);
 
     this->CGObject_C::PreAnimate(frame);
 
@@ -4385,6 +4461,494 @@ void CGUnit_C::UpdateHandItemAnimEffects(bool force) {
 
 // VERIFY: 4d39ab41 manual
 // OFFSET: 0x007385C0
+// Flight states. A flying mount has four, and the vertical axis is the one that was missing: without it a
+// climb and a dive resolved to the same clip. Taken from the reference implementation's shape
+// (wxl-mana-speedflying), which is why that module reads correctly on every mount it supports.
+enum EFlgtState
+{
+    FLGT_HOVER = 0, // parked in the air
+    FLGT_LEVEL,     // travelling, roughly flat
+    FLGT_CLIMB,     // gaining altitude
+    FLGT_DIVE,      // losing altitude
+    FLGT_LEFT,      // sidestepping left, no forward travel
+    FLGT_RIGHT,     // sidestepping right, no forward travel
+    FLGT_BACKWARD,  // flying tail-first
+    FLGT_COUNT
+};
+
+namespace
+{
+    // Climb above +15 degrees, dive below -35. The asymmetry is deliberate and is the reference module's:
+    // a dive has to be visibly steeper than a climb before the dive clip takes over, which stops a mount
+    // that bobs while levelling from flickering between the two.
+    constexpr float kClimbSin = 0.2588f;   // sin(+15 deg)
+    constexpr float kDiveSin  = -0.5736f;  // sin(-35 deg)
+
+    // Below this speed the flight path angle is noise, so the mount is hovering.
+    constexpr float kHoverSpeed = 0.5f;
+
+    // Held for this long before a state change takes effect. Only exists to swallow the single-frame
+    // flicker in the movement values; anything larger is felt as lag.
+    constexpr uint32_t kStateHoldMs = 60;
+
+    // One clip ladder per state, best first. Every id is an official entry from wowdev.wiki's
+    // /M2/AnimationList (see docs/M2-ANIMATIONS.md). A state takes the first id the model actually carries,
+    // so a mount without the ideal clip still gets the most movement-appropriate one it has.
+    //
+    // SWIM IDS ARE ABSENT BY DESIGN. Every Swim* / MountSwim* name is excluded: a downported mount often has
+    // only the swim set, and playing one in the air is exactly the paddling this whole change exists to stop.
+    //
+    // The one-shot flap family (1638/1680/1702/1706/1726) is also absent -- those are wingbeat events, not
+    // sustained clips. Using one as a state clip is what made a mount give a single beat and then freeze.
+    struct FlightClipName
+    {
+        const char* m_name;
+        uint32_t    m_id;
+    };
+
+    // Hover is a standing clip: the mount is not travelling.
+    constexpr FlightClipName kHoverLadder[] = {
+        { "MountFlightIdle",          548 },
+        { "FlyMountFlightIdle",       549 },
+        { "AdvFlyIdle",              1628 },
+        { "DracHoverIdle",           1604 },
+        { "FloatIdle",               1728 },
+        { "MountSelfIdle",            618 },
+        { "FlyStand",                 229 },
+        { "FlyStop",                  232 },
+        { "Hover",                    193 },
+        { "FlyHover",                 422 },
+    };
+
+    // Level flight is a glide on a retail mount and a wing cycle on an older one.
+    constexpr FlightClipName kLevelLadder[] = {
+        { "AdvFlyForwardGlide",      1532 },
+        { "FlyAdvFlyForwardGlide",   1533 },
+        { "AdvFlyForwardGlideSlow",  1722 },
+        { "AdvFlyForwardGlideFast",  1724 },
+        { "AdvFlyForward",           1524 },
+        { "FlyRun",                   234 },
+        { "FlyFly",                   364 },
+        { "MountFlightRun",           556 },
+        { "MountFlightSprint",        558 },
+        { "FlyWalk",                  233 },
+        { "MountFlightWalk",          560 },
+        { "Run",                        5 },
+    };
+
+    // Climbing is wings working: the older flight-run cycle reads as beating, the glide as plain lift.
+    constexpr FlightClipName kClimbLadder[] = {
+        { "FlyRun",                   234 },
+        { "FlyFly",                   364 },
+        { "MountFlightRun",           556 },
+        { "MountFlightSprint",        558 },
+        { "AdvFlyForwardGlide",      1532 },
+        { "AdvFlyUp",                1528 },
+        { "FlyWalk",                  233 },
+        { "MountFlightWalk",          560 },
+        { "FlyStand",                 229 },
+    };
+
+    // Diving is wings spread: a dedicated down clip first, then the slow-fall, then the glide.
+    constexpr FlightClipName kDiveLadder[] = {
+        { "AdvFlyDown",              1530 },
+        { "AdvFlySlowFall",          1704 },
+        { "AdvFlyDownStart",         1678 },
+        { "FlyFall",                  269 },
+        { "AdvFlyForwardGlide",      1532 },
+        { "FlyRun",                   234 },
+        { "FlyStand",                 229 },
+        { "FlyHover",                 422 },
+        { "FlyFly",                   364 },
+    };
+
+    // Lateral is a sidestep, not a travel clip, so it is a separate short ladder. MountFlightLeft/Right are
+    // the lateral pair of the MountFlight family and read best where a mount carries them.
+    constexpr FlightClipName kLeftLadder[] = {
+        { "MountFlightLeft",         552 },
+        { "FlyMountFlightLeft",      553 },
+        { "AdvFlyLeft",             1520 },
+        { "FlyAdvFlyLeft",          1521 },
+        { "FlyRunLeft",              322 },
+        { "MountSelfRunLeft",        626 },
+        { "FlyShuffleLeft",          240 },
+        { "ShuffleLeft",              11 },
+        { "DracHoverLeft",          1606 },
+        { "RunLeft",                  93 },
+    };
+
+    constexpr FlightClipName kRightLadder[] = {
+        { "MountFlightRight",        554 },
+        { "FlyMountFlightRight",     555 },
+        { "AdvFlyRight",            1522 },
+        { "FlyAdvFlyRight",         1523 },
+        { "FlyRunRight",             321 },
+        { "MountSelfRunRight",       628 },
+        { "FlyShuffleRight",         241 },
+        { "ShuffleRight",             12 },
+        { "DracHoverRight",         1608 },
+        { "RunRight",                 92 },
+    };
+
+    constexpr FlightClipName kBackwardLadder[] = {
+        { "MountFlightBackwards",          550 },
+        { "FlyMountFlightBackwards",       551 },
+        { "MountFlightWalkBackwards",      562 },
+        { "FlyMountFlightWalkBackwards",   563 },
+        { "FlyRunBackwards",              1147 },
+        { "FlyWalkbackwards",              242 },
+        { "RunBackwards",                 1146 },
+        { "Walkbackwards",                  13 },
+    };
+
+    // The takeoff, played once when a mount leaves the ground. Only ids that genuinely mean "begin flying".
+    // The one-shot flap family is deliberately absent -- those are wingbeats, and replaying one as a takeoff
+    // is why a mount used to jerk through a single beat before starting its travel clip.
+    //
+    //     564 MountFlightStart  (22/70 mounts)   565 FlyMountFlightStart  646 MountSelfStart (14/70)
+    //     640 MountSelfJumpStart (14/70)         1472 TakeOffStart         1474 TakeOffFinish
+    //     1486 TakeOffFinishFly                  1030/1032 DoubleJump
+    //      37 JumpStart  (70/70 -- the guaranteed last resort)
+    constexpr uint32_t kTakeoffLadder[] = {
+        564, 565, 646, 640, 1472, 1474, 1486, 1030, 1032, 37
+    };
+
+    // A bare modern id is never auto-picked by range: the moth's 509 is FlyAttackUnarmed, not a flight clip.
+    bool ModelCarries(const M2Data* data, uint32_t id)
+    {
+        if (!data || !data->m_sequences.Data())
+        {
+            return false;
+        }
+
+        const uint32_t count = data->m_sequences.m_count;
+
+        if (!count || count > 4096)
+        {
+            return false;
+        }
+
+        for (uint32_t i = 0; i < count; i++)
+        {
+            if (data->m_sequences[i].m_id == id)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // The wingbeat that breaks up a level glide. These ARE the one-shot flap ids: they play a single beat and
+    // stop, which is exactly what is wanted here and exactly wrong as a sustained clip.
+    constexpr uint32_t kBeatLadder[] = { 1680, 1702, 1726, 1706, 1638 };
+
+    // Level is a glide on a retail mount, and a glide that never changes reads as frozen. One beat every
+    // 4-8 seconds, the reference module's interval, with a fresh random gap each time.
+    constexpr uint32_t kBeatMinMs = 4000;
+    constexpr uint32_t kBeatMaxMs = 8000;
+
+    // A clip duration read from the file is data, not truth: a corrupt or hostile sequence with a huge
+    // m_duration would pin one clip on screen for hours. The longest legitimate mount clip is under 5 s.
+    constexpr uint32_t kMaxClipHoldMs = 5000;
+
+    uint32_t ClampClipMs(uint32_t ms, uint32_t fallback)
+    {
+        if (!ms)
+        {
+            return fallback;
+        }
+
+        return ms > kMaxClipHoldMs ? kMaxClipHoldMs : ms;
+    }
+
+    // One checked lookup, so neither caller can index past the sequence table.
+    uint32_t SequenceDuration(const M2Data* data, uint32_t id, uint32_t fallback)
+    {
+        if (!data || !data->m_sequences.Data())
+        {
+            return fallback;
+        }
+
+        const uint32_t count = data->m_sequences.m_count;
+
+        if (!count || count > 4096)
+        {
+            return fallback;
+        }
+
+        for (uint32_t i = 0; i < count; i++)
+        {
+            if (data->m_sequences[i].m_id == id)
+            {
+                return ClampClipMs(data->m_sequences[i].m_duration, fallback);
+            }
+        }
+
+        return fallback;
+    }
+
+    uint32_t FirstPresentId(const M2Data* data, const uint32_t* ids, size_t count)
+    {
+        for (size_t i = 0; i < count; i++)
+        {
+            if (ModelCarries(data, ids[i]))
+            {
+                return ids[i];
+            }
+        }
+
+        return 0;
+    }
+
+    uint32_t FirstPresent(const M2Data* data, const FlightClipName* ladder, size_t count)
+    {
+        for (size_t i = 0; i < count; i++)
+        {
+            if (ModelCarries(data, ladder[i].m_id))
+            {
+                return ladder[i].m_id;
+            }
+        }
+
+        return 0;
+    }
+
+    uint32_t ResolveLadder(const M2Data* data, EFlgtState state)
+    {
+        switch (state)
+        {
+            case FLGT_HOVER:    return FirstPresent(data, kHoverLadder,    _countof(kHoverLadder));
+            case FLGT_CLIMB:    return FirstPresent(data, kClimbLadder,    _countof(kClimbLadder));
+            case FLGT_DIVE:     return FirstPresent(data, kDiveLadder,     _countof(kDiveLadder));
+            case FLGT_LEFT:     return FirstPresent(data, kLeftLadder,     _countof(kLeftLadder));
+            case FLGT_RIGHT:    return FirstPresent(data, kRightLadder,    _countof(kRightLadder));
+            case FLGT_BACKWARD: return FirstPresent(data, kBackwardLadder, _countof(kBackwardLadder));
+            default:            return FirstPresent(data, kLevelLadder,    _countof(kLevelLadder));
+        }
+    }
+}
+
+// NOT IN BINARY. Picks the mount's air clip for the current flight state.
+//
+// Returns the id to play, or 0xFFFFFFFF to leave the mount's current clip alone. It only CHOOSES; the caller
+// applies the choice through the existing mount slot, so blending, loop points and timing stay the client's
+// own -- there is no second writer.
+//
+// `riderAnim` is accepted for symmetry with the ground path but is deliberately UNUSED: the rider of a
+// mounted player resolves to ANIM_SWIM (42), and translating that id into the mount's table is exactly what
+// made flying mounts paddle in the first place. Every clip here comes from the mount's own sequences.
+uint32_t CGUnit_C::ChooseMountFlightAnim(const M2Data* data, uint32_t riderAnim)
+{
+    (void)riderAnim;
+
+    if (!data)
+    {
+        return 0xFFFFFFFF;
+    }
+
+    // --- takeoff: once per period of flight --------------------------------------------------------
+    //
+    // The airborne latch itself is maintained by PreAnimate every frame, including on the ground, because
+    // this function is only ever reached while FLYING. See the comment there.
+    const uint32_t flagsNow = this->m_movementData.m_flags;
+    const uint32_t nowMs = FrameTime::s_curTimeMs;
+
+    // Still inside the launch beat: hold it, whatever the input says, so it plays through once.
+    if (this->m_flgtLaunchUntilMs && static_cast<int32_t>(nowMs - this->m_flgtLaunchUntilMs) < 0)
+    {
+        return this->m_flgtLaunchId ? this->m_flgtLaunchId : 0xFFFFFFFF;
+    }
+
+    this->m_flgtLaunchUntilMs = 0;
+
+    // Start the launch on the first airborne frame.
+    //
+    // This used to require MOVEMENTFLAG_FORWARD or ASCENDING, which deferred the takeoff until the player
+    // happened to press forward -- so it fired at a random point mid-flight and interrupted an established
+    // state, or never fired at all if the player only ever descended. Leaving the ground IS the takeoff.
+    if (this->m_flgtAirborne && !this->m_flgtLaunched)
+    {
+        this->m_flgtLaunched = 1;
+        this->m_flgtLaunchId = FirstPresentId(data, kTakeoffLadder, _countof(kTakeoffLadder));
+
+        if (this->m_flgtLaunchId)
+        {
+            this->m_flgtLaunchUntilMs = nowMs + SequenceDuration(data, this->m_flgtLaunchId, 900);
+            return this->m_flgtLaunchId;
+        }
+    }
+
+    // --- flight state, from the flight-path angle --------------------------------------------------
+    //
+    // fabs is required: m_currentSpeed is a dot product with the move direction, so it goes NEGATIVE when a
+    // mount flies backwards. Testing the signed value directly made a mount travelling in reverse read as
+    // parked and play its idle clip.
+    const float speed = fabsf(this->m_movementData.m_currentSpeed);
+
+    EFlgtState wanted;
+
+    const uint32_t moveFlags = this->m_movementData.m_flags;
+
+    if (speed < kHoverSpeed)
+    {
+        wanted = FLGT_HOVER;
+    }
+    else if (moveFlags & MOVEMENTFLAG_STRAFE_LEFT)
+    {
+        // A sidestep is a deliberate short move and each direction has its own authored clip, so it
+        // outranks climbing or diving. The launch beat is protected separately: the hold at the top of this
+        // function returns before any state is chosen while it is running.
+        wanted = FLGT_LEFT;
+    }
+    else if (moveFlags & MOVEMENTFLAG_STRAFE_RIGHT)
+    {
+        wanted = FLGT_RIGHT;
+    }
+    else if (moveFlags & MOVEMENTFLAG_BACKWARD)
+    {
+        wanted = FLGT_BACKWARD;
+    }
+    else
+    {
+        // m_pitchSin is CMovementShared::CalcDirection's own sin(anchorPitch), written only while
+        // FLYING or SWIMMING. m_moveDir.z carries the same value but the fall-spline path overwrites
+        // m_moveDir, so the dedicated field is the one to trust here.
+        const float pathSin = this->m_movementData.m_pitchSin;
+
+        // The ascend/descend bits are a secondary signal, and they are needed: climbing straight up leaves
+        // the pitch at 0, so a pure vertical climb would otherwise read as level flight and the climb
+        // ladder would never be reached.
+        if (pathSin > kClimbSin || (moveFlags & MOVEMENTFLAG_ASCENDING))
+        {
+            wanted = FLGT_CLIMB;
+        }
+        else if (pathSin < kDiveSin || (moveFlags & MOVEMENTFLAG_DESCENDING))
+        {
+            wanted = FLGT_DIVE;
+        }
+        else
+        {
+            wanted = FLGT_LEVEL;
+        }
+    }
+
+    // --- hold, so a flickering reading cannot restart the clip every frame --------------------------
+    const uint32_t now = FrameTime::s_curTimeMs;
+
+    // A state must hold for kStateHoldMs before it is applied.
+    //
+    // The obvious spelling of this (update pending, fall through, check the hold on the NEXT frame) was
+    // dead: by then m_flgtAppliedState already equalled the pending state, so the clip had been swapped on
+    // the very first frame and a reading oscillating around a threshold restarted the animation every
+    // frame. The hold has to be tested BEFORE anything is applied.
+    // Re-arm the hold whenever the reading differs from the state actually on screen, not merely from the
+    // pending one. Otherwise CLIMB -> LEVEL (already applied) -> CLIMB finds wanted == pendingState with a
+    // stale timestamp and skips the hold entirely, so a reading hovering around the threshold flickers.
+    if (wanted != this->m_flgtAppliedState && this->m_flgtPendingState != wanted)
+    {
+        this->m_flgtPendingState = wanted;
+        this->m_flgtPendingSinceMs = now;
+    }
+
+    if (wanted != this->m_flgtAppliedState
+        && static_cast<int32_t>(now - this->m_flgtPendingSinceMs) < static_cast<int32_t>(kStateHoldMs))
+    {
+        return this->m_flgtAppliedId ? this->m_flgtAppliedId : 0xFFFFFFFF;
+    }
+
+    // --- the clip for that state, with its own fallbacks ------------------------------------------
+    uint32_t anim = ResolveLadder(data, wanted);
+
+    // Nothing for this state: keep travelling rather than freezing, by falling back down the states that
+    // are meaningful in the air. A missing lateral falls back to level travel, never to hover -- a mount
+    // sliding sideways should keep its travel clip rather than park. Hover is the last resort.
+    if (!anim && (wanted == FLGT_LEFT || wanted == FLGT_RIGHT || wanted == FLGT_BACKWARD))
+    {
+        anim = ResolveLadder(data, FLGT_LEVEL);
+    }
+
+    if (!anim && wanted != FLGT_LEVEL)
+    {
+        anim = ResolveLadder(data, FLGT_LEVEL);
+    }
+
+    if (!anim && wanted != FLGT_HOVER)
+    {
+        anim = ResolveLadder(data, FLGT_HOVER);
+    }
+
+    // Absolutely nothing matched: the model carries none of the air vocabulary.
+    //
+    // This is a real case -- a downported mount can carry only its swim set, which is excluded everywhere on
+    // purpose. Falling back to the rider's translated animation is NOT an option here: the rider of a mounted
+    // player is ANIM_SWIM, and translating it is the paddling bug this whole feature exists to remove. Holding
+    // the clip already on the model is the honest answer: it stays still rather than swimming or freezing on
+    // an id the model does not have.
+    if (!anim)
+    {
+        return this->m_flgtAppliedId ? this->m_flgtAppliedId : 0xFFFFFFFF;
+    }
+
+    // --- the level-flight wingbeat ------------------------------------------------------------------
+    //
+    // Layered over the level clip only. A climb or a dive is already a moving clip and must not be
+    // interrupted, and a hover is a standing pose. The beat is a one-shot held for its own duration and then
+    // handed back, so the glide is resumed rather than replaced.
+    if (wanted == FLGT_LEVEL)
+    {
+        const uint32_t beatId = FirstPresentId(data, kBeatLadder, _countof(kBeatLadder));
+
+        if (beatId)
+        {
+            if (this->m_flgtBeatUntilMs)
+            {
+                if (static_cast<int32_t>(now - this->m_flgtBeatUntilMs) < 0)
+                {
+                    this->m_flgtAppliedState = wanted;
+                    this->m_flgtAppliedId = beatId;
+                    return beatId;
+                }
+
+                this->m_flgtBeatUntilMs = 0;
+
+                if (!this->m_flgtBeatRng)
+                {
+                    this->m_flgtBeatRng = now | 1u;
+                }
+
+                // xorshift: no seeding to get wrong, and the gap only has to look irregular.
+                this->m_flgtBeatRng ^= this->m_flgtBeatRng << 13;
+                this->m_flgtBeatRng ^= this->m_flgtBeatRng >> 17;
+                this->m_flgtBeatRng ^= this->m_flgtBeatRng << 5;
+                this->m_flgtBeatNextMs = now + kBeatMinMs + (this->m_flgtBeatRng % (kBeatMaxMs - kBeatMinMs + 1));
+            }
+            else if (!this->m_flgtBeatNextMs)
+            {
+                this->m_flgtBeatNextMs = now + kBeatMinMs;
+            }
+            else if (static_cast<int32_t>(now - this->m_flgtBeatNextMs) >= 0)
+            {
+                this->m_flgtBeatUntilMs = now + SequenceDuration(data, beatId, 900);
+                this->m_flgtAppliedState = wanted;
+                this->m_flgtAppliedId = beatId;
+                return beatId;
+            }
+        }
+    }
+    else
+    {
+        // Any real climb, dive, stop or sidestep cancels a beat in flight and re-arms the clock.
+        this->m_flgtBeatUntilMs = 0;
+        this->m_flgtBeatNextMs = 0;
+    }
+
+    this->m_flgtAppliedState = wanted;
+    this->m_flgtAppliedId = anim;
+
+    return anim;
+}
+
 void CGUnit_C::PlayBaseAnimation(uint32_t animId, int32_t flags) {
     if (!(this->m_modelFlags & 0x40000) || (this->m_modelFlags & 0x20000) || !this->GetObjectModel() || !this->m_worldModel) {
         return;
@@ -4535,94 +5099,48 @@ void CGUnit_C::PlayBaseAnimation(uint32_t animId, int32_t flags) {
     }
 
     if (this->m_mountModel) {
-        // NOT IN BINARY. The gate used to be IsFullBodyAnim(anim) alone, where anim is the *rider's* choice.
-        // A mounted player model has no flight cycle, so while flying it picks ANIM_SWIM (behaviour 42),
-        // which that predicate does not accept -- so the whole mount branch was skipped and the mount kept
-        // whatever clip it already had. That is why a flying mount only ever glided: nothing ever asked it
-        // to play anything else while moving. The mount decides its own animation when flying, so that is
-        // what gates here too.
-        const bool flyingMounted = (this->m_movementData.m_flags & MOVEMENTFLAG_FLYING) != 0;
-
-        if (flyingMounted || IsFullBodyAnim(anim)) {
+        if (IsFullBodyAnim(anim)) {
             mountSlot = newSlot;
 
-            // NOT IN BINARY. The mount's animation used to be derived from the *rider's* choice: anim is
-            // whatever ChooseMovementAnim picked for the player's own model, then translated through the
-            // animation table for the mount. A mounted player model has no flight cycle, so in the air it
-            // picks ANIM_SWIM and the mount was told to swim too -- which is why flying mounts paddled.
+            // NOT IN BINARY. The mount's air animation, chosen per flight state from the mount's OWN
+            // sequences.
             //
-            // The mount now answers for itself, from its own sequences, per flight movement.
-            uint32_t mountAnim = 0xFFFFFFFF;
+            // Three separate defects are fixed here, all of which made a flying mount animate wrongly:
+            //
+            //  1. The clip used to be derived from the *rider's* choice: anim is whatever ChooseMovementAnim
+            //     picked for the player's own model, translated through the mount's animation table. A mounted
+            //     player has no flight cycle, so it picks ANIM_SWIM (42) and the mount was told to swim.
+            //     Translating the rider's anim is now banned while flying.
+            //
+            //  2. It had no vertical axis at all. A climb and a dive both landed on the same clip, so a mount
+            //     looked identical going up and coming down. The state now comes from the flight-path angle,
+            //     which is what the reference implementation (wxl-mana-speedflying) does and why it works on
+            //     every mount: climb above +15 degrees, dive below -35, level between, hover when stopped.
+            //     The asymmetry is deliberate -- a dive must be visibly steeper than a climb before it reads.
+            //
+            //  3. The search only knew 234/233/229, which 22 of 70 harvested mounts carry. The other 48 fell
+            //     through to the rider's translation, i.e. to Swim. The ladders in ChooseMountFlightAnim are
+            //     ordered explicit fallbacks, best first, and a one-shot beat id is never used as a sustained
+            //     clip.
+            // While flying the mount is owned by the per-frame applier in PreAnimate, and this path must not
+            // touch it at all -- not even to choose.
+            //
+            // Choosing here as well would be wrong twice over: ChooseMountFlightAnim advances the state hold
+            // and the wingbeat clock as a side effect, so a second caller arriving at a random moment (this
+            // function runs on discrete events) would keep re-arming those timers and disturb the driver's
+            // rhythm. And the write itself is already refused below for a flying mount, so the choice could
+            // never have taken effect anyway.
+            //
+            // Leaving mountSlot at 0xFFFFFFFF is also what stops the rider's anim being translated into the
+            // mount's table. That translation is the original swim bug: a mounted player picks ANIM_SWIM (42)
+            // and the id lands on the mount's own Swim / SwimLeft / SwimRight clips.
+            const bool mountFlying = (this->m_movementData.m_flags & MOVEMENTFLAG_FLYING) != 0;
 
-            if (this->m_movementData.m_flags & MOVEMENTFLAG_FLYING) {
-                const M2Data* mountData = this->m_mountModel->m_shared ? this->m_mountModel->m_shared->m_data : nullptr;
-
-                if (mountData) {
-                    this->ResolveFlightRoles(mountData);
-
-                    const uint32_t moveFlags = this->m_movementData.m_flags;
-                    uint32_t role = FLYROLE_FORWARD;
-
-                    // Strafe and reverse are deliberate short moves and each has its own authored clip;
-                    // with no forward input at all the mount is hovering, not travelling.
-                    if (moveFlags & MOVEMENTFLAG_STRAFE_LEFT) {
-                        role = FLYROLE_LEFT;
-                    } else if (moveFlags & MOVEMENTFLAG_STRAFE_RIGHT) {
-                        role = FLYROLE_RIGHT;
-                    } else if (moveFlags & MOVEMENTFLAG_BACKWARD) {
-                        role = FLYROLE_BACKWARD;
-                    } else if (!(moveFlags & MOVEMENTFLAG_FORWARD)) {
-                        role = FLYROLE_HOVER;
-                    }
-
-                    mountAnim = this->m_flightRoleIds[role];
-
-                    // TEMPORARY PROBE: the role actually chosen, once per distinct input.
-                    {
-                        static uint32_t lastRole = 0xFFFFFFFF;
-                        static uint32_t lastFlags = 0xFFFFFFFF;
-
-                        if (moveFlags != lastFlags || role != lastRole) {
-                            lastFlags = moveFlags;
-                            lastRole = role;
-
-                            char pb[240];
-                            SStrPrintf(pb, sizeof(pb), "mountrole: flags=0x%x role=%u anim=%u (hover=%u fwd=%u back=%u L=%u R=%u)",
-                                       moveFlags, role, mountAnim,
-                                       this->m_flightRoleIds[FLYROLE_HOVER],
-                                       this->m_flightRoleIds[FLYROLE_FORWARD],
-                                       this->m_flightRoleIds[FLYROLE_BACKWARD],
-                                       this->m_flightRoleIds[FLYROLE_LEFT],
-                                       this->m_flightRoleIds[FLYROLE_RIGHT]);
-                            extern void ProbeLogMount(const char*);
-                            ProbeLogMount(pb);
-                        }
-                    }
-
-                    // A model that has no clip for the requested role keeps travelling rather than freezing:
-                    // fall back through forward, then hover.
-                    if (!mountAnim) {
-                        mountAnim = this->m_flightRoleIds[FLYROLE_FORWARD];
-                    }
-
-                    if (!mountAnim) {
-                        mountAnim = this->m_flightRoleIds[FLYROLE_HOVER];
-                    }
-
-                    // A glide that never beats its wings reads as dead. Only forward travel is punctuated:
-                    // hover already loops a standing clip, and a strafe or reverse is a short move whose own
-                    // clip should not be interrupted.
-                    if (role == FLYROLE_FORWARD && this->m_flightFlapId && mountAnim) {
-                        mountAnim = this->ChooseMountWingBeat(mountData, OsGetAsyncTimeMs(), mountAnim);
-                    } else {
-                        this->m_flightBeatUntilMs = 0;
-                    }
-                }
+            if (mountFlying) {
+                mountSlot.m_sequenceId = 0xFFFFFFFF;
+            } else {
+                mountSlot.m_sequenceId = this->ResolveAnimForModel(anim, this->m_mountModel);
             }
-
-            mountSlot.m_sequenceId = mountAnim != 0xFFFFFFFF
-                                   ? mountAnim
-                                   : this->ResolveAnimForModel(anim, this->m_mountModel);
         }
 
         if (!IsFullBodyAnim(anim) && IsUpperBodyAnim(anim)) {
@@ -4776,30 +5294,22 @@ void CGUnit_C::PlayBaseAnimation(uint32_t animId, int32_t flags) {
         this->UnsetKeyBoneSequence(this->m_worldModel, this->m_torsoKeyBone, 1, 0, 0);
     }
 
-    if (this->m_mountModel && (this->m_movementData.m_flags & MOVEMENTFLAG_FLYING)) {
-        // TEMPORARY PROBE: log once per distinct input combination, so every direction is seen and the log
-        // stays readable. up = the movement bits only, which is what the role selection keys off.
-        const uint32_t up = this->m_movementData.m_flags & 0xF;
-        static uint32_t seenInputs = 0;
-        static uint32_t lastUp = 0xFFFFFFFF;
+    // The mount's clip is written when it has changed, and NOT only on the discrete `updateMount` events.
+    //
+    // `updateMount` is `state & 0x10`, and that bit is set only by ModelLoaded and OnBaseAnimEnd -- events
+    // that essentially never fire while a mount is flying. Gating on it meant the flight state (hover /
+    // level / climb / dive) was computed but almost never applied, so the mount kept whatever clip it
+    // started with and a climb and a dive looked identical. That is the same trap the earlier per-frame
+    // driver fell into from the other side.
+    //
+    // A write only happens when the id or speed actually differs, and ChooseMountFlightAnim already holds a
+    // state for kStateHoldMs, so this cannot re-issue the same clip every frame and restart it.
+    // A flying mount is owned by the per-frame applier in PreAnimate -- it is the only writer while airborne,
+    // and it is the only place that passes a definite sequence variation. Writing from here as well would
+    // make the visible clip depend on call order and would re-introduce random variation selection.
+    const bool mountAirDriven = this->m_mountModel && (this->m_movementData.m_flags & MOVEMENTFLAG_FLYING);
 
-        if (up != lastUp) {
-            lastUp = up;
-
-            if (up < 32) {
-                seenInputs |= (1u << up);
-            }
-
-            char pb[240];
-            SStrPrintf(pb, sizeof(pb), "mountanim: up=0x%x (F=%d B=%d L=%d R=%d) want=%u cur=%u upd=%u",
-                       up, (up & 1) ? 1 : 0, (up & 2) ? 1 : 0, (up & 4) ? 1 : 0, (up & 8) ? 1 : 0,
-                       mountSlot.m_sequenceId, mount.m_sequenceId, updateMount ? 1u : 0u);
-            extern void ProbeLogMount(const char*);
-            ProbeLogMount(pb);
-        }
-    }
-
-    if (updateMount && this->m_mountModel && mountSlot.m_sequenceId != 0xFFFFFFFF && (mount.m_sequenceId != mountSlot.m_sequenceId || fabsf(mount.m_speed - mountSlot.m_speed) > 0.01f)) {
+    if (!mountAirDriven && updateMount && this->m_mountModel && mountSlot.m_sequenceId != 0xFFFFFFFF && (mount.m_sequenceId != mountSlot.m_sequenceId || fabsf(mount.m_speed - mountSlot.m_speed) > 0.01f)) {
         this->SetKeyBoneSequence(this->m_mountModel, 0xFFFFFFFF, mountSlot.m_sequenceId, mountSlot.m_variationIndex, mountSlot.m_time, mountSlot.m_speed, blendMount, 1, 0);
     }
 
@@ -6022,6 +6532,20 @@ void CGUnit_C::SetMountModel(CM2Model* model) {
 
     this->m_mountModel = model;
 
+    // Forget every flight decision made for the previous mount.
+    //
+    // The resolved state and the takeoff latch are per-model facts: an id resolved from the old mount may not
+    // exist in the new one, and a mount swapped in mid-air must still get its own takeoff. Without this the
+    // first frames of flight replayed the previous mount's sequence id.
+    this->m_flgtAppliedState = 0xFFFFFFFF;
+    this->m_flgtAppliedId = 0;
+    this->m_flgtPendingState = 0xFFFFFFFF;
+    this->m_flgtLaunched = 0;
+    this->m_flgtLaunchId = 0;
+    this->m_flgtLaunchUntilMs = 0;
+    this->m_flgtBeatUntilMs = 0;
+    this->m_flgtBeatNextMs = 0;
+
     if (model) {
         model->SetLoadedCallback(CGObject_C::ModelLoadedCallback, this);
     } else if (this->GetObjectModel()->IsLoaded(0, 0)) {
@@ -7081,512 +7605,6 @@ void CGUnit_C::GetCurrentAnimationInfo(M2BoneSequenceInfo* mount, M2BoneSequence
         torso->m_variationIndex = 0xFFFFFFFF;
         torso->m_time = 0;
     }
-}
-
-namespace
-{
-    /**
-     * @brief Which flight role each official animation name satisfies.
-     *
-     * Names are wowdev.wiki's /M2/AnimationList, which is what makes a mount's ids interpretable: the numbers
-     * mean nothing on their own, but every one of them falls back onto a stock id whose official name does.
-     * Several names are accepted per role because the stock, Mount*, Fly* and AdvFly* families each spell the
-     * same movement differently.
-     *
-     * Note the direction of the left/right pair: FlyRunLeft is 322 and FlyRunRight is 321.
-     */
-    struct FlightNameRole
-    {
-        const char* name;
-        int         role;
-    };
-
-    constexpr int kRoleHover    = 0;
-    constexpr int kRoleForward  = 1;
-    constexpr int kRoleBackward = 2;
-    constexpr int kRoleLeft     = 3;
-    constexpr int kRoleRight    = 4;
-
-    // Role ladders, best first. A movement is resolved by walking this list and taking the first name the
-    // model actually carries (checked against its own sequence table), so a mount that lacks the ideal clip
-    // still gets the most movement-appropriate one it has.
-    //
-    // SWIM ANIMATIONS ARE DELIBERATELY ABSENT. Every Swim* / MountSwim* name is excluded on purpose: a
-    // downported mount often has only the swim set available, and playing those in the air makes a flying
-    // mount paddle. A role with no non-swim clip stays unresolved and the caller keeps the previous clip.
-    const FlightNameRole s_flightNameRoles[] = {
-        // hover: a held flight pose
-        { "FlyStand",               kRoleHover },
-        { "FlyStop",                kRoleHover },
-        { "DragonSpitHover",        kRoleHover },
-        { "AdvFlyUp",               kRoleHover },
-        { "Stand",                  kRoleHover },
-
-        // forward: continuous wingbeats first, held glides only as a fallback
-        { "FlyRun",                 kRoleForward },
-        { "FlyFly",                 kRoleForward },
-        { "MountFlightRun",         kRoleForward },
-        { "MountFlightWalk",        kRoleForward },
-        { "AdvFlyForwardGlide",     kRoleForward },
-        { "AdvFlyForwardGlideSlow", kRoleForward },
-        { "AdvFlyForwardGlideFast", kRoleForward },
-        { "AdvFlyForward",          kRoleForward },
-        { "Run",                    kRoleForward },
-
-        // backward
-        { "MountFlightBackwards",   kRoleBackward },
-        { "FlyWalkbackwards",       kRoleBackward },
-        { "RunBackwards",           kRoleBackward },
-        { "Walkbackwards",          kRoleBackward },
-        { "AdvFlyRollEnd",          kRoleBackward },
-
-        // lateral: flight gaits, not retail drift
-        { "MountFlightLeft",        kRoleLeft },
-        { "FlyRunLeft",             kRoleLeft },
-        { "MountSelfRunLeft",       kRoleLeft },
-        { "AdvFlyLeft",             kRoleLeft },
-        { "RunLeft",                kRoleLeft },
-
-        { "MountFlightRight",       kRoleRight },
-        { "FlyRunRight",            kRoleRight },
-        { "MountSelfRunRight",      kRoleRight },
-        { "AdvFlyRight",            kRoleRight },
-        { "RunRight",               kRoleRight },
-    };
-
-    constexpr uint32_t kAdvFlyGlide      = 1532;
-    constexpr uint32_t kAdvFlyGlideSlow  = 1722;
-    constexpr uint32_t kAdvFlyGlideFast  = 1724;
-    constexpr uint32_t kAdvFlyLeft       = 1520;
-    constexpr uint32_t kAdvFlyRight      = 1522;
-    constexpr uint32_t kAdvFlyDown       = 1530;
-    constexpr uint32_t kAdvFlyFlapUp     = 1702;
-
-    constexpr uint32_t kFlapWave[] = { 1706, 1680, 1702, 1726, 1638 };
-
-    /**
-     * @brief Official name of a sequence id, or null.
-     *
-     * Only the ids in the flight vocabulary are listed. That is deliberate: this resolver only ever asks
-     * "does this chain end on a flight movement", so the other ~1760 names would be dead weight.
-     */
-    const char* FlightIdName(uint32_t id)
-    {
-        switch (id)
-        {
-            // hover
-            case 229: return "FlyStand";
-            case 232: return "FlyStop";
-            case 183: return "DragonSpitHover";
-            case 1528: return "AdvFlyUp";
-            case 0:   return "Stand";
-
-            // forward
-            case 234: return "FlyRun";
-            case 364: return "FlyFly";
-            case 558: return "MountFlightSprint";
-            case 560: return "MountFlightWalk";
-            case 1532: return "AdvFlyForwardGlide";
-            case 1722: return "AdvFlyForwardGlideSlow";
-            case 1724: return "AdvFlyForwardGlideFast";
-            case 1524: return "AdvFlyForward";
-            case 5:   return "Run";
-
-            // backward
-            case 550: return "MountFlightBackwards";
-            case 242: return "FlyWalkbackwards";
-            case 1146: return "RunBackwards";
-            case 13:  return "Walkbackwards";
-            case 1558: return "AdvFlyRollEnd";
-
-            // lateral
-            case 552: return "MountFlightLeft";
-            case 322: return "FlyRunLeft";
-            case 626: return "MountSelfRunLeft";
-            case 1520: return "AdvFlyLeft";
-            case 93:  return "RunLeft";
-
-            case 554: return "MountFlightRight";
-            case 321: return "FlyRunRight";
-            case 628: return "MountSelfRunRight";
-            case 1522: return "AdvFlyRight";
-            case 92:  return "RunRight";
-
-            default: return nullptr;
-        }
-    }
-
-    /// Role this name satisfies, or -1.
-    int FlightNameToRole(const char* name)
-    {
-        if (!name) return -1;
-
-        for (const FlightNameRole& entry : s_flightNameRoles)
-        {
-            if (std::strcmp(entry.name, name) == 0)
-            {
-                return entry.role;
-            }
-        }
-
-        return -1;
-    }
-}
-
-bool CGUnit_C::ModelHasSequence(const M2Data* data, uint32_t id)
-{
-    if (!data || !data->m_sequences.Data())
-    {
-        return false;
-    }
-
-    const uint32_t count = data->m_sequences.m_count;
-
-    // A modern mount carries a few hundred sequences; anything beyond this is a corrupt count, not a model.
-    if (!count || count > 4096)
-    {
-        return false;
-    }
-
-    for (uint32_t i = 0; i < count; i++)
-    {
-        if (data->m_sequences[i].m_id == id)
-        {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-namespace
-{
-    /**
-     * @brief Position of a name in the role ladder, or -1.
-     *
-     * The ladder is ordered best-first, so a lower index is a better clip for that role. Swim names are
-     * absent from the table entirely, which is what keeps them out of every selection.
-     */
-    int FlightNameRank(const char* name, int role)
-    {
-        if (!name) return -1;
-
-        int rank = 0;
-
-        for (const FlightNameRole& entry : s_flightNameRoles)
-        {
-            if (entry.role != role) continue;
-            if (std::strcmp(entry.name, name) == 0) return rank;
-            rank++;
-        }
-
-        return -1;
-    }
-
-    /// True when the official name belongs to the swim family, which must never be used in the air.
-    bool IsSwimName(const char* name)
-    {
-        return name && std::strstr(name, "Swim") != nullptr;
-    }
-}
-
-uint32_t CGUnit_C::ResolveFlightRole(const M2Data* data, EFlgithRole role)
-{
-    if (!data || !data->m_sequences.Data() || g_animationDataDB.m_numRecords <= 0)
-    {
-        return 0;
-    }
-
-    const uint32_t count = data->m_sequences.m_count;
-
-    if (!count || count > 4096)
-    {
-        return 0;
-    }
-
-    const uint32_t limit = static_cast<uint32_t>(g_animationDataDB.m_numRecords);
-
-    uint32_t best = 0;
-    int bestRank = 0x7FFFFFFF;
-    uint32_t bestSteps = 0xFFFFFFFF;
-
-    // Two passes over the same model ids.
-    //
-    // Pass 1 trusts a clip that carries its own official name: that name IS its identity, so it needs no
-    // chain. Pass 2 is for modern ids with no name of their own -- those are identified by where their
-    // fallback chain lands. Doing the name pass first is what stops a clip like 1542 WACurious (whose chain
-    // ends on Stand) from denying a model the FlyStand it also carries.
-    for (int pass = 0; pass < 2; pass++)
-    {
-        for (uint32_t i = 0; i < count; i++)
-        {
-            const uint32_t id = data->m_sequences[i].m_id;
-
-            // Never accept a swim clip, however the resolution reached it.
-            const char* own = FlightIdName(id);
-
-            if (IsSwimName(own))
-            {
-                continue;
-            }
-
-            if (pass == 0)
-            {
-                const int rank = FlightNameRank(own, static_cast<int>(role));
-
-                if (rank >= 0 && rank < bestRank)
-                {
-                    bestRank = rank;
-                    best = id;
-                    bestSteps = 0;
-                }
-
-                continue;
-            }
-
-            if (own)
-            {
-                // Named already handled in pass 1; do not follow its chain.
-                continue;
-            }
-
-            uint32_t cur = id;
-
-            for (uint32_t step = 1; step <= limit; step++)
-            {
-                AnimationDataRec* rec = g_animationDataDB.GetRecord(cur);
-
-                if (!rec)
-                {
-                    break;
-                }
-
-                const uint32_t next = static_cast<uint32_t>(rec->m_fallback);
-
-                if (next == cur)
-                {
-                    break;
-                }
-
-                cur = next;
-
-                const char* landed = FlightIdName(cur);
-
-                // A chain that runs into a swim clip is not a flight movement; treat it as a dead end.
-                if (IsSwimName(landed))
-                {
-                    break;
-                }
-
-                const int rank = FlightNameRank(landed, static_cast<int>(role));
-
-                if (rank < 0)
-                {
-                    continue;
-                }
-
-                if (rank < bestRank || (rank == bestRank && step < bestSteps))
-                {
-                    bestRank = rank;
-                    bestSteps = step;
-                    best = id;
-                }
-
-                break;
-            }
-        }
-
-        // A named clip of the best possible rank is final; no chain match can beat it.
-        if (best && bestRank == 0)
-        {
-            return best;
-        }
-    }
-
-    return best;
-}
-
-void CGUnit_C::ResolveFlightRoles(const M2Data* data)
-{
-    if (this->m_flightRolesFor == data)
-    {
-        return;
-    }
-
-    this->m_flightRolesFor = data;
-
-    for (uint32_t i = 0; i < FLYROLE_COUNT; i++)
-    {
-        this->m_flightRoleIds[i] = 0;
-    }
-
-    this->m_flightFlapId = 0;
-    this->m_flightBeatUntilMs = 0;
-    this->m_flightBeatNextMs = 0;
-
-    if (!data)
-    {
-        return;
-    }
-
-    this->m_flightRoleIds[FLYROLE_HOVER]    = CGUnit_C::ResolveFlightRole(data, FLYROLE_HOVER);
-    this->m_flightRoleIds[FLYROLE_FORWARD]  = CGUnit_C::ResolveFlightRole(data, FLYROLE_FORWARD);
-    this->m_flightRoleIds[FLYROLE_BACKWARD] = CGUnit_C::ResolveFlightRole(data, FLYROLE_BACKWARD);
-    this->m_flightRoleIds[FLYROLE_LEFT]     = CGUnit_C::ResolveFlightRole(data, FLYROLE_LEFT);
-    this->m_flightRoleIds[FLYROLE_RIGHT]    = CGUnit_C::ResolveFlightRole(data, FLYROLE_RIGHT);
-
-    // The flap that punctuates a glide. Only meaningful on a model whose forward clip is a glide.
-    for (uint32_t id : kFlapWave)
-    {
-        if (CGUnit_C::ModelHasSequence(data, id))
-        {
-            this->m_flightFlapId = id;
-            break;
-        }
-    }
-
-    MODERN_ASSETS_LOG_INFO("flight: roles hover=%u forward=%u back=%u left=%u right=%u flap=%u",
-                           this->m_flightRoleIds[FLYROLE_HOVER], this->m_flightRoleIds[FLYROLE_FORWARD],
-                           this->m_flightRoleIds[FLYROLE_BACKWARD], this->m_flightRoleIds[FLYROLE_LEFT],
-                           this->m_flightRoleIds[FLYROLE_RIGHT], this->m_flightFlapId);
-}
-
-// NOT IN BINARY. Drives a flying mount's animation every frame from the rider's movement.
-//
-// See the call site in PreAnimate for why this cannot be left to PlayBaseAnimation.
-void CGUnit_C::UpdateMountFlightAnimation(uint32_t time)
-{
-    if (!this->m_mountModel) {
-        return;
-    }
-
-    const uint32_t moveFlags = this->m_movementData.m_flags;
-
-    if (!(moveFlags & MOVEMENTFLAG_FLYING)) {
-        return;
-    }
-
-    if (!this->m_mountModel->IsLoaded(0, 0)) {
-        return;
-    }
-
-    const M2Data* mountData = this->m_mountModel->m_shared ? this->m_mountModel->m_shared->m_data : nullptr;
-
-    if (!mountData) {
-        return;
-    }
-
-    this->ResolveFlightRoles(mountData);
-
-    uint32_t role = FLYROLE_FORWARD;
-
-    if (moveFlags & MOVEMENTFLAG_STRAFE_LEFT) {
-        role = FLYROLE_LEFT;
-    } else if (moveFlags & MOVEMENTFLAG_STRAFE_RIGHT) {
-        role = FLYROLE_RIGHT;
-    } else if (moveFlags & MOVEMENTFLAG_BACKWARD) {
-        role = FLYROLE_BACKWARD;
-    } else if (!(moveFlags & MOVEMENTFLAG_FORWARD)) {
-        role = FLYROLE_HOVER;
-    }
-
-    uint32_t anim = this->m_flightRoleIds[role];
-
-    // No clip for this role: keep travelling rather than freezing.
-    if (!anim) {
-        anim = this->m_flightRoleIds[FLYROLE_FORWARD];
-    }
-
-    if (!anim) {
-        anim = this->m_flightRoleIds[FLYROLE_HOVER];
-    }
-
-    if (!anim) {
-        return;
-    }
-
-    // Beat only over forward travel: hover already loops a standing clip, and a strafe or reverse is a short
-    // move whose own clip should not be interrupted.
-    if (role == FLYROLE_FORWARD && this->m_flightFlapId) {
-        anim = this->ChooseMountWingBeat(mountData, time, anim);
-    } else {
-        this->m_flightBeatUntilMs = 0;
-    }
-
-    // Only touch the bone sequence when the clip actually changes: re-issuing the same id restarts the clip
-    // every frame, which would freeze it at its first frame.
-    if (this->m_mountFlightApplied == anim) {
-        return;
-    }
-
-    this->m_mountFlightApplied = anim;
-    this->SetKeyBoneSequence(this->m_mountModel, 0xFFFFFFFF, anim, 0xFFFFFFFF, 0, 1.0f, 1, 1, 0);
-
-    char pb[200];
-    SStrPrintf(pb, sizeof(pb), "mountfly: flags=0x%x role=%u anim=%u", moveFlags, role, anim);
-    extern void ProbeLogMount(const char*);
-    ProbeLogMount(pb);
-}
-
-// NOT IN BINARY. Plays the one-shot flap over the glide at an irregular interval, then hands the slot back.
-//
-// A retail flier's forward clip is AdvFlyForwardGlide -- a glide. Played alone the mount never beats its
-// wings, which reads as dead however cleanly it loops. Same shape as the wxl-mana-speedflying module's
-// LevelBeat: hold the glide, play the flap through once for its own duration, return to the glide. The gap is
-// randomised so the beat does not become a metronome.
-uint32_t CGUnit_C::ChooseMountWingBeat(const M2Data* data, uint32_t nowMs, uint32_t glideAnim)
-{
-    if (!this->m_flightFlapId) {
-        return glideAnim;
-    }
-
-    if (this->m_flightBeatUntilMs) {
-        // Still inside the beat. Signed comparison so it survives the millisecond counter wrapping.
-        if (static_cast<int32_t>(nowMs - this->m_flightBeatUntilMs) < 0) {
-            return this->m_flightFlapId;
-        }
-
-        this->m_flightBeatUntilMs = 0;
-
-        if (!this->m_flightBeatRng) {
-            this->m_flightBeatRng = nowMs | 1u;
-        }
-
-        // xorshift: no seeding to get wrong, and the interval only has to look irregular.
-        this->m_flightBeatRng ^= this->m_flightBeatRng << 13;
-        this->m_flightBeatRng ^= this->m_flightBeatRng >> 17;
-        this->m_flightBeatRng ^= this->m_flightBeatRng << 5;
-
-        this->m_flightBeatNextMs = nowMs + 4000 + this->m_flightBeatRng % 4001;
-        return glideAnim;
-    }
-
-    if (!this->m_flightBeatNextMs) {
-        this->m_flightBeatNextMs = nowMs + 4000;
-        return glideAnim;
-    }
-
-    if (static_cast<int32_t>(nowMs - this->m_flightBeatNextMs) < 0) {
-        return glideAnim;
-    }
-
-    // Hold the beat for its own duration so the clip is never cut off part-way.
-    uint32_t duration = 0;
-
-    if (data && data->m_sequences.Data() && data->m_sequences.m_count && data->m_sequences.m_count <= 4096)
-    {
-        for (uint32_t i = 0; i < data->m_sequences.m_count; i++)
-        {
-            if (data->m_sequences[i].m_id == this->m_flightFlapId)
-            {
-                duration = data->m_sequences[i].m_duration;
-                break;
-            }
-        }
-    }
-
-    this->m_flightBeatUntilMs = nowMs + (duration ? duration : 900);
-    return this->m_flightFlapId;
 }
 
 // VERIFY: 71fe5a98 manual

@@ -315,27 +315,23 @@ namespace modern::m2
             {
                 uint8_t* sequence = body + offset + i * kSequenceBytes;
 
-                // A curated set of modern animation ids sits above the client's own id table. Each
-                // one means the same motion as a client id, so it is remapped rather than dropped.
-                const uint16_t id = Rd16(sequence);
-                uint16_t mapped = id;
-                switch (id)
-                {
-                    case 564: mapped = 37;  break;
-                    case 548: mapped = 41;  break;
-                    case 556: mapped = 42;  break;
-                    case 552: mapped = 43;  break;
-                    case 554: mapped = 44;  break;
-                    case 562: mapped = 45;  break;
-                    case 572: mapped = 39;  break;
-                    case 574: mapped = 187; break;
-                    default: break;
-                }
-                if (mapped != id)
-                {
-                    Wr16(sequence, mapped);
-                    ++g_sequences;
-                }
+                // NOT IN BINARY, and deliberately empty.
+                //
+                // This used to remap a set of MountFlight* ids onto older ones:
+                //
+                //     564 -> 37 (JumpStart)     548 -> 41 (SwimIdle)     556 -> 42 (Swim)
+                //     552 -> 43 (SwimLeft)      554 -> 44 (SwimRight)    562 -> 45 (SwimBackwards)
+                //     572 -> 39 (JumpEnd)       574 -> 187 (JumpLandRun)
+                //
+                // That was a workaround for a client that could not address an animation id above 505. This
+                // client no longer has that limit -- IsSequenceLoaded and ResolveSequenceFallback both accept
+                // any id the model carries, and AnimationData is sourced from the db2 so every modern id has
+                // a behaviour and a fallback chain.
+                //
+                // Keeping the remap meant a mount's own flight animations were destroyed before the game ever
+                // saw them: a model carrying MountFlightIdle/MountFlightRun/MountFlightLeft/MountFlightRight
+                // reached the client as SwimIdle/Swim/SwimLeft/SwimRight, so a flying mount was told to swim
+                // and no selection logic could ever choose the real clip. The ids are now left untouched.
 
                 // The modern blend time packs two u16s where the client reads one u32; read whole it
                 // is a blend so long the transition never completes.

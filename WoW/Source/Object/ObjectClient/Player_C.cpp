@@ -53,6 +53,7 @@
 #include "WoW/Source/ObjectMgrClient/ObjectMgrClient.h"
 #include "WoW/Source/SoundInterface/SoundInterface2.h"
 #include "WoW/Source/Ui/ActionBarFrame.h"
+#include "WoW/Source/Ui/SpeedFlying.h"
 #include "WoW/Source/Ui/BarberShop.h"
 #include "WoW/Source/Ui/BattlefieldInfo.h"
 #include "WoW/Source/Ui/ChatFrame.h"
@@ -1013,6 +1014,17 @@ void CGPlayer_C::PreAnimate(CGWorldFrame* frame) {
     this->CGUnit_C::PreAnimate(frame);
 
     uint32_t time = FrameTime::s_curTimeMs;
+
+    // NOT IN BINARY. The mana-speedflying link, driven from the active player's own per-frame hook.
+    //
+    // The addon under Interface\AddOns\WXLSpeedflying renders the HUD and the talent panel and reads its
+    // numbers back out of Lua globals; before this there was nothing in the client writing them, so the HUD
+    // never appeared at all. This only runs for the active player, because the link is about what this
+    // player's mount is doing.
+    if (this->m_obj->m_guid == ClntObjMgrGetActivePlayer())
+    {
+        SpeedFlying::Update(time);
+    }
 
     if (this->m_obj->m_guid == ClntObjMgrGetActivePlayer() && this->m_combat.m_attacking.m_guid && static_cast<int32_t>(time - s_attackSwingErrorTime) >= 0) {
         if (s_attackSwingError == 1) {

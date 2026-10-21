@@ -812,6 +812,16 @@ float OsInputGetMouseSpeed() {
 }
 
 // OFFSET: 0x00869640
+// NOT IN BINARY. Whether this window currently has input focus.
+//
+// s_appActive already tracks it (it is what OsQueuePut(OS_INPUT_FOCUS, ...) reports), but nothing exported
+// it, and a caller that reads a raw key state needs it: OsInputIsKeyDown wraps GetAsyncKeyState, which keeps
+// reporting a held key while the client is in the background. Anything acting on a key press for a
+// side effect has to know whether the player is actually looking at the game.
+int32_t OsInputIsAppActive() {
+    return s_appActive != 0 ? 1 : 0;
+}
+
 int32_t OsInputIsKeyDown(KEY key) {
     uint32_t vkey;
     if (!ConvertKeyToVirtualKey(key, &vkey)) {

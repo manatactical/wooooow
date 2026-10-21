@@ -1506,7 +1506,12 @@ void CGUnit_C::PreAnimate(CGWorldFrame* frame) {
         {
             const uint32_t anim = this->ChooseMountFlightAnim(mountData, this->GetCurrentBaseAnimId());
 
-            if (anim != 0xFFFFFFFF && anim != this->m_mountModel->GetBoneSequenceId(0xFFFFFFFF))
+            // A boost sets m_flgtForceApply because it must restart the clip even on the same id. The
+            // ordinary path skips a no-op id so a held state does not re-push its clip every frame.
+            const bool forceApply = this->m_flgtForceApply != 0;
+            this->m_flgtForceApply = 0;
+
+            if (anim != 0xFFFFFFFF && (forceApply || anim != this->m_mountModel->GetBoneSequenceId(0xFFFFFFFF)))
             {
                 // Variation 0, never 0xFFFFFFFF. That sentinel makes CM2Model::SetBoneSequence pick a
                 // variation *at random*, and a mount can carry several variations of one id with completely
@@ -4641,7 +4646,16 @@ namespace
 
     // The wingbeat that breaks up a level glide. These ARE the one-shot flap ids: they play a single beat and
     // stop, which is exactly what is wanted here and exactly wrong as a sustained clip.
-    constexpr uint32_t kBeatLadder[] = { 1680, 1702, 1726, 1706, 1638 };
+    constexpr uint32_t kBeatLadder[] = { 1680, 1702, 1726, 1638 };
+
+    // The button boost's clip: AdvFlyFlapForward. A boost is a deliberate override of the state clip and
+    // plays once, then hands the slot back -- the reference's BoostAnim default.
+    //
+    // 1706 must NOT appear in kBeatLadder. Every id here is a one-shot flap (docs/M2-ANIMATIONS.md), so a
+    // wingbeat that fell through to 1706 played the boost's own animation at random while gliding -- the
+    // boost looked like it fired on its own. The beat gets the other flaps only; a mount carrying nothing
+    // but 1706 simply does not beat, which is the honest answer.
+    constexpr uint32_t kBoostLadder[] = { 1706 };
 
     // Level is a glide on a retail mount, and a glide that never changes reads as frozen. One beat every
     // 4-8 seconds, the reference module's interval, with a fresh random gap each time.
@@ -4819,11 +4833,22 @@ uint32_t CGUnit_C::ChooseMountFlightAnim(const M2Data* data, uint32_t riderAnim)
         // The ascend/descend bits are a secondary signal, and they are needed: climbing straight up leaves
         // the pitch at 0, so a pure vertical climb would otherwise read as level flight and the climb
         // ladder would never be reached.
-        if (pathSin > kClimbSin || (moveFlags & MOVEMENTFLAG_ASCENDING))
+        // Angle decides; the ascend/descend bits only break a tie inside the level band. OR-ing them in
+        // made a level mount read as climbing on every frame the server left ASCENDING set, so the state and
+        // therefore the clip flapped frame to frame and nothing ever played through.
+        if (pathSin > kClimbSin)
         {
             wanted = FLGT_CLIMB;
         }
-        else if (pathSin < kDiveSin || (moveFlags & MOVEMENTFLAG_DESCENDING))
+        else if (pathSin < kDiveSin)
+        {
+            wanted = FLGT_DIVE;
+        }
+        else if (moveFlags & MOVEMENTFLAG_ASCENDING)
+        {
+            wanted = FLGT_CLIMB;
+        }
+        else if (moveFlags & MOVEMENTFLAG_DESCENDING)
         {
             wanted = FLGT_DIVE;
         }
@@ -4858,7 +4883,14 @@ uint32_t CGUnit_C::ChooseMountFlightAnim(const M2Data* data, uint32_t riderAnim)
     }
 
     // --- the clip for that state, with its own fallbacks ------------------------------------------
-    uint32_t anim = ResolveLadder(data, wanted);
+    // Recorded so the diagnostic log can show what the ladders produced on THIS mount; without it the log
+    // could only say which clip won, never why.
+    for (uint32_t r = 0; r < 8; r++)
+    {
+        this->m_flgtRoles[r] = ResolveLadder(data, static_cast<EFlgtState>(r));
+    }
+
+    uint32_t anim = this->m_flgtRoles[wanted];
 
     // Nothing for this state: keep travelling rather than freezing, by falling back down the states that
     // are meaningful in the air. A missing lateral falls back to level travel, never to hover -- a mount
@@ -4895,6 +4927,43 @@ uint32_t CGUnit_C::ChooseMountFlightAnim(const M2Data* data, uint32_t riderAnim)
     // Layered over the level clip only. A climb or a dive is already a moving clip and must not be
     // interrupted, and a hover is a standing pose. The beat is a one-shot held for its own duration and then
     // handed back, so the glide is resumed rather than replaced.
+    //
+    // A boost outranks the beat and every state clip. It is forced on every press, not only when the state
+    // changes: a chained burst spent mid-flap would otherwise inherit the previous burst's pose instead of
+    // flapping forward again. m_flgtBoostDirty is that "just pressed" edge, set by the module.
+    {
+        const uint32_t boostId = FirstPresentId(data, kBoostLadder, _countof(kBoostLadder));
+
+        if (boostId && (this->m_flgtBoostDirty || (this->m_flgtBoostUntilMs
+            && static_cast<int32_t>(now - this->m_flgtBoostUntilMs) < 0)))
+        {
+            if (this->m_flgtBoostDirty)
+            {
+                this->m_flgtBoostDirty = 0;
+                this->m_flgtBoostUntilMs = now + SequenceDuration(data, boostId, 1000);
+                this->m_flgtBeatUntilMs = 0;  // a beat in flight would replay the clip we are replacing
+                this->m_flgtBeatNextMs = 0;
+                this->m_flgtAppliedState = wanted;
+                this->m_flgtAppliedId = boostId;
+                // The clip may already be the one playing (a chained burst); force the apply site to
+                // re-push it from its start so the flap begins again.
+                this->m_flgtForceApply = 1;
+                return boostId;
+            }
+
+            if (static_cast<int32_t>(now - this->m_flgtBoostUntilMs) < 0)
+            {
+                this->m_flgtAppliedState = wanted;
+                this->m_flgtAppliedId = boostId;
+                return boostId;
+            }
+        }
+
+        if (this->m_flgtBoostUntilMs && static_cast<int32_t>(now - this->m_flgtBoostUntilMs) >= 0)
+        {
+            this->m_flgtBoostUntilMs = 0;
+        }
+    }
     if (wanted == FLGT_LEVEL)
     {
         const uint32_t beatId = FirstPresentId(data, kBeatLadder, _countof(kBeatLadder));

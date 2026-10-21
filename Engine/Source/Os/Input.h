@@ -43,6 +43,7 @@ struct OSEVENT {
 int32_t OsQueueGet(OSINPUT* id, int32_t* param0, int32_t* param1, int32_t* param2, int32_t* param3);
 void OsQueuePut(OSINPUT id, int32_t param0, int32_t param1, int32_t param2, int32_t param3);
 int32_t OsInputIsKeyDown(KEY key);
+int32_t OsInputIsAppActive();
 int32_t OsInputIsMouseButtonDown(MOUSEBUTTON button);
 void OsInputSetWindowResizeLock(int32_t resizeLock);
 float OsInputGetMouseSpeed();

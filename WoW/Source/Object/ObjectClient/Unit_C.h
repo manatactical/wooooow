@@ -1038,6 +1038,8 @@ class CGUnit_C : public CGObject_C, public CGUnit {
     /* ---- */ uint32_t m_flgtPendingSinceMs = 0;
     /* ---- */ uint32_t m_flgtAppliedState = 0xFFFFFFFF;
     /* ---- */ uint32_t m_flgtAppliedId = 0;
+    // The id each flight state resolved to on the current mount, for the diagnostic log.
+    /* ---- */ uint32_t m_flgtRoles[8] = {};
     // Takeoff: the clip held while the launch plays, the time it expires, and whether this period of flight
     // has already launched. Cleared only when the unit is genuinely on the ground.
     /* ---- */ uint32_t m_flgtLaunched = 0;
@@ -1049,6 +1051,16 @@ class CGUnit_C : public CGObject_C, public CGUnit {
     /* ---- */ uint32_t m_flgtBeatUntilMs = 0;
     /* ---- */ uint32_t m_flgtBeatNextMs = 0;
     /* ---- */ uint32_t m_flgtBeatRng = 0;
+    // Set when a boost must re-push the flap clip from its start even though that same clip is already
+    // playing: a chained burst otherwise inherits the previous burst's pose instead of flapping again.
+    // The module sets it on every boost press; ChooseMountFlightAnim consumes it.
+    /* ---- */ uint8_t  m_flgtBoostDirty = 0;
+    // When the boost clip ends. 0 = not boosting.
+    /* ---- */ uint32_t m_flgtBoostUntilMs = 0;
+    // Set by ChooseMountFlightAnim when the boost clip must be re-pushed from its start even though the
+    // model is already on that exact id. The apply site normally skips a no-op id change; a boost must
+    // not be skipped, or a chained burst inherits the previous burst's pose instead of flapping again.
+    /* ---- */ uint8_t  m_flgtForceApply = 0;
 
 };
 

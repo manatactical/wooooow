@@ -235,7 +235,11 @@ void CGxDeviceD3d11::IShaderConstantsFlush() {
     int32_t renderStates[GxShTargets_Last] = { GxRs_VertexShader, GxRs_HullShader, GxRs_DomainShader, GxRs_GeometryShader, GxRs_PixelShader, -1 };
 
     for (uint32_t target = 0; target < GxShTargets_Last; target++) {
-        ShadowConstants& shadow = CGxDevice::s_shadowConstants[target];
+        // CGxDevice::ShaderConstantsSet stores with `s_shadowConstants[target ? 0 : 1]` -- Vertex (0) in
+        // slot 1, every other target in slot 0. Reading s_shadowConstants[target] here looked up slot 0 for
+        // Vertex, i.e. the pixel/hull constants, and uploaded those to the vertex constant buffer. Every
+        // vertex then transformed by the wrong matrix and nothing appeared on screen.
+        ShadowConstants& shadow = CGxDevice::s_shadowConstants[target ? 0 : 1];
 
         if (shadow.dirtyMin > shadow.dirtyMax || renderStates[target] < 0) {
             continue;
@@ -247,21 +251,36 @@ void CGxDeviceD3d11::IShaderConstantsFlush() {
             continue;
         }
 
+        // unk_0014 is a byte size (read from the permutation header), so the register count is it >> 4.
         uint32_t count = (permute->unk_0014 + 15) >> 4;
 
         if (shadow.dirtyMin >= count) {
             continue;
         }
 
+        // D3D11_MAP_WRITE_DISCARD renames the whole buffer, so anything not written in this Map comes
+        // back as undefined data. A partial upload of just the dirty range therefore wiped the registers
+        // below dirtyMin, which is why here we always write the full register file.
+        //
+        // The size has to be the register file, not permute->unk_0014: that field is the permutation's
+        // own constant size and is smaller than the registers actually used. The world view matrix is
+        // written to register 31 (World.cpp), i.e. bytes 496..559, while a 544-byte copy stops at 543 --
+        // the matrix's last row never reached the GPU and every vertex transformed to nothing.
+        uint32_t uploadBytes = 16 * this->m_caps.m_shaderConstants[target];
+
+        if (uploadBytes > (256 * 16)) {
+            uploadBytes = 256 * 16;
+        }
+
         ID3D11Buffer* buffer = this->m_constantBuffers[target];
         D3D11_MAPPED_SUBRESOURCE mapped;
 
         if (SUCCEEDED(this->m_d3dContext->Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-            memcpy(mapped.pData, shadow.constants, permute->unk_0014);
+            memcpy(mapped.pData, shadow.constants, uploadBytes);
             this->m_d3dContext->Unmap(buffer, 0);
+            shadow.dirtyMin = count;
+            shadow.dirtyMax = 0;
         }
-
-        shadow.dirtyMin = count;
     }
 }
 

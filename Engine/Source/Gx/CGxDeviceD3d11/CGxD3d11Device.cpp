@@ -1265,13 +1265,19 @@ void CGxDeviceD3d11::DeviceSetRenderTarget(EGxBuffer buffer, CGxTex* texture, ui
 
     TexTargetViews* depthViews = static_cast<TexTargetViews*>(this->m_textureTarget[GxBuffers_Depth].m_apiSpecific);
 
-    if (depthViews) {
-        if (this->m_textureTarget[GxBuffers_Depth].m_texture &&
-                this->m_textureTarget[GxBuffers_Depth].m_texture->m_width == this->m_format.m_size.x &&
-                this->m_textureTarget[GxBuffers_Depth].m_texture->m_height == this->m_format.m_size.y) {
+    // Clear the depth view whenever this frame buffer has no depth attachment, or one that does not match
+    // the colour target. Leaving the previous (back-buffer, 1920x1200) depth view in place made
+    // OMSetRenderTargets reject the whole binding for a 64x64 offscreen pass
+    // (OMSETRENDERTARGETS_INVALIDVIEW), so that pass drew into nothing at all. Comparing against the
+    // colour target rather than m_format is what makes this correct for offscreen sizes.
+    this->m_targets.m_curDepthView = NULL;
+
+    if (depthViews && this->m_textureTarget[GxBuffers_Depth].m_texture) {
+        CGxTex* depthTex = this->m_textureTarget[GxBuffers_Depth].m_texture;
+        CGxTex* colorTex = this->m_textureTarget[GxBuffers_Color].m_texture;
+
+        if (!colorTex || (depthTex->m_width == colorTex->m_width && depthTex->m_height == colorTex->m_height)) {
             this->m_targets.m_curDepthView = static_cast<ID3D11DepthStencilView*>(depthViews->m_targetView);
-        } else {
-            this->m_targets.m_curDepthView = NULL;
         }
     }
 
@@ -1432,13 +1438,16 @@ void CGxDeviceD3d11::FrameBufferSet(CGxFrameBuffer* frameBuffer) {
 
     TexTargetViews* depthViews = static_cast<TexTargetViews*>(this->m_textureTarget[GxBuffers_Depth].m_apiSpecific);
 
-    if (depthViews) {
-        if (this->m_textureTarget[GxBuffers_Depth].m_texture &&
-                this->m_textureTarget[GxBuffers_Depth].m_texture->m_width == this->m_format.m_size.x &&
-                this->m_textureTarget[GxBuffers_Depth].m_texture->m_height == this->m_format.m_size.y) {
+    // See the note in ITargetSet: an absent or mismatched depth attachment must clear the view, or
+    // OMSetRenderTargets rejects the binding and the pass renders nowhere.
+    this->m_targets.m_curDepthView = NULL;
+
+    if (depthViews && this->m_textureTarget[GxBuffers_Depth].m_texture) {
+        CGxTex* depthTex = this->m_textureTarget[GxBuffers_Depth].m_texture;
+        CGxTex* colorTex = this->m_textureTarget[GxBuffers_Color].m_texture;
+
+        if (!colorTex || (depthTex->m_width == colorTex->m_width && depthTex->m_height == colorTex->m_height)) {
             this->m_targets.m_curDepthView = static_cast<ID3D11DepthStencilView*>(depthViews->m_targetView);
-        } else {
-            this->m_targets.m_curDepthView = NULL;
         }
     }
 

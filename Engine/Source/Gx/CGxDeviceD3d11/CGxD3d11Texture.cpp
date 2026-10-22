@@ -724,11 +724,19 @@ void CGxDeviceD3d11::ITexUpload(CGxTex* texId) {
                                 rect.bottom = yEnd >= y1 ? y1 : yEnd;
 
                                 uint32_t subresource = mip + subresourceBase - baseMip;
-                                uint32_t planeStart = texId->m_updatePlaneMin >> mip;
-                                uint32_t planeEnd = texId->m_updatePlaneMax >> mip;
 
-                                if (planeStart == planeEnd) {
-                                    planeEnd++;
+                                // m_updatePlaneMin/Max are int16_t and -1 means "no explicit plane range",
+                                // set by the CGxTex constructor and never cleared on the normal upload path.
+                                // Reading them as uint32_t turned -1 into 0xFFFFFFFF, so planeStart >
+                                // planeEnd and the loop below never ran: not one tile was ever uploaded,
+                                // which is why every texture sampled as uninitialised (black) even though
+                                // the SRVs and samplers were all valid.
+                                uint32_t planeStart = 0;
+                                uint32_t planeEnd = 1;
+
+                                if (texId->m_updatePlaneMin >= 0 && texId->m_updatePlaneMax >= texId->m_updatePlaneMin) {
+                                    planeStart = static_cast<uint32_t>(texId->m_updatePlaneMin) >> mip;
+                                    planeEnd = (static_cast<uint32_t>(texId->m_updatePlaneMax) >> mip) + 1;
                                 }
 
                                 for (uint32_t p = planeStart; p < planeEnd; p++) {

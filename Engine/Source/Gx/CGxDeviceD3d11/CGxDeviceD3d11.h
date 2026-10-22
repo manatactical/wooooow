@@ -105,6 +105,10 @@ class CGxDeviceD3d11 : public CGxDevice {
     /* 286C */ ID3D11Buffer* m_curIndexBuffer;
     /* 2870 */ ID3D11Buffer* m_curVertexBuffers [2];
     /* 2878 */ uint32_t m_vertexStrides [2];
+    // NOT IN BINARY: the byte offsets currently bound. A pool holds many CGxBufs, each at its own
+    // m_index, so the cached buffer pointer alone is not enough to know whether the binding is current.
+    /* ---- */ uint32_t m_curIndexOffset;
+    /* ---- */ uint32_t m_curVertexOffsets [2];
     /* 2880 */ uint32_t m_instanceCount;
     /* 2884 */ ID3D11RasterizerState* m_curRasterizerState;
     /* 2888 */ ID3D11BlendState* m_curBlendState;

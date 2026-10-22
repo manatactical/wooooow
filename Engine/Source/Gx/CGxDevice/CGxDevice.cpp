@@ -936,12 +936,16 @@ void CGxDevice::TexParameters(const CGxTex* texId, CGxTexParms& parms) {
 // VERIFY: 48e3bca3 auto
 // OFFSET: 0x006833A0
 void CGxDevice::ShaderConstantsClear() {
+    // Zero, not FLT_MAX. These arrays are uploaded verbatim to the GPU, so any register the frame never
+    // writes reached the shader as 3.4e38. A view-projection matrix holding infinities projects every
+    // vertex to nothing, which is why even the 2D cursor disappeared. Zero is the conventional unset
+    // constant and cannot poison an arithmetic result the way an infinity can.
     for (uint32_t i = 0; i < 256 * 4; i++) {
-        s_shadowConstants[0].constants[i] = FLT_MAX;
+        s_shadowConstants[0].constants[i] = 0.0f;
     }
 
     for (uint32_t i = 0; i < 256 * 4; i++) {
-        s_shadowConstants[1].constants[i] = FLT_MAX;
+        s_shadowConstants[1].constants[i] = 0.0f;
     }
 
     s_shadowConstants[1].dirtyMin = 255;

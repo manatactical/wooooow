@@ -1,7 +1,12 @@
 #include "Engine/Source/Gx/CGxFrameBuffer.h"
 
 // STATIC: 0x00D09498/0x140BBB2F8
-uint32_t CGxFrameBuffer::s_nextVersion;
+// Starts at 1, not 0: FrameBufferSet treats "m_frameBufferVersion == frameBuffer->m_version" as "already
+// bound" and skips the bind, and the device's own m_frameBufferVersion begins at 0. With the counter
+// starting at 0 the first Finalize() also produced version 0, so the very first back-buffer bind was
+// skipped and no render target was ever bound (m_numRenderTargets stayed 0, every clear and draw went
+// nowhere). 0 now means "never finalized", which can never match a real version.
+uint32_t CGxFrameBuffer::s_nextVersion = 1;
 
 // OFFSET: 0x00856350/0x140587000
 CGxFrameBuffer::CGxFrameBuffer() {

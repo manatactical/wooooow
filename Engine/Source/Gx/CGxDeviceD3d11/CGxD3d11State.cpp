@@ -44,10 +44,13 @@ inline bool CGxDeviceD3d11::InputLayoutKey::operator==(const InputLayoutKey& key
 void CGxDeviceD3d11::IStateReset() {
     this->m_curInputLayout = NULL;
     this->m_curIndexBuffer = NULL;
+    this->m_curIndexOffset = 0;
     this->m_curVertexBuffers[0] = NULL;
     this->m_vertexStrides[0] = 0;
+    this->m_curVertexOffsets[0] = 0;
     this->m_curVertexBuffers[1] = NULL;
     this->m_vertexStrides[1] = 0;
+    this->m_curVertexOffsets[1] = 0;
     this->m_curRasterizerState = NULL;
     this->m_curBlendState = NULL;
     this->m_curDepthState = NULL;
@@ -59,19 +62,26 @@ void CGxDeviceD3d11::IStateReset() {
 void CGxDeviceD3d11::ISetIndexBuffer() {
     ID3D11Buffer* indexBuffer = static_cast<ID3D11Buffer*>(this->m_primIndexBuf->m_pool->m_apiSpecific);
 
-    if (this->m_curIndexBuffer != indexBuffer) {
-        this->m_d3dContext->IASetIndexBuffer(indexBuffer, DXGI_FORMAT_R16_UINT, 0);
+    // m_index is this buffer's byte offset inside the pool, and a pool holds many CGxBufs (FVBBList
+    // allocates blockCount of them), so binding at 0 always read block 0's data. D3D11 takes a byte
+    // offset here, which is exactly what m_index is.
+    UINT offset = this->m_primIndexBuf->m_index;
+
+    if (this->m_curIndexBuffer != indexBuffer || this->m_curIndexOffset != offset) {
+        this->m_d3dContext->IASetIndexBuffer(indexBuffer, DXGI_FORMAT_R16_UINT, offset);
         this->m_curIndexBuffer = indexBuffer;
+        this->m_curIndexOffset = offset;
     }
 }
 
 // OFFSET: 0x0086D5B0/0x1405A1F00
 void CGxDeviceD3d11::ISetVertexBuffer() {
     ID3D11Buffer* vertexBuffer = static_cast<ID3D11Buffer*>(this->m_primVertexBufs[0]->m_pool->m_apiSpecific);
-    UINT offset = 0;
+    UINT offset = this->m_primVertexBufs[0]->m_index;
 
-    if (this->m_curVertexBuffers[0] != vertexBuffer) {
+    if (this->m_curVertexBuffers[0] != vertexBuffer || this->m_curVertexOffsets[0] != offset) {
         this->m_curVertexBuffers[0] = vertexBuffer;
+        this->m_curVertexOffsets[0] = offset;
         this->m_d3dContext->IASetVertexBuffers(0, 1, &this->m_curVertexBuffers[0], &this->m_vertexStrides[0], &offset);
     }
 }
@@ -80,11 +90,13 @@ void CGxDeviceD3d11::ISetVertexBuffer() {
 void CGxDeviceD3d11::ISetVertexBuffers() {
     ID3D11Buffer* vertexBuffer0 = static_cast<ID3D11Buffer*>(this->m_primVertexBufs[0]->m_pool->m_apiSpecific);
     ID3D11Buffer* vertexBuffer1 = this->m_primVertexBufs[1] ? static_cast<ID3D11Buffer*>(this->m_primVertexBufs[1]->m_pool->m_apiSpecific) : NULL;
-    UINT offsets[2] = { 0, 0 };
+    UINT offsets[2] = { this->m_primVertexBufs[0]->m_index, this->m_primVertexBufs[1] ? this->m_primVertexBufs[1]->m_index : 0 };
 
-    if (this->m_curVertexBuffers[0] != vertexBuffer0 || this->m_curVertexBuffers[1] != vertexBuffer1) {
+    if (this->m_curVertexBuffers[0] != vertexBuffer0 || this->m_curVertexBuffers[1] != vertexBuffer1 || this->m_curVertexOffsets[0] != offsets[0] || this->m_curVertexOffsets[1] != offsets[1]) {
         this->m_curVertexBuffers[0] = vertexBuffer0;
         this->m_curVertexBuffers[1] = vertexBuffer1;
+        this->m_curVertexOffsets[0] = offsets[0];
+        this->m_curVertexOffsets[1] = offsets[1];
         this->m_d3dContext->IASetVertexBuffers(0, 2, this->m_curVertexBuffers, this->m_vertexStrides, offsets);
     }
 }
@@ -426,7 +438,10 @@ void CGxDeviceD3d11::IStateSyncDepth() {
 // OFFSET: 0x0086FBF0/0x1405A5680
 ID3D11SamplerState* CGxDeviceD3d11::IGetSamplerState(CGxTexFlags flags) {
     uint32_t bits = *reinterpret_cast<uint32_t*>(&flags);
-    uint32_t hashval = (bits & 0xCF) | (16 * (bits & 0x30)) | (((bits & 0x1F000) | ((bits >> 2) & 0xC0)) >> 2);
+    // Hash exactly the fields the descriptor below reads: filter (0-2), wrapU (3), wrapV (4),
+    // maxAnisotropy (9-13). The cata formula covered different bits, so two flags that differ only in
+    // wrapping hashed alike and shared one sampler state.
+    uint32_t hashval = (bits & 0x07) | ((bits & 0x18) << 3) | ((bits & 0x3E00) << 2);
 
     SamplerStateRec* rec = this->m_samplerStates.Ptr(hashval, HASHKEY_NONE());
 
@@ -435,16 +450,19 @@ ID3D11SamplerState* CGxDeviceD3d11::IGetSamplerState(CGxTexFlags flags) {
     }
 
     uint32_t filter = bits & 7;
-    uint32_t compare = (bits >> 3) & 1;
-
+    // This client's CGxTexFlags is the 3.3.5a layout (1-bit wrapU/wrapV, no comparison bit), not cata's
+    // (bit3 = compare, 2-bit wrapU/V/W). Reading bit 3 as "compare" picked up m_wrapU, so every wrapped
+    // texture produced a COMPARISON filter sampler while the pixel shader declared default filtering:
+    // DEVICE_DRAW_SAMPLER_MISMATCH. This client has no shadow/comparison samplers, so always use the
+    // plain filter table.
     D3D11_SAMPLER_DESC desc;
-    desc.Filter = compare ? s_compareFilterModes[filter] : s_filterModes[filter];
-    desc.AddressU = s_wrapModes[(bits >> 4) & 3];
-    desc.AddressV = s_wrapModes[(bits & 0xFF) >> 6];
-    desc.AddressW = s_wrapModes[(bits >> 8) & 3];
+    desc.Filter = s_filterModes[filter];
+    desc.AddressU = s_wrapModes[bits & 1];
+    desc.AddressV = s_wrapModes[(bits >> 1) & 1];
+    desc.AddressW = s_wrapModes[0];
     desc.MipLODBias = 0.0f;
-    desc.MaxAnisotropy = (bits >> 12) & 0x1F;
-    desc.ComparisonFunc = static_cast<D3D11_COMPARISON_FUNC>(compare + 1);
+    desc.MaxAnisotropy = (bits >> 9) & 0x1F;
+    desc.ComparisonFunc = D3D11_COMPARISON_NEVER;
     desc.BorderColor[0] = 0.0f;
     desc.BorderColor[1] = 0.0f;
     desc.BorderColor[2] = 0.0f;
@@ -496,6 +514,7 @@ void CGxDeviceD3d11::ISetDomainTexture(uint32_t slot, CGxTex* texId) {
             ID3D11SamplerState* sampler = this->IGetSamplerState(texId->m_flags);
             this->m_d3dContext->DSSetShaderResources(slot, 1, &srv);
             this->m_d3dContext->DSSetSamplers(slot, 1, &sampler);
+            return;
         }
     }
 
@@ -676,7 +695,10 @@ void CGxDeviceD3d11::SceneClear(uint32_t mask, CImVector color) {
         }
     }
 
-    if ((mask & 0x10) && this->m_targets.m_curDepthView) {
+    // GxBufferBit_Depth is 0x2, not 0x10. Testing 0x10 meant the depth buffer was never cleared: it kept
+    // whatever was in it, so with LESS_EQUAL almost every 3D fragment failed the depth test and the whole
+    // world drew nothing. 2D was unaffected because it disables depth testing outright.
+    if ((mask & GxBufferBit_Depth) && this->m_targets.m_curDepthView) {
         this->m_d3dContext->ClearDepthStencilView(this->m_targets.m_curDepthView, D3D11_CLEAR_DEPTH, 1.0f, 0);
     }
 }
@@ -963,7 +985,8 @@ void CGxDeviceD3d11::DrawNonIndexed(const CGxBatch& batch) {
         this->m_d3dContext->IASetPrimitiveTopology(s_primitiveTopology[batch.m_primType]);
     }
 
-    this->m_d3dContext->Draw(batch.m_count, this->m_primVertexBufs[0]->m_index + batch.m_start);
+    // The buffer offset is bound in ISetVertexBuffer, so the base vertex is just the batch start.
+    this->m_d3dContext->Draw(batch.m_count, batch.m_start);
 }
 
 // OFFSET: 0x00870FE0/0x1405A6DA0
@@ -992,13 +1015,10 @@ void CGxDeviceD3d11::Draw(const CGxBatch& batch) {
         this->m_d3dContext->IASetPrimitiveTopology(s_primitiveTopology[batch.m_primType]);
     }
 
-    // m_index is a byte offset (see IBufLock); D3D11 wants item offsets. Guard itemSize 0: the stream
-    // buffers are created with itemSize 0 and their offset is always 0 too.
-    CGxBuf* indexBuf = this->m_primIndexBuf;
-    CGxBuf* vertexBuf = this->m_primVertexBufs[0];
-    UINT indexOffset = indexBuf->m_itemSize ? indexBuf->m_index / indexBuf->m_itemSize : 0;
-    UINT vertexOffset = vertexBuf->m_itemSize ? vertexBuf->m_index / vertexBuf->m_itemSize : 0;
-    this->m_d3dContext->DrawIndexed(batch.m_count, batch.m_start + indexOffset, vertexOffset);
+    // The buffer's own byte offset was already bound by ISetIndexBuffer/ISetVertexBuffer, so the draw
+    // must not add m_index again -- doing both double-counted the offset and every triangle read from
+    // the wrong place.
+    this->m_d3dContext->DrawIndexed(batch.m_count, batch.m_start, 0);
 }
 
 // OFFSET: 0x00871090/0x1405A6E70
@@ -1026,7 +1046,7 @@ void CGxDeviceD3d11::DrawInstancedNonIndexed(const CGxBatch& batch) {
         this->m_d3dContext->IASetPrimitiveTopology(s_primitiveTopology[batch.m_primType]);
     }
 
-    this->m_d3dContext->DrawInstanced(batch.m_count, this->m_instanceCount, this->m_primVertexBufs[0]->m_index, this->m_primVertexBufs[1] ? this->m_primVertexBufs[1]->m_index : 0);
+    this->m_d3dContext->DrawInstanced(batch.m_count, this->m_instanceCount, batch.m_start, 0);
 }
 
 // OFFSET: 0x00871150/0x1405A6F50
@@ -1055,13 +1075,8 @@ void CGxDeviceD3d11::DrawInstanced(const CGxBatch& batch) {
         this->m_d3dContext->IASetPrimitiveTopology(s_primitiveTopology[batch.m_primType]);
     }
 
-    CGxBuf* indexBuf = this->m_primIndexBuf;
-    CGxBuf* vertexBuf = this->m_primVertexBufs[0];
-    CGxBuf* vertexBuf1 = this->m_primVertexBufs[1];
-    UINT indexOffset = indexBuf->m_itemSize ? indexBuf->m_index / indexBuf->m_itemSize : 0;
-    UINT vertexOffset = vertexBuf->m_itemSize ? vertexBuf->m_index / vertexBuf->m_itemSize : 0;
-    UINT vertexOffset1 = (vertexBuf1 && vertexBuf1->m_itemSize) ? vertexBuf1->m_index / vertexBuf1->m_itemSize : 0;
-    this->m_d3dContext->DrawIndexedInstanced(batch.m_count, this->m_instanceCount, batch.m_start + indexOffset, vertexOffset, vertexOffset1);
+    // Offsets are bound by ISetIndexBuffer/ISetVertexBuffers; see Draw.
+    this->m_d3dContext->DrawIndexedInstanced(batch.m_count, this->m_instanceCount, batch.m_start, 0, 0);
 }
 
 // NOT IN BINARY: this client's only draw entry point (GxDraw calls Draw(batch, count)); the D3d11

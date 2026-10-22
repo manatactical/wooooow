@@ -85,7 +85,11 @@ void CWorldParam::SetDefaults(OPTION_PAGE page) {
     }
 
     if (CWorldParam::cvar_maxLights) {
-        SStrPrintf(value, sizeof(value), "%d", defaults->m_numLights);
+        // The VideoHardware DB was authored for 2004-era cards and often says 1-3. It no longer decides the
+        // cap: the CVar keeps its stock floor of 4 unless the user types something lower themselves.
+        uint32_t numLights = defaults->m_numLights < 4 ? 4 : defaults->m_numLights;
+
+        SStrPrintf(value, sizeof(value), "%d", numLights);
         CWorldParam::cvar_maxLights->Set(value, true, false, false, true);
     }
 

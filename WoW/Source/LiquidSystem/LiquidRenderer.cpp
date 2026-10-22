@@ -109,9 +109,10 @@ void Liquid::CRenderer::Draw(Liquid::CInstance* instance) {
 // VERIFY: d17a0633 manual
 // OFFSET: 0x008A2240
 void Liquid::CRenderer::Flush(const C3Vector& cameraPos, uint32_t pass) {
-    CGxLight lights[4];
+    const uint32_t limit = GxGetMaxLights();
+    CGxLight lights[Gx_MAX_LIGHTS];
 
-    for (uint32_t i = 0; i < 4; i++) {
+    for (uint32_t i = 0; i < limit; i++) {
         g_theGxDevicePtr->Light(i, lights[i]);
     }
 
@@ -128,7 +129,7 @@ void Liquid::CRenderer::Flush(const C3Vector& cameraPos, uint32_t pass) {
 
     instances.Clear();
 
-    for (uint32_t i = 0; i < 4; i++) {
+    for (uint32_t i = 0; i < limit; i++) {
         if (lights[i].m_flags & 0x1) {
             g_theGxDevicePtr->LightSet(i, lights[i], C3Vector(0.0f, 0.0f, 0.0f));
             g_theGxDevicePtr->LightEnable(i, 1);

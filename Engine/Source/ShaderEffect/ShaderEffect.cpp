@@ -55,7 +55,7 @@ C4Vector CShaderEffect::s_fogColorAlphaRef;
 C4Vector CShaderEffect::s_fogParams;
 
 // STATIC: 0x00D43098
-LocalLights CShaderEffect::s_localLights;
+LocalLights CShaderEffect::s_localLights[2];
 
 // VERIFY: 9049c785 manual
 // OFFSET: 0x008728C0
@@ -114,12 +114,29 @@ void CShaderEffect::ComputeLocalLights(LocalLights* localLights, uint32_t lightC
         }
     }
 
-    for (; i < 4; i++) {
+    for (; i < kShaderLightBlock; i++) {
         localLights->m_color[i].x = 0.0f;
         localLights->m_color[i].y = 0.0f;
         localLights->m_color[i].z = 0.0f;
         localLights->m_color[i].w = 0.0f;
     }
+}
+
+// The lit vs_3_0 shaders carry two 4-light blocks: one at c17, and a second one at c236 that nothing in the
+// engine used to fill. Feeding both lets a 4-light permutation shade 8 lights without touching a single
+// shader: lights 4..7 that are absent stay zeroed and contribute nothing.
+void CShaderEffect::UploadLocalLights(CM2Lighting* lighting, const C3Vector* origin) {
+    uint32_t count = lighting->m_lightCount;
+
+    if (count > kShaderLightBlock * 2) {
+        count = kShaderLightBlock * 2;
+    }
+
+    CShaderEffect::ComputeLocalLights(&CShaderEffect::s_localLights[0], count < kShaderLightBlock ? count : kShaderLightBlock, lighting->m_lights, origin);
+    CShaderEffect::ComputeLocalLights(&CShaderEffect::s_localLights[1], count > kShaderLightBlock ? count - kShaderLightBlock : 0, lighting->m_lights + kShaderLightBlock, origin);
+
+    GxShaderConstantsSet(GxSh_Vertex, kFirstLightRegister, reinterpret_cast<const float*>(&CShaderEffect::s_localLights[0]), kLightBlockRows);
+    GxShaderConstantsSet(GxSh_Vertex, kSecondLightRegister, reinterpret_cast<const float*>(&CShaderEffect::s_localLights[1]), kLightBlockRows);
 }
 
 // VERIFY: 3d4e9331 auto
@@ -535,7 +552,13 @@ void CShaderEffect::SetLocalLighting(CM2Lighting* lighting, int32_t enabled, con
         GxRsSet(GxRs_Lighting, enabled);
     }
 
+    // The permute digit only has 0..4 variants, and the 4-light variant is the one carrying both light
+    // blocks. Clamping here keeps shader selection stable while UploadLocalLights feeds up to 8.
     CShaderEffect::s_localLightCount = lighting ? lighting->m_lightCount : 0;
+
+    if (CShaderEffect::s_localLightCount > M2_MAX_SHADER_LIGHTS) {
+        CShaderEffect::s_localLightCount = M2_MAX_SHADER_LIGHTS;
+    }
 
     if (!CShaderEffect::s_enableShaders) {
         if (enabled) {
@@ -590,8 +613,7 @@ void CShaderEffect::SetLocalLighting(CM2Lighting* lighting, int32_t enabled, con
     GxShaderConstantsSet(GxSh_Vertex, 12, &sunDir.x, 1);
 
     if (CShaderEffect::s_localLightCount) {
-        CShaderEffect::ComputeLocalLights(&CShaderEffect::s_localLights, CShaderEffect::s_localLightCount, lighting->m_lights, origin);
-        GxShaderConstantsSet(GxSh_Vertex, 17, reinterpret_cast<const float*>(&CShaderEffect::s_localLights), sizeof(LocalLights) / sizeof(C4Vector));
+        CShaderEffect::UploadLocalLights(lighting, origin);
     }
 
     CShadowCache::SetShadowMapGenericInterior(lighting->m_flags & 8);

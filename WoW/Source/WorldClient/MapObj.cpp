@@ -867,10 +867,14 @@ void CWorldScene::SetupLighting(CM2Lighting* lighting, C3Vector* view) {
     if (CShaderEffect::s_enableShaders) {
         CWorldScene::s_fogPermute = lighting->m_lightCount;
 
+        // WMO permute table also stops at M2_MAX_SHADER_LIGHTS local lights.
+        if (CWorldScene::s_fogPermute > static_cast<int32_t>(M2_MAX_SHADER_LIGHTS)) {
+            CWorldScene::s_fogPermute = static_cast<int32_t>(M2_MAX_SHADER_LIGHTS);
+        }
+
         if (CWorldScene::s_fogPermute) {
-            LocalLights localLights;
-            CShaderEffect::ComputeLocalLights(&localLights, CWorldScene::s_fogPermute, lighting->m_lights, view);
-            g_theGxDevicePtr->ShaderConstantsSet(GxSh_Vertex, 17, reinterpret_cast<float*>(&localLights), 11);
+            // Same two-block upload the model path uses: WMO lit shaders carry the second block at c236 too.
+            CShaderEffect::UploadLocalLights(lighting, view);
         }
     } else {
         lighting->SetupGxLights(view);
@@ -2354,7 +2358,7 @@ void CMapObj::SetRenderModeLight() {
     g_theGxDevicePtr->LightEnable(0, 1);
     g_theGxDevicePtr->LightEnable(0, 1);
 
-    for (int i = 1; i < 4; i++)
+    for (int i = 1; i < static_cast<int>(Gx_MAX_LIGHTS); i++)
         g_theGxDevicePtr->LightEnable(i, 0);
 
     GxRsSet(GxRs_Lighting, static_cast<int32_t>(1));

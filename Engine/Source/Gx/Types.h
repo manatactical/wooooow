@@ -10,6 +10,15 @@ struct CGxBuf;
 struct CGxPool;
 class CGxQuery;
 
+// Active hardware lights the device can hold. The fixed-function path uses all of them; the shader path
+// still only ships 4 local-light slots, so anything feeding shader permutes or LocalLights clamps to 4.
+constexpr uint32_t Gx_MAX_LIGHTS = 8;
+// Maximum active lights this device actually supports (initially Gx_MAX_LIGHTS, lowered per backend).
+extern uint32_t g_gxMaxHardwareLights;
+
+// Effective light cap: the MaxLights CVar request, capped by what the device supports.
+uint32_t GxGetMaxLights();
+void GxSetMaxLights(uint32_t maxLights);
 enum EGxApi {
     GxApi_OpenGl = 0,
     GxApi_D3d9 = 1,

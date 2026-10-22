@@ -325,6 +325,9 @@ GLint glMaxTextureImageUnitsARB;
 // STATIC: 0x00C60610
 GLint glMaxTextureUnits;
 
+// NOT IN BINARY
+GLint glMaxLights;
+
 // STATIC: 0x00C60614
 int32_t glExtCVA;
 
@@ -416,6 +419,8 @@ void BindGlExtensions() {
     } else {
         glMaxTextureUnits = 1;
     }
+
+    glGetIntegerv(GL_MAX_LIGHTS, &glMaxLights);
 
     glExtBgra = FindGlExt("GL_EXT_bgra");
 

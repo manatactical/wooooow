@@ -54,6 +54,9 @@ static CVar* s_M2FasterVar;
 // STATIC: 0x00B2F020
 CVar* s_desktopGammaCvar;
 
+// NOT IN BINARY. Forced fixed-function rendering so the device can use all Gx_MAX_LIGHTS slots; the
+// shader path only ships 4 local-light slots.
+static CVar* s_M2ForceFixedFunctionVar;
 // STATIC: 0x00B2F024
 CVar* s_gammaCvar;
 
@@ -739,6 +742,7 @@ uint32_t GetM2CvarFlags() {
     s_M2ForceAdditiveParticleSortVar = CVar::Register("M2ForceAdditiveParticleSort", "force all particles to sort as though they were additive", 0, "0", ForceAdditiveParticleSortCallback, CATEGORY_GRAPHICS, false, nullptr, false);
     s_M2FasterVar = CVar::Register("M2Faster", "end user control of scene optimization mode - (0-3)", 0, "1", M2FasterChanged, CATEGORY_GRAPHICS, false, nullptr, false);
     s_M2FasterDebugVar = CVar::Register("M2FasterDebug", "programmer control of scene optimization mode", 0, "0", M2DebugFasterChanged, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_M2ForceFixedFunctionVar = CVar::Register("M2ForceFixedFunction", "render models without shaders so all MaxLights are used", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
     uint32_t flags = s_M2UseZFillVar->m_intValue != 0;
 
@@ -760,6 +764,12 @@ uint32_t GetM2CvarFlags() {
 
     if (s_M2ForceAdditiveParticleSortVar->m_intValue) {
         flags |= 0x100;
+    }
+
+    // 0x8 asks for shaders. The shader path only has 4 local-light slots, so dropping it is the only way to
+    // light with all 8 device lights.
+    if (s_M2ForceFixedFunctionVar->m_intValue) {
+        return flags;
     }
 
     return flags | 0x8;

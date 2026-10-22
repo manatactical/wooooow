@@ -148,6 +148,12 @@ uint64_t OsTimeManager::Snapshot() {
 
 // OFFSET: 0x0086AE20
 uint32_t OsGetAsyncTimeMs() {
+    // Shutdown nulls the timer before some late steps still ask for the time; returning 0 beats crashing
+    // there and losing the whole log.
+    if (!s_OsTimeMgr) {
+        return 0;
+    }
+
     return static_cast<uint32_t>(s_OsTimeMgr->Snapshot());
 }
 

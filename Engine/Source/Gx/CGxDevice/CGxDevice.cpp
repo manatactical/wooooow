@@ -698,7 +698,7 @@ void CGxDevice::XformPushAndSet(EGxXform xf, const C44Matrix& matrix) {
 // VERIFY: d13c8956 manual
 // OFFSET: 0x00682C50
 void CGxDevice::InitLights() {
-    for (uint32_t i = 0; i < 4; i++) {
+    for (uint32_t i = 0; i < Gx_MAX_LIGHTS; i++) {
         this->m_lights[i].m_flags = 0xFF;
         this->m_lights[i].unk_0046 = 0xFF;
         this->m_lights[i].m_enable = 0;
@@ -781,6 +781,10 @@ uint32_t CGxDevice::PrimCalcCount(EGxPrim primType, uint32_t indexCount) {
 // VERIFY: 341ce950 manual
 // OFFSET: 0x00683080
 void CGxDevice::LightEnable(uint32_t index, int32_t enable) {
+    if (index >= Gx_MAX_LIGHTS) {
+        return;
+    }
+
     CGxApiLight& light = this->m_lights[index];
 
     if (light.m_enable != enable) {
@@ -1055,6 +1059,10 @@ void CGxDevice::PrimVertexFormat(CGxBuf* buf, const CGxVertexAttrib* attribs, ui
 // VERIFY: 73552709 manual
 // OFFSET: 0x006847D0
 void CGxDevice::LightSet(uint32_t index, const CGxLight& light, const C3Vector& pos) {
+    if (index >= Gx_MAX_LIGHTS) {
+        return;
+    }
+
     CGxApiLight& apiLight = this->m_lights[index];
     apiLight = light;
 
@@ -2034,6 +2042,10 @@ void CGxDevice::RsSet(EGxRenderState which, const C3Vector& value) {
 // VERIFY: 737cf993 manual
 // OFFSET: 0x00682FD0
 void CGxDevice::Light(uint32_t index, CGxLight& light) {
+    if (index >= Gx_MAX_LIGHTS) {
+        return;
+    }
+
     CGxApiLight& apiLight = this->m_lights[index];
     light.m_flags ^= (light.m_flags ^ apiLight.m_enable) & 0x1;
 

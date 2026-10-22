@@ -178,13 +178,14 @@ bool CWorldParam::MapShadowsCallback(CVar* var, const char* oldValue, const char
 bool CWorldParam::MaxLightsCallback(CVar* var, const char* oldValue, const char* value, void* arg) {
     uint32_t lights = SStrToInt(value);
 
-    if (lights < 1 || lights > 4) {
-        ConsoleWriteA("MaxLights must be in range 1 - %i.", DEFAULT_COLOR, 4);
+    if (lights < 1 || lights > Gx_MAX_LIGHTS) {
+        ConsoleWriteA("MaxLights must be in range 1 - %i.", DEFAULT_COLOR, Gx_MAX_LIGHTS);
 
         return false;
     }
 
     CWorld::maxLights = lights;
+    GxSetMaxLights(lights);
 
     return true;
 }
@@ -789,7 +790,12 @@ void CWorldParam::Initialize() {
     CWorldParam::cvar_farClipOverride = CVar::Register("farClipOverride", "Override old world graphic settings", 1, "0", CWorldParam::FarClipOverrideCallback, CATEGORY_GRAPHICS, false, nullptr, false);
     CWorldParam::cvar_lod = CVar::Register("lod", "Video option: Toggle Lod", 1, "0", CWorldParam::LodCallback, CATEGORY_GRAPHICS, false, nullptr, false);
     CWorldParam::cvar_mapShadows = CVar::Register("mapShadows", "Video option: Toggle map shadows", 1, "1", CWorldParam::MapShadowsCallback, CATEGORY_GRAPHICS, false, nullptr, false);
-    CWorldParam::cvar_maxLights = CVar::Register("MaxLights", "Max number of hardware lights", 1, "4", CWorldParam::MaxLightsCallback, CATEGORY_GRAPHICS, false, nullptr, false);
+    // Default to the full hardware budget (Gx_MAX_LIGHTS). Stock value was "4" when the device only had 4
+    // slots; the CVar range and the device cap now allow 8, so default to that.
+    static char s_maxLightsDefault[4];
+    SStrPrintf(s_maxLightsDefault, sizeof(s_maxLightsDefault), "%u", Gx_MAX_LIGHTS);
+
+    CWorldParam::cvar_maxLights = CVar::Register("MaxLights", "Max number of hardware lights", 1, s_maxLightsDefault, CWorldParam::MaxLightsCallback, CATEGORY_GRAPHICS, false, nullptr, false);
     CWorldParam::cvar_shadowLevel = CVar::Register("shadowLevel", "Terrain shadow map mip level", 1, "1", CWorldParam::ShadowLevelCallback, CATEGORY_GRAPHICS, false, nullptr, false);
     CWorldParam::cvar_texLodBias = CVar::Register("texLodBias", "Texture LOD Bias", 1, "0.0", CWorldParam::TexLodBiasCallback, CATEGORY_GRAPHICS, false, nullptr, false);
     CWorldParam::cvar_farClip = CVar::Register("farclip", "Far clip plane distance", 1, "350", CWorldParam::FarClipCallback, CATEGORY_GRAPHICS, false, nullptr, false);

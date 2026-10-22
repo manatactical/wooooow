@@ -13,6 +13,33 @@
 // STATIC: 0x00A2D57C
 static const uint32_t s_texelSize[GxTexFormats_Last] = { 0, 4, 4, 2, 2, 2, 2, 4, 4, 2, 4, 4, 4 };
 
+// NOT IN BINARY. Backends lower this when the driver has fewer light slots than Gx_MAX_LIGHTS.
+uint32_t g_gxMaxHardwareLights = Gx_MAX_LIGHTS;
+
+// NOT IN BINARY. Stock value; the MaxLights CVar overwrites it.
+static uint32_t s_maxLights = 4;
+
+uint32_t GxGetMaxLights() {
+    uint32_t limit = s_maxLights < g_gxMaxHardwareLights ? s_maxLights : g_gxMaxHardwareLights;
+
+    // Never hand out 0: callers size their light arrays from this and index [limit - 1].
+    return limit ? limit : 1;
+}
+
+void GxSetMaxLights(uint32_t maxLights) {
+    if (maxLights < 1) {
+        maxLights = 1;
+    }
+
+    if (maxLights > Gx_MAX_LIGHTS) {
+        maxLights = Gx_MAX_LIGHTS;
+    }
+
+    s_maxLights = maxLights;
+
+    CGxDevice::Log("MaxLights: requested %u, hardware %u, effective %u\n", maxLights, g_gxMaxHardwareLights, GxGetMaxLights());
+}
+
 // STATIC: 0x00A2D5B0
 static const int32_t s_vertexAttribOffset[GxVertexBufferFormats_Last][GxVAs_Last] = {
     { 0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 },

@@ -1473,6 +1473,11 @@ void __stdcall CM2Scene::ComputeElementShaders(M2Element* element) {
         shadow = 0;
     }
 
+    // The permute table only has shader variants up to M2_MAX_SHADER_LIGHTS local lights.
+    if (lightCount > M2_MAX_SHADER_LIGHTS) {
+        lightCount = M2_MAX_SHADER_LIGHTS;
+    }
+
     uint32_t boneInfluences = element->m_skinSection->m_boneInfluences;
     int32_t alphaTest;
 

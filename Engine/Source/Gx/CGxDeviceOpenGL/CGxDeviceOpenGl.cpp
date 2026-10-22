@@ -607,6 +607,9 @@ void CGxDeviceOpenGl::LogCrashInfo(char* buffer, uint32_t size) {
 // VERIFY: f95fc093 manual
 // OFFSET: 0x0068A9A0
 void CGxDeviceOpenGl::ISetCaps(const CGxFormat& format) {
+    g_gxMaxHardwareLights = glMaxLights < static_cast<GLint>(Gx_MAX_LIGHTS) ? static_cast<uint32_t>(glMaxLights) : Gx_MAX_LIGHTS;
+    CGxDevice::Log("\tGL_MAX_LIGHTS: %d, using %u\n", glMaxLights, g_gxMaxHardwareLights);
+
     this->m_caps.m_numTmus = glMaxTextureUnits >= 8 ? 8 : glMaxTextureUnits;
 
     if (glARBFragmentProgram) {
@@ -3204,7 +3207,7 @@ void CGxDeviceOpenGl::IStateSyncLights() {
         uint16_t force = this->m_viewDirty ? 2 : 0;
         GLenum glLight = GL_LIGHT0;
 
-        for (uint32_t i = 0; i < 4; i++, glLight++) {
+        for (uint32_t i = 0; i < g_gxMaxHardwareLights && static_cast<int32_t>(i) < glMaxLights; i++, glLight++) {
             CGxApiLight& light = this->m_lights[i];
             uint16_t flags = force | (mask & light.m_flags & light.unk_0046);
 
@@ -3302,7 +3305,7 @@ void CGxDeviceOpenGl::IStateSyncLights() {
         if (!this->m_ambientOnlyMode) {
             this->m_ambientOnlyMode = 1;
 
-            for (uint32_t i = 0; i < 4; i++) {
+            for (uint32_t i = 0; i < g_gxMaxHardwareLights; i++) {
                 glDisable(GL_LIGHT0 + i);
 
                 if (this->m_lights[i].m_enable) {

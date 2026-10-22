@@ -230,8 +230,11 @@ void CM2Lighting::AddLight(CM2Light* light) {
     float dx = light->m_pos.x - this->m_sphere4.c.x;
     float dist = dx * dx + (dy * dy + dz * dz);
 
-    uint32_t count = this->m_lightCount;
+    // Always collect up to the full array. The MaxLights cap is applied where lights reach the GPU
+    // (SetupGxLights / shader upload), so lowering it never discards lights a later raise should revive.
     const uint32_t capacity = sizeof(this->m_lights) / sizeof(this->m_lights[0]);
+
+    uint32_t count = this->m_lightCount;
 
     if (count >= capacity) {
         if (dist >= this->m_lightDist[capacity - 1]) {
@@ -334,7 +337,9 @@ void CM2Lighting::SetupGxLights(const C3Vector* origin) {
 
     uint32_t index = 1;
 
-    for (uint32_t i = this->m_lightCount; i > 0 && index < 4; i--) {
+    uint32_t limit = GxGetMaxLights();
+
+    for (uint32_t i = this->m_lightCount; i > 0 && index < limit; i--) {
         CM2Light* point = this->m_lights[i - 1];
 
         if (origin) {
@@ -353,7 +358,7 @@ void CM2Lighting::SetupGxLights(const C3Vector* origin) {
         index++;
     }
 
-    for (; index < 4; index++) {
+    for (; index < limit; index++) {
         g_theGxDevicePtr->LightEnable(index, 0);
     }
 }

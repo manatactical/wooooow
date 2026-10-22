@@ -1398,7 +1398,7 @@ void CGxDeviceD3d::IStateSyncLights() {
         this->DsSet(Ds_Lighting, this->m_appMasterEnables & 0x1);
         this->DsSet(Ds_Ambient, 0);
 
-        for (uint32_t i = 0; i < 4; i++) {
+        for (uint32_t i = 0; i < g_gxMaxHardwareLights; i++) {
             CGxApiLight& light = this->m_lights[i];
 
             if (!light.m_flags) {
@@ -1465,7 +1465,7 @@ void CGxDeviceD3d::IStateSyncLights() {
         if (!this->m_ambientOnlyMode) {
             this->m_ambientOnlyMode = 1;
 
-            for (uint32_t i = 0; i < 4; i++) {
+            for (uint32_t i = 0; i < g_gxMaxHardwareLights; i++) {
                 this->m_d3dDevice->LightEnable(i, FALSE);
 
                 if (this->m_lights[i].m_enable) {
@@ -2378,6 +2378,9 @@ int32_t CGxDeviceD3d::ICreateWindow(CGxFormat& format) {
 // VERIFY: d94c29eb manual
 // OFFSET: 0x0068EE20
 void CGxDeviceD3d::ISetCaps(const CGxFormat& format) {
+    g_gxMaxHardwareLights = this->m_d3dCaps.MaxActiveLights < Gx_MAX_LIGHTS ? this->m_d3dCaps.MaxActiveLights : Gx_MAX_LIGHTS;
+    CGxDevice::Log("\tMaxActiveLights: %d, using %u\n", this->m_d3dCaps.MaxActiveLights, g_gxMaxHardwareLights);
+
     this->m_caps.m_numTmus = this->m_d3dCaps.MaxSimultaneousTextures >= 8 ? 8 : this->m_d3dCaps.MaxSimultaneousTextures;
     this->m_caps.m_pixelCenterOnEdge = 0;
     this->m_caps.m_texelCenterOnEdge = 1;

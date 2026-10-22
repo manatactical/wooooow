@@ -8,6 +8,10 @@
 #include "Engine/Source/Tempest/CAaSphere.h"
 #include "Engine/Source/Model2/Types.h"
 
+// The fixed-function path can drive Gx_MAX_LIGHTS (see Gx/Types.h); the shader path only has 4 local-light
+// slots, so shader consumers clamp to this.
+constexpr uint32_t M2_MAX_SHADER_LIGHTS = 4;
+
 class CM2Light;
 class CM2Scene;
 
@@ -55,15 +59,15 @@ class CM2Lighting {
     /* 0060 */ C3Vector m_sunDiffuse;
     /* 006C */ C3Vector m_sunSpecular;
     /* 0078 */ C3Vector m_sunDir;
-    /* 0084 */ CM2Light* m_lights [4];
-    /* 0094 */ float m_lightDist [4];
-    /* 00A4 */ uint32_t m_lightCount;
-    /* 00A8 */ float m_fogStart;
-    /* 00AC */ float m_fogEnd;
-    /* 00B0 */ float m_fogScale;
-    /* 00B4 */ float m_fogDensity;
-    /* 00B8 */ C3Vector m_fogColor;
-    /* 00C4 */ C4Plane m_liquidPlane;
+    /* 0084 */ CM2Light* m_lights [8]; // NOT IN BINARY: was [4]
+    /* 00A4 */ float m_lightDist [8]; // NOT IN BINARY: was [4]
+    /* 00C4 */ uint32_t m_lightCount; // NOT IN BINARY: 0x00A4 in the original; everything below shifts by 28
+    /* 00C8 */ float m_fogStart;
+    /* 00CC */ float m_fogEnd;
+    /* 00D0 */ float m_fogScale;
+    /* 00D4 */ float m_fogDensity;
+    /* 00D8 */ C3Vector m_fogColor;
+    /* 00E4 */ C4Plane m_liquidPlane;
 
     CM2Lighting();
     CM2Lighting(const CAaSphere& sphere);

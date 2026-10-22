@@ -14,27 +14,37 @@ class CGxShader;
 class CImVector;
 class CM2Light;
 class CM2Lighting;
+class CM2Lighting;
+
+
+// One 4-light block, laid out exactly as the vs_3_0 shaders expect: colors, positions, then the three
+// attenuation vectors packed one float per light. The lit shaders carry two of these — the first at c17 and
+// a second, otherwise unpopulated one at c236 — so a 4-light permutation can shade 8 lights.
+constexpr uint32_t kShaderLightBlock = 4;
+constexpr uint32_t kFirstLightRegister = 17;
+constexpr uint32_t kSecondLightRegister = 236;
+// Rows per block: 4 colors + 4 positions + 3 attenuation = 11 vec4.
+constexpr uint32_t kLightBlockRows = 11;
 
 struct LocalLights {
-    /* 0000 */ C4Vector m_color[4];
-    /* 0040 */ C4Vector m_position[4];
-    /* 0080 */ float m_constantAttenuation[4];
-    /* 0090 */ float m_linearAttenuation[4];
-    /* 00A0 */ float m_quadraticAttenuation[4];
+    /* 0000 */ C4Vector m_color[kShaderLightBlock];
+    /* 0040 */ C4Vector m_position[kShaderLightBlock];
+    /* 0080 */ float m_constantAttenuation[kShaderLightBlock];
+    /* 0090 */ float m_linearAttenuation[kShaderLightBlock];
+    /* 00A0 */ float m_quadraticAttenuation[kShaderLightBlock];
 
     LocalLights();
 };
 
 class CShaderEffect : public TSHashObject<CShaderEffect, HASHKEY_STRI> {
     public:
-    static CShaderEffect* s_curEffect;
-    static int32_t s_enableShaders;
+    static CShaderEffect* s_curEffect;    static int32_t s_enableShaders;
     static C4Vector s_fogColorAlphaRef;
     static float s_fogMul;
     static C4Vector s_fogParams;
     static int32_t s_lightEnabled;
     static uint32_t s_localLightCount;
-    static LocalLights s_localLights;
+    static LocalLights s_localLights[2];
     static uint32_t s_shadowValue;
     static C3Vector s_sunAmbient;
     static C3Vector s_sunDiffuse;
@@ -44,6 +54,7 @@ class CShaderEffect : public TSHashObject<CShaderEffect, HASHKEY_STRI> {
     static uint32_t s_usePcfFiltering;
 
     static void ComputeLocalLights(LocalLights* localLights, uint32_t lightCount, CM2Light** lights, const C3Vector* origin);
+    static void UploadLocalLights(CM2Lighting* lighting, const C3Vector* origin);
     static void InitShaderSystem(int32_t enableShaders, int32_t usePcfFiltering);
     static uint32_t SelectShadowShader();
     static void SetAlphaRef(float alphaRef);

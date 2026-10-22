@@ -8,6 +8,7 @@
 
 #define GL_TEXTURE0_ARB 0x84C0
 #define GL_MAX_TEXTURE_UNITS_ARB 0x84E2
+#define GL_MAX_LIGHTS 0x0D31
 #define GL_MAX_TEXTURE_LOD_BIAS_EXT 0x84FD
 #define GL_MAX_ELEMENTS_VERTICES_EXT 0x80E8
 #define GL_MAX_ELEMENTS_INDICES_EXT 0x80E9
@@ -293,6 +294,7 @@ extern PFNGLUNLOCKARRAYSEXTPROC glUnlockArraysEXT;
 extern PFNGLLOCKARRAYSEXTPROC glLockArraysEXT;
 extern GLint glMaxTextureImageUnitsARB;
 extern GLint glMaxTextureUnits;
+extern GLint glMaxLights;
 extern int32_t glExtCVA;
 extern uint32_t glVersion;
 

@@ -121,7 +121,7 @@ class CGxDevice {
     /* 24D4 */ C4Plane m_clipPlane [6];
     /* 2534 */ int32_t m_scissorRectDirty;
     /* 2538 */ CRect m_scissorRect;
-    /* 2548 */ CGxApiLight m_lights [4];
+    /* 2548 */ CGxApiLight m_lights [Gx_MAX_LIGHTS]; // NOT IN BINARY: was [4]. Every offset below is +0x120 (4 * 0x48)
     /* 2668 */ TSHashTable<CGxShader, HASHKEY_STRI> m_shaderList [6];
     /* 2758 */ uint32_t m_appMasterEnables;
     /* 275C */ uint32_t m_hwMasterEnables;

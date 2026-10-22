@@ -1925,23 +1925,37 @@ void CGxDevice::PrimDrawElements() {
 
 // VERIFY: e7eb4342 auto
 // OFFSET: 0x006836D0
+// NOT IN BINARY behaviour change: the foreground cap is gone. The original limited the foreground to
+// maxFPS (default 200), which put a hard ceiling of 1000/200 = 5 ms on every frame whether or not one was
+// needed. Only the background throttle is kept, applied when the window has lost focus, so an alt-tabbed
+// client still stops competing for the GPU. maxFPS itself is deliberately no longer read: it stays
+// registered so existing configs and the options UI do not break, but nothing can re-impose a foreground
+// cap through it.
 void CGxDevice::WaitForFPSCap() {
-    uint32_t maxFps = GxGetMaxFPS() ? GxGetMaxFPS() : 0xFFFFFFFF;
-    uint32_t maxFpsBk = GxGetMaxFPSBk() ? GxGetMaxFPSBk() : 0xFFFFFFFF;
-
-    if (!this->m_windowFocus && maxFps >= maxFpsBk) {
-        maxFps = maxFpsBk;
-    }
-
-    if (maxFps <= 8) {
-        maxFps = 8;
-    } else if (maxFps == 0xFFFFFFFF) {
+    if (this->m_windowFocus) {
         return;
     }
 
-    uint32_t frameMs = 1000 / maxFps;
+    const uint32_t maxFpsBk = GxGetMaxFPSBk();
+
+    // 0 means "no background limit", as before. The original still fell back to the foreground maxFPS in
+    // this case (200), but there is no foreground limit left to fall back to, so an explicit 0 is honoured
+    // as uncapped. maxFPSBk ships as 30, so this only affects a config that asked for it.
+    if (!maxFpsBk) {
+        return;
+    }
+
+    const uint32_t maxFps = maxFpsBk <= 8 ? 8 : (maxFpsBk > 1000 ? 1000 : maxFpsBk);
+
+    // Never 0: 1000 / maxFps truncates to zero for a limit above 1000, which would turn the sleep below
+    // into a no-op and silently remove the throttle instead of enforcing the highest one the counter
+    // resolution can express.
+    const uint32_t frameMs = 1000 / maxFps;
     uint32_t now = OsGetAsyncTimeMs();
 
+    // Unsigned comparison, so an s_nextFrameTime more than a second away is treated as stale rather than
+    // slept on: the subtract underflows and the guard fails, which is what keeps a suspended or debugger-
+    // stopped process from sleeping for the wrap-around instead of one frame.
     if (s_nextFrameTime - now < 1000) {
         OsSleep(s_nextFrameTime - now);
         now = OsGetAsyncTimeMs();

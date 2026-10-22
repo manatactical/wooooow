@@ -441,27 +441,53 @@ DepthCoordTable* CMap::GetDepthCoordTable(uint32_t liquidType) {
 
 // VERIFY: e651a57d manual
 // OFFSET: 0x0079E5C0
-CGxShader* CMap::GetTerrainPixelShader(int32_t bigAlpha, int32_t layers, int32_t shadowMode, int32_t a4, int32_t a5) {
+// NOT IN BINARY: index of the terrain pixel permutation for a given feature combination.
+//
+// The Classic data selected a whole .bls per combination (Terrain1/2/3 + "_w" variants); the modern data
+// packs all of them into the single "Terrain" container, whose permutations are laid out in eight
+// input-signature groups of three layer variants:
+//
+//   group 0 (permutes  0..23) base                    mask 36481/40577/48769/65153 ... etc.
+//   group 1 (permutes 24..47) same, second variant
+//   permutes 48..    shadowed set (constant block 336 bytes instead of 44)
+//
+// Within a group the three entries are layers 1/2/3, so the index is group * 3 + (layers - 1). The
+// groups are ordered by the feature bits in the shader's input mask; the ordering that corresponds to the
+// old a4/a5/bigAlpha axes is reconstructed here.
+int32_t CMap::GetTerrainPixelShaderPermute(int32_t bigAlpha, int32_t layers, int32_t shadowMode, int32_t a4, int32_t a5) {
     int32_t layerIndex = layers - 1;
 
-    switch (shadowMode) {
-        case 0:
-            return CMap::pixelShader_Terrain1[16 * a5 + 8 * bigAlpha + 2 * layerIndex + a4];
-
-        case 1:
-            if (g_theGxDevicePtr->Caps().m_shaderTargets[4] == 3 || g_theGxDevicePtr->Caps().m_shaderTargets[4] == 12) {
-                return CMap::pixelShader_Terrain2[16 * a5 + 8 * bigAlpha + 2 * layerIndex + a4];
-            }
-
-            return CMap::pixelShader_Terrain3[48 * a5 + 24 * bigAlpha + 2 * layerIndex + a4];
-
-        case 2:
-        case 3:
-            return CMap::pixelShader_Terrain3[48 * a5 - 8 + 24 * bigAlpha + 8 * shadowMode + 2 * layerIndex + a4];
-
-        default:
-            return nullptr;
+    if (layerIndex < 0) {
+        layerIndex = 0;
     }
+
+    if (layerIndex > 2) {
+        layerIndex = 2;
+    }
+
+    // The unshadowed set occupies permutations 0..47 as 2 variants x 8 groups x 3 layers; the shadowed
+    // set follows it in the same shape with a larger constant block.
+    int32_t group = (a5 ? 1 : 0) + 2 * (bigAlpha ? 1 : 0) + 4 * (a4 ? 1 : 0);
+    // Only the unshadowed set (permutes 0..47) is safe here. The shadowed half of the container
+    // (const block 336 bytes) needs shadow-map resources and extra constants that this render path does
+    // not set up, and creating those permutations fails outright, which left terrain black.
+    int32_t base = 0;
+
+    int32_t permute = base + group * 3 + layerIndex;
+
+    return permute;
+}
+
+// NOT IN BINARY: all terrain pixel combinations live in the single modern "Terrain" container, so the
+// shader is always the same object and the combination is carried by the permutation (see
+// GetTerrainPixelShaderPermute). Callers that used to branch on the returned shader now bind
+// pixelShader_Terrain1[0] and pass the permute to RsSet.
+CGxShader* CMap::GetTerrainPixelShader(int32_t bigAlpha, int32_t layers, int32_t shadowMode, int32_t a4, int32_t a5) {
+    if (shadowMode < 0 || shadowMode > 3) {
+        return nullptr;
+    }
+
+    return CMap::pixelShader_Terrain1[0];
 }
 
 // VERIFY: 2fffff6e manual
@@ -544,32 +570,62 @@ void CMap::Destroy() {
         }
     }
 
-    for (uint32_t i = 0; i < sizeof(CMap::pixelShader_Terrain0) / sizeof(CMap::pixelShader_Terrain0[0]); i++) {
-        if (CMap::pixelShader_Terrain0[i]) {
-            g_theGxDevicePtr->ShaderDestroy(CMap::pixelShader_Terrain0[i]);
+    // NOT IN BINARY: the modern terrain data has a single pixel shader, so every slot of Terrain0/1/2/3
+    // and the _env pointer can hold the same CGxShader. Destroying each slot would decrement that shader's
+    // refcount once per alias -- 32 times for Terrain1 alone -- and free it while it is still bound, which
+    // crashed inside IBindPixelShader. Release each distinct shader exactly once.
+    CGxShader* unique[sizeof(CMap::pixelShader_Terrain0) / sizeof(CMap::pixelShader_Terrain0[0]) +
+                     sizeof(CMap::pixelShader_Terrain1) / sizeof(CMap::pixelShader_Terrain1[0]) +
+                     sizeof(CMap::pixelShader_Terrain2) / sizeof(CMap::pixelShader_Terrain2[0]) +
+                     sizeof(CMap::pixelShader_Terrain3) / sizeof(CMap::pixelShader_Terrain3[0]) + 1];
+    uint32_t uniqueCount = 0;
+
+    CGxShader** const tables[] = { CMap::pixelShader_Terrain0, CMap::pixelShader_Terrain1, CMap::pixelShader_Terrain2, CMap::pixelShader_Terrain3 };
+    const uint32_t sizes[] = { sizeof(CMap::pixelShader_Terrain0) / sizeof(CMap::pixelShader_Terrain0[0]),
+                               sizeof(CMap::pixelShader_Terrain1) / sizeof(CMap::pixelShader_Terrain1[0]),
+                               sizeof(CMap::pixelShader_Terrain2) / sizeof(CMap::pixelShader_Terrain2[0]),
+                               sizeof(CMap::pixelShader_Terrain3) / sizeof(CMap::pixelShader_Terrain3[0]) };
+
+    for (uint32_t t = 0; t < 4; t++) {
+        for (uint32_t i = 0; i < sizes[t]; i++) {
+            CGxShader* shader = tables[t][i];
+
+            if (!shader) {
+                continue;
+            }
+
+            bool seen = false;
+
+            for (uint32_t u = 0; u < uniqueCount; u++) {
+                if (unique[u] == shader) {
+                    seen = true;
+                    break;
+                }
+            }
+
+            if (!seen) {
+                unique[uniqueCount++] = shader;
+            }
         }
     }
 
     if (CMap::pixelShader_Terrain0_env) {
-        g_theGxDevicePtr->ShaderDestroy(CMap::pixelShader_Terrain0_env);
-    }
+        bool seen = false;
 
-    for (uint32_t i = 0; i < sizeof(CMap::pixelShader_Terrain1) / sizeof(CMap::pixelShader_Terrain1[0]); i++) {
-        if (CMap::pixelShader_Terrain1[i]) {
-            g_theGxDevicePtr->ShaderDestroy(CMap::pixelShader_Terrain1[i]);
+        for (uint32_t u = 0; u < uniqueCount; u++) {
+            if (unique[u] == CMap::pixelShader_Terrain0_env) {
+                seen = true;
+                break;
+            }
+        }
+
+        if (!seen) {
+            unique[uniqueCount++] = CMap::pixelShader_Terrain0_env;
         }
     }
 
-    for (uint32_t i = 0; i < sizeof(CMap::pixelShader_Terrain2) / sizeof(CMap::pixelShader_Terrain2[0]); i++) {
-        if (CMap::pixelShader_Terrain2[i]) {
-            g_theGxDevicePtr->ShaderDestroy(CMap::pixelShader_Terrain2[i]);
-        }
-    }
-
-    for (uint32_t i = 0; i < sizeof(CMap::pixelShader_Terrain3) / sizeof(CMap::pixelShader_Terrain3[0]); i++) {
-        if (CMap::pixelShader_Terrain3[i]) {
-            g_theGxDevicePtr->ShaderDestroy(CMap::pixelShader_Terrain3[i]);
-        }
+    for (uint32_t u = 0; u < uniqueCount; u++) {
+        g_theGxDevicePtr->ShaderDestroy(unique[u]);
     }
 
     if (CMap::pixelShader_TerrainSM) {
@@ -733,40 +789,40 @@ void CMap::Initialize() {
     CMap::pixelShader_TerrainSM = nullptr;
 
     g_theGxDevicePtr->ShaderCreate(CMap::vertexShader_Terrain, GxSh_Vertex, "Shaders\\Vertex", "Terrain", 128);
-    g_theGxDevicePtr->ShaderCreate(CMap::pixelShader_Terrain0, GxSh_Pixel, "Shaders\\Pixel", "Terrain0", 3);
-    g_theGxDevicePtr->ShaderCreate(&CMap::pixelShader_Terrain0_env, GxSh_Pixel, "Shaders\\Pixel", "Terrain0_env", 1);
+    // NOT IN BINARY: the modern data ships ONE terrain pixel shader ("Terrain", 192 permutations over
+    // shared zlib blocks) instead of the Classic set (Terrain0/1/2/3, "_w" variants). The Classic files
+    // are .bls version 0x10003, which has no permutation table at all, so the D3d11 loader rejects them
+    // (CGxShader::Adopt requires m_permuteCount). Every terrain pixel shader therefore ended up with zero
+    // permutations, which made CMap::gTerrainPixelShadersValid false, which turned off chunk batching and
+    // left the terrain render path drawing nothing -- the world had no ground.
+    //
+    // The legacy arrays are kept and every slot is filled with the same CGxShader; the permutation that
+    // used to select a whole shader is now passed to RsSet instead (see CMap::GetTerrainPixelShader and
+    // CMap::GetPixelShaderPermute). Permute layout of "Terrain": eight input-signature groups of three
+    // (1/2/3 layers), const size 44 for the unshadowed set (permutes 0..47) and 336 for the shadowed one.
+    {
+        // Terrain0 has three slots and _env one, but they all alias the same modern "Terrain" shader, so
+        // take one reference total (matching the single release in CMap::Destroy).
+        CGxShader* terrainPixel = g_theGxDevicePtr->ShaderCreate(GxSh_Pixel, "Terrain");
 
-    switch (g_theGxDevicePtr->Caps().m_shaderTargets[GxSh_Pixel]) {
-        case 1: {
-            g_theGxDevicePtr->ShaderCreate(CMap::pixelShader_Terrain1, GxSh_Pixel, "Shaders\\Pixel", "Terrain1", 6);
-            g_theGxDevicePtr->ShaderCreate(&CMap::pixelShader_Terrain1[8], GxSh_Pixel, "Shaders\\Pixel", "Terrain1w", 6);
-            break;
-        }
+        CMap::pixelShader_Terrain0[0] = terrainPixel;
+        CMap::pixelShader_Terrain0[1] = terrainPixel;
+        CMap::pixelShader_Terrain0[2] = terrainPixel;
+        CMap::pixelShader_Terrain0_env = terrainPixel;
+    }
 
-        case 2: {
-            g_theGxDevicePtr->ShaderCreate(CMap::pixelShader_Terrain1, GxSh_Pixel, "Shaders\\Pixel", "Terrain1", 8);
-            g_theGxDevicePtr->ShaderCreate(&CMap::pixelShader_Terrain1[8], GxSh_Pixel, "Shaders\\Pixel", "Terrain1w_1", 1);
-            g_theGxDevicePtr->ShaderCreate(&CMap::pixelShader_Terrain1[9], GxSh_Pixel, "Shaders\\Pixel", "Terrain1w_1", 1);
-            g_theGxDevicePtr->ShaderCreate(&CMap::pixelShader_Terrain1[10], GxSh_Pixel, "Shaders\\Pixel", "Terrain1w_2", 1);
-            g_theGxDevicePtr->ShaderCreate(&CMap::pixelShader_Terrain1[11], GxSh_Pixel, "Shaders\\Pixel", "Terrain1w_2", 1);
-            g_theGxDevicePtr->ShaderCreate(&CMap::pixelShader_Terrain1[12], GxSh_Pixel, "Shaders\\Pixel", "Terrain1w_3", 1);
-            g_theGxDevicePtr->ShaderCreate(&CMap::pixelShader_Terrain1[13], GxSh_Pixel, "Shaders\\Pixel", "Terrain1w_3", 1);
-            g_theGxDevicePtr->ShaderCreate(&CMap::pixelShader_Terrain1[14], GxSh_Pixel, "Shaders\\Pixel", "Terrain1w_4", 1);
-            g_theGxDevicePtr->ShaderCreate(&CMap::pixelShader_Terrain1[15], GxSh_Pixel, "Shaders\\Pixel", "Terrain1w_4", 1);
-            break;
-        }
+    // NOT IN BINARY: same substitution as above for the 32-entry terrain table. The Classic build picked a
+    // different file ("Terrain1"/"Terrain1w"/"Terrain1w_N") per pixel-shader profile; the modern data has a
+    // single "Terrain" container covering every profile, so the whole switch collapses to one create per
+    // slot and the choice becomes a permutation index instead of a filename.
+    {
+        // One shader instance reused by all 32 slots, so the refcount is taken once here (ShaderCreate
+        // already incremented it) rather than once per slot -- 32 increments with one destroy leaked the
+        // shader, and the matching 32 destroys in CMap::Destroy freed it while still bound.
+        CGxShader* terrainPixel = g_theGxDevicePtr->ShaderCreate(GxSh_Pixel, "Terrain");
 
-        case 8:
-        case 9:
-        case 10: {
-            g_theGxDevicePtr->ShaderCreate(CMap::pixelShader_Terrain1, GxSh_Pixel, "Shaders\\Pixel", "Terrain1", 4);
-            g_theGxDevicePtr->ShaderCreate(&CMap::pixelShader_Terrain1[8], GxSh_Pixel, "Shaders\\Pixel", "Terrain1w", 4);
-            break;
-        }
-
-        default: {
-            g_theGxDevicePtr->ShaderCreate(CMap::pixelShader_Terrain1, GxSh_Pixel, "Shaders\\Pixel", "Terrain1", 32);
-            break;
+        for (uint32_t i = 0; i < 32; i++) {
+            CMap::pixelShader_Terrain1[i] = terrainPixel;
         }
     }
 

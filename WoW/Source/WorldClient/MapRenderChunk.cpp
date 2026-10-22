@@ -113,6 +113,9 @@ CGxShader* CMapRenderChunk::s_currentShader[4];
 
 // STATIC: 0x00D1D080
 CGxShader* CMapRenderChunk::s_currentShaderX[4];
+// NOT IN BINARY: permutation each s_currentShaderX slot must bind with (the modern terrain container
+// packs every combination into one shader).
+int32_t CMapRenderChunk::s_currentShaderPermute[4];
 
 // STATIC: 0x00D1D090
 CGxShader* CMapRenderChunk::s_pixelShader[2];
@@ -2725,6 +2728,7 @@ void CMapRenderChunk::RenderSinglePassVertexPixelShader() {
     g_theGxDevicePtr->RsSet(static_cast<EGxRenderState>(GxRs_Texture0 + i), blendTex);
 
     CMapRenderChunk::SetVertexShader(this, this->m_layersCount + 1, specular);
+    CMapRenderChunk::SetVertexShader(this, this->m_layersCount + 1, specular);
     g_theGxDevicePtr->Draw(&this->m_batch, 1);
 
     for (uint32_t j = 0; j < this->m_layersCount; j++) {
@@ -2746,9 +2750,13 @@ void CMapRenderChunk::SetShaders(int32_t a1, int32_t a2) {
     CMapRenderChunk::s_pixelShader[1] = nullptr;
     CMapRenderChunk::s_pixelShader[0] = nullptr;
     CMapRenderChunk::s_currentShaderX[0] = nullptr;
+    CMapRenderChunk::s_currentShaderPermute[0] = 0;
     CMapRenderChunk::s_currentShaderX[1] = nullptr;
+    CMapRenderChunk::s_currentShaderPermute[1] = 0;
     CMapRenderChunk::s_currentShaderX[2] = nullptr;
+    CMapRenderChunk::s_currentShaderPermute[2] = 0;
     CMapRenderChunk::s_currentShaderX[3] = nullptr;
+    CMapRenderChunk::s_currentShaderPermute[3] = 0;
     CMapRenderChunk::s_currentShader[0] = nullptr;
     CMapRenderChunk::s_currentShader[1] = nullptr;
     CMapRenderChunk::s_currentShader[2] = nullptr;
@@ -2774,6 +2782,7 @@ void CMapRenderChunk::SetShaders(int32_t a1, int32_t a2) {
 
         if (layers <= g_theGxDevicePtr->Caps().m_numTmus && shader && GxShaderValid(shader, 0)) {
             CMapRenderChunk::s_currentShaderX[layers - 1] = shader;
+            CMapRenderChunk::s_currentShaderPermute[layers - 1] = CMap::GetTerrainPixelShaderPermute(bigAlpha, layers, shadowMode, a1, a2);
         }
     }
 

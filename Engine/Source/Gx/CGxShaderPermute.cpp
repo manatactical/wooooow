@@ -120,7 +120,20 @@ uint8_t* CGxShaderPermute::Load() {
                 return nullptr;
             }
 
-            blockSize = outSize;
+            // blockSize was already clamped above to what this permutation needs past blockOffset.
+            // Do NOT replace it with outSize: the decoded block is a full 0x4000 while the permutation is
+            // usually far shorter (the terrain permutations are ~944 bytes inside a 16 KB block), so
+            // copying outSize - blockOffset bytes ran far past the end of `code` and left the header,
+            // including the DXBC length at +28, reading back as zero.
+            if (outSize < blockOffset) {
+                SMemFree(code, __FILE__, __LINE__, 0);
+                return nullptr;
+            }
+
+            if (blockSize > outSize) {
+                blockSize = outSize;
+            }
+
             copied = blockSize - blockOffset;
             memcpy(code, buffer + blockOffset, copied);
         }
@@ -164,6 +177,13 @@ uint8_t* CGxShaderPermute::Load() {
             }
 
             memcpy(dest, buffer, blockSize);
+        }
+
+        if (blockSize > size) {
+            // Cannot happen after the clamps above; kept so a future change to the block accounting
+            // fails here instead of writing past `code`.
+            SMemFree(code, __FILE__, __LINE__, 0);
+            return nullptr;
         }
 
         dest += blockSize;

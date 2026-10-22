@@ -80,6 +80,8 @@ class CMapRenderChunk {
     static uint32_t s_defaultTex[8192];
     static CGxShader* s_currentShader[4];
     static CGxShader* s_currentShaderX[4];
+    // NOT IN BINARY: permutation to bind s_currentShaderX with.
+    static int32_t s_currentShaderPermute[4];
     static CGxShader* s_pixelShader[2];
     static RenderLayersFunc s_renderLayersFunc;
     static CImVector s_fogColor;

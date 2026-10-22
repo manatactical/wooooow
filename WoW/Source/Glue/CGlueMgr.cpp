@@ -1696,9 +1696,20 @@ void CGlueMgr::Suspend() {
 // VERIFY: 39c0975e manual
 // OFFSET: 0x004DBBC0
 void CGlueMgr::Shutdown() {
+    // NOT IN BINARY. Bounded. m_pendingServerAlert is cleared only by the server-alert
+    // download's callback, and that fetch can outlive the quit by seconds -- a quit waited
+    // 8 s here while the URL request timed out. Nothing needs the alert once the client is
+    // closing, so stop waiting after a short grace period and let the request finish on its
+    // own (its callback still fires against a null-safe CGlueMgr).
+    const uint32_t waitStart = OsGetAsyncTimeMs();
+
     while (CGlueMgr::m_pendingServerAlert || CGlueMgr::m_latestAgreements.m_data.Count()) {
         if (CGlueMgr::m_latestAgreements.m_data.Count()) {
             CGlueMgr::m_latestAgreements.m_data.Clear();
+        }
+
+        if (OsGetAsyncTimeMs() - waitStart > 250) {
+            break;
         }
 
         OsSleep(1);

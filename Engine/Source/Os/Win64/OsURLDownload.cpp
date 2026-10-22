@@ -180,6 +180,17 @@ bool OsUrlDownload::DownloadString(const char* url, OsURLDownloadCallback callba
 
     download->m_internet = InternetOpenA("Blizzard Web Client", INTERNET_OPEN_TYPE_PRECONFIG, nullptr, nullptr, INTERNET_FLAG_ASYNC);
 
+    // NOT IN BINARY. These belong on the session handle from InternetOpenA; set on the connect
+    // handle InternetSetOption fails and the timeout is silently ignored, so the request ran until
+    // the TCP stack gave up. That is what made a quit wait ~8 s: CGlueMgr::Shutdown spins until
+    // the server-alert fetch calls back.
+    if (download->m_internet && timeout > 0) {
+        DWORD timeoutMs = static_cast<DWORD>(timeout);
+        InternetSetOptionA(download->m_internet, INTERNET_OPTION_CONNECT_TIMEOUT, &timeoutMs, sizeof(timeoutMs));
+        InternetSetOptionA(download->m_internet, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeoutMs, sizeof(timeoutMs));
+        InternetSetOptionA(download->m_internet, INTERNET_OPTION_SEND_TIMEOUT, &timeoutMs, sizeof(timeoutMs));
+    }
+
     if (download->m_internet && InternetSetStatusCallback(download->m_internet, fnInternetCallback) != INTERNET_INVALID_STATUS_CALLBACK) {
         download->m_state = 0;
         download->m_connect = InternetConnectA(download->m_internet, hostName, port, nullptr, nullptr, INTERNET_SERVICE_HTTP, 0, reinterpret_cast<DWORD_PTR>(download));
@@ -187,11 +198,6 @@ bool OsUrlDownload::DownloadString(const char* url, OsURLDownloadCallback callba
         if (download->m_connect || GetLastError() == ERROR_IO_PENDING) {
             if (!download->m_connect) {
                 WaitForSingleObject(download->m_connectEvent, INFINITE);
-            }
-
-            if (timeout > 0) {
-                InternetSetOptionA(download->m_connect, INTERNET_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
-                InternetSetOptionA(download->m_connect, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
             }
 
             download->m_state = 1;

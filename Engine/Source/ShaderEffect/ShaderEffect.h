@@ -14,13 +14,15 @@ class CGxShader;
 class CImVector;
 class CM2Light;
 class CM2Lighting;
-class CM2Lighting;
-
 
 // One 4-light block, laid out exactly as the vs_3_0 shaders expect: colors, positions, then the three
 // attenuation vectors packed one float per light. The lit shaders carry two of these — the first at c17 and
 // a second, otherwise unpopulated one at c236 — so a 4-light permutation can shade 8 lights.
+// A third block is not possible: the bone palette owns c31..c255, so any extra light registers would be
+// overwritten by skeleton data.
 constexpr uint32_t kShaderLightBlock = 4;
+constexpr uint32_t kShaderLightBlocks = 2;
+constexpr uint32_t kShaderLightCount = kShaderLightBlock * kShaderLightBlocks;
 constexpr uint32_t kFirstLightRegister = 17;
 constexpr uint32_t kSecondLightRegister = 236;
 // Rows per block: 4 colors + 4 positions + 3 attenuation = 11 vec4.
@@ -44,7 +46,7 @@ class CShaderEffect : public TSHashObject<CShaderEffect, HASHKEY_STRI> {
     static C4Vector s_fogParams;
     static int32_t s_lightEnabled;
     static uint32_t s_localLightCount;
-    static LocalLights s_localLights[2];
+    static LocalLights s_localLights[kShaderLightBlocks];
     static uint32_t s_shadowValue;
     static C3Vector s_sunAmbient;
     static C3Vector s_sunDiffuse;

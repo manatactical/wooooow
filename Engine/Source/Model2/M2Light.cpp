@@ -339,8 +339,10 @@ void CM2Lighting::SetupGxLights(const C3Vector* origin) {
 
     uint32_t limit = GxGetMaxLights();
 
-    for (uint32_t i = this->m_lightCount; i > 0 && index < limit; i--) {
-        CM2Light* point = this->m_lights[i - 1];
+    // m_lights is sorted nearest-first. Walk it from the nearest light and stop once the hardware slots are
+    // full, so raising MaxLights fills with the closest lights rather than the farthest ones.
+    for (uint32_t i = 0; i < this->m_lightCount && index < limit; i++) {
+        CM2Light* point = this->m_lights[i];
 
         if (origin) {
             light.m_dir = point->m_pos - *origin;

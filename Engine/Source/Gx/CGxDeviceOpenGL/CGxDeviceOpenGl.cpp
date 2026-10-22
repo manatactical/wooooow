@@ -3305,7 +3305,9 @@ void CGxDeviceOpenGl::IStateSyncLights() {
         if (!this->m_ambientOnlyMode) {
             this->m_ambientOnlyMode = 1;
 
-            for (uint32_t i = 0; i < g_gxMaxHardwareLights; i++) {
+            uint32_t glLightLimit = static_cast<uint32_t>(glMaxLights) < g_gxMaxHardwareLights ? static_cast<uint32_t>(glMaxLights) : g_gxMaxHardwareLights;
+
+            for (uint32_t i = 0; i < glLightLimit; i++) {
                 glDisable(GL_LIGHT0 + i);
 
                 if (this->m_lights[i].m_enable) {

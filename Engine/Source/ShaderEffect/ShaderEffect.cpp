@@ -55,7 +55,7 @@ C4Vector CShaderEffect::s_fogColorAlphaRef;
 C4Vector CShaderEffect::s_fogParams;
 
 // STATIC: 0x00D43098
-LocalLights CShaderEffect::s_localLights[2];
+LocalLights CShaderEffect::s_localLights[kShaderLightBlocks];
 
 // VERIFY: 9049c785 manual
 // OFFSET: 0x008728C0
@@ -114,29 +114,48 @@ void CShaderEffect::ComputeLocalLights(LocalLights* localLights, uint32_t lightC
         }
     }
 
+    // Unused slots must be cleared completely, not just the colour: this block is reused across frames, so a
+    // stale position or attenuation left here would pair with a zeroed colour and still feed the shader.
     for (; i < kShaderLightBlock; i++) {
         localLights->m_color[i].x = 0.0f;
         localLights->m_color[i].y = 0.0f;
         localLights->m_color[i].z = 0.0f;
         localLights->m_color[i].w = 0.0f;
+
+        localLights->m_position[i].x = 0.0f;
+        localLights->m_position[i].y = 0.0f;
+        localLights->m_position[i].z = 0.0f;
+        localLights->m_position[i].w = 0.0f;
+
+        localLights->m_constantAttenuation[i] = 0.0f;
+        localLights->m_linearAttenuation[i] = 0.0f;
+        localLights->m_quadraticAttenuation[i] = 0.0f;
     }
 }
 
-// The lit vs_3_0 shaders carry two 4-light blocks: one at c17, and a second one at c236 that nothing in the
-// engine used to fill. Feeding both lets a 4-light permutation shade 8 lights without touching a single
-// shader: lights 4..7 that are absent stay zeroed and contribute nothing.
+// The lit vs_3_0 shaders carry two 4-light blocks (c17 and c236), which is the whole 8-light budget: the
+// bone palette owns c31..c255, so there is no spare register range for a third. Lights are spread across the
+// two blocks and any slot with no light is fully zeroed so it contributes nothing.
 void CShaderEffect::UploadLocalLights(CM2Lighting* lighting, const C3Vector* origin) {
     uint32_t count = lighting->m_lightCount;
 
-    if (count > kShaderLightBlock * 2) {
-        count = kShaderLightBlock * 2;
+    if (count > kShaderLightCount) {
+        count = kShaderLightCount;
     }
 
-    CShaderEffect::ComputeLocalLights(&CShaderEffect::s_localLights[0], count < kShaderLightBlock ? count : kShaderLightBlock, lighting->m_lights, origin);
-    CShaderEffect::ComputeLocalLights(&CShaderEffect::s_localLights[1], count > kShaderLightBlock ? count - kShaderLightBlock : 0, lighting->m_lights + kShaderLightBlock, origin);
+    static const uint32_t kRegisters[kShaderLightBlocks] = { kFirstLightRegister, kSecondLightRegister };
 
-    GxShaderConstantsSet(GxSh_Vertex, kFirstLightRegister, reinterpret_cast<const float*>(&CShaderEffect::s_localLights[0]), kLightBlockRows);
-    GxShaderConstantsSet(GxSh_Vertex, kSecondLightRegister, reinterpret_cast<const float*>(&CShaderEffect::s_localLights[1]), kLightBlockRows);
+    for (uint32_t block = 0; block < kShaderLightBlocks; block++) {
+        uint32_t first = block * kShaderLightBlock;
+        uint32_t blockCount = count > first ? count - first : 0;
+
+        if (blockCount > kShaderLightBlock) {
+            blockCount = kShaderLightBlock;
+        }
+
+        CShaderEffect::ComputeLocalLights(&CShaderEffect::s_localLights[block], blockCount, lighting->m_lights + first, origin);
+        GxShaderConstantsSet(GxSh_Vertex, kRegisters[block], reinterpret_cast<const float*>(&CShaderEffect::s_localLights[block]), kLightBlockRows);
+    }
 }
 
 // VERIFY: 3d4e9331 auto

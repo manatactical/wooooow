@@ -159,6 +159,10 @@ uint32_t OsGetAsyncTimeMs() {
 
 // OFFSET: 0x0086AE30
 uint64_t OsGetAsyncTimeClocks() {
+    if (!s_OsTimeMgr) {
+        return GetTickCount();
+    }
+
     switch (s_OsTimeMgr->m_timingMethod) {
         case OsTimeManager::SystemMethod1:
             break;
@@ -178,6 +182,10 @@ uint64_t OsGetAsyncTimeClocks() {
 
 // OFFSET: 0x0086AE70
 int64_t OsGetAsyncClocksPerSecond() {
+    if (!s_OsTimeMgr) {
+        return 1000;
+    }
+
     switch (s_OsTimeMgr->m_timingMethod) {
         case OsTimeManager::SystemMethod1:
             break;

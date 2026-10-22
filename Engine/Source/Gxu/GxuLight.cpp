@@ -80,8 +80,8 @@ static int32_t GxuLightGetEnabledImpl(CGxuLight* light) {
 static void GxuLightSetMaxLightsImpl(uint32_t maxLights) {
     s_maxLights = maxLights;
 
-    if (maxLights >= 4) {
-        s_maxLights = 4;
+    if (maxLights >= Gx_MAX_LIGHTS) {
+        s_maxLights = Gx_MAX_LIGHTS;
     }
 }
 
@@ -222,7 +222,7 @@ static void GxuLightApplyImpl(float x, float y, int32_t unused, const C3Vector& 
     s_frame++;
     uint32_t index = 0;
 
-    for (CGxuLightLink* link = s_globalLights.m_links.Head(); link; link = s_globalLights.m_links.Next(link)) {
+    for (CGxuLightLink* link = s_globalLights.m_links.Head(); link && index < Gx_MAX_LIGHTS; link = s_globalLights.m_links.Next(link)) {
         g_theGxDevicePtr->LightSet(index, link->m_light->m_light, viewPos);
         g_theGxDevicePtr->LightEnable(index, 1);
         link->m_light->m_frame = s_frame;
@@ -240,7 +240,7 @@ static void GxuLightApplyImpl(float x, float y, int32_t unused, const C3Vector& 
         }
     }
 
-    for (; index != 4; index++) {
+    for (; index < Gx_MAX_LIGHTS; index++) {
         g_theGxDevicePtr->LightEnable(index, 0);
     }
 

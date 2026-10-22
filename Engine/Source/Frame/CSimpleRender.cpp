@@ -666,7 +666,7 @@ void CSimpleRender::DrawBatch(CRenderBatch* batch) {
 
         if (vertexShader && GxShaderValid(vertexShader, 0)) {
             C44Matrix viewProj;
-            GxRsSet(GxRs_VertexShader, vertexShader);
+            GxRsSet(GxRs_VertexShader, vertexShader, 0);
             GxXformViewProjNativeTranspose(viewProj);
             g_theGxDevicePtr->ShaderConstantsSet(GxSh_Vertex, 0, reinterpret_cast<const float*>(&viewProj), 4);
         } else {
@@ -735,7 +735,7 @@ void CSimpleRender::DrawBatch(CRenderBatch* batch) {
                 GxRsSet(GxRs_Texture0, TextureGetGxTex(mesh->m_texture, 1, nullptr));
                 GxRsSet(GxRs_BlendingMode, alphaMode);
                 GxUpdateAlphaRef(GxRs_AlphaRef);
-                GxRsSet(GxRs_PixelShader, shader);
+                GxRsSet(GxRs_PixelShader, shader, 0);
             }
 
             if (newBatch || !vertices) {

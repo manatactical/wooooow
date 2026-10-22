@@ -210,7 +210,7 @@ void CDetailDoodad::SetupVertexShader(const C44Matrix& world, uint32_t index) {
         shadow = 2;
     }
 
-    g_theGxDevicePtr->RsSet(GxRs_VertexShader, CDetailDoodad::s_vertexShader[3 * index + shadow]);
+    g_theGxDevicePtr->RsSet(GxRs_VertexShader, CDetailDoodad::s_vertexShader[3 * index + shadow], 0);
 
     C44Matrix view;
     CGxMatrixStack& stack = g_theGxDevicePtr->m_xforms[GxXform_View];

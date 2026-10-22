@@ -46,8 +46,10 @@ uint8_t* CGxShaderPermute::Load() {
     }
 
     // m_index comes from the caller; the +1 read needs the table to actually have that many entries,
-    // or this walks off the end of the offset array.
-    if (this->m_index + 1 >= shader->m_permuteCount) {
+    // or this walks off the end of the offset array. The table holds permuteCount + 1 offsets (the last
+    // one is the end of the final permutation), so index permuteCount - 1 is valid and reads offset
+    // permuteCount. A "m_index + 1 >= m_permuteCount" test rejected every single-permute shader.
+    if (this->m_index >= shader->m_permuteCount) {
         return nullptr;
     }
 
@@ -144,14 +146,24 @@ uint8_t* CGxShaderPermute::Load() {
             // writes past the allocation.
             memcpy(dest, source, blockSize);
         } else {
-            uLongf outSize = blockSize;
+            // Decompress into a full block buffer first. Passing the remaining `size` as the output
+            // capacity makes uncompress() fail with Z_BUF_ERROR whenever the block expands to more
+            // than the bytes this permutation still needs (the usual case), which rejected every
+            // shader whose last block carried more than the tail of the permutation.
+            uint8_t buffer[0x4000];
+            uLongf outSize = sizeof(buffer);
 
-            if (uncompress(dest, &outSize, source, compressedSize) != Z_OK || !outSize) {
+            if (uncompress(buffer, &outSize, source, compressedSize) != Z_OK || !outSize) {
                 SMemFree(code, __FILE__, __LINE__, 0);
                 return nullptr;
             }
 
-            blockSize = outSize;
+            if (outSize < blockSize) {
+                SMemFree(code, __FILE__, __LINE__, 0);
+                return nullptr;
+            }
+
+            memcpy(dest, buffer, blockSize);
         }
 
         dest += blockSize;
@@ -162,9 +174,10 @@ uint8_t* CGxShaderPermute::Load() {
     // Reads the permutation header (mask, sizes, DXBC length). Guarded above by the size check.
     const uint32_t* header = reinterpret_cast<const uint32_t*>(code);
     this->unk_000C = header[0];
-    // header[1] is the permutation byte length as recorded in the file; clamp it to what was actually
-    // decoded, so callers may use it as a bound on the buffer without trusting the file.
-    this->unk_0010 = header[1] <= (next - start) ? header[1] : (next - start);
+    // header[1] is not a length in the 0x10004 layout (it is 1 for both a 272-byte and a 336-byte
+    // permutation). unk_0010 is the bound IShaderCreate checks the DXBC length at +28 against, so it has
+    // to be the size of the buffer decoded here.
+    this->unk_0010 = next - start;
     this->unk_0014 = reinterpret_cast<const uint16_t*>(code)[4];
     this->unk_0016[0] = header[3];
     this->unk_0016[1] = header[4];

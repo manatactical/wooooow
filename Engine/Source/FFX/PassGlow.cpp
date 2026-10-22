@@ -148,7 +148,7 @@ void PassGlow::Execute() {
 
     g_theGxDevicePtr->RsSet(GxRs_Texture0, TextureGetGxTex(this->m_inputs[0]->m_texture, 1, nullptr));
     g_theGxDevicePtr->RsSet(GxRs_Texture1, TextureGetGxTex(this->m_inputs[1]->m_texture, 1, nullptr));
-    g_theGxDevicePtr->RsSet(GxRs_PixelShader, this->m_shaders[this->m_shaderIndex]);
+    g_theGxDevicePtr->RsSet(GxRs_PixelShader, this->m_shaders[this->m_shaderIndex], 0);
 
     GxPrimVertexPtr(4, FFX::s_gridPos, sizeof(C3Vector), nullptr, 0, &this->m_color, 0, tex0, sizeof(C2Vector), tex1, sizeof(C2Vector));
     GxPrimIndexPtr(4, FFX::s_quadIndices);
@@ -239,7 +239,7 @@ void PassGlowWave::Execute() {
     GxBufUnlock(buf, 0);
     g_theGxDevicePtr->PrimVertexFormat(buf, s_vertexAttribsPCT3, sizeof(s_vertexAttribsPCT3) / sizeof(s_vertexAttribsPCT3[0]));
     g_theGxDevicePtr->PrimVertexMask(0x1D1);
-    g_theGxDevicePtr->RsSet(GxRs_PixelShader, this->m_shaders[this->m_shaderIndex]);
+    g_theGxDevicePtr->RsSet(GxRs_PixelShader, this->m_shaders[this->m_shaderIndex], 0);
 
     float scale0[4];
     float scale1[4];

@@ -13,8 +13,9 @@ void CGxDeviceD3d11::IShaderCreate(CGxShaderPermute* permute) {
         return;
     }
 
-    permute->m_loaded = 1;
-
+    // m_loaded must only be set once the device shader actually exists. Setting it here meant a single
+    // early failure (no context yet, or a load that failed) left the permute permanently
+    // loaded-but-invalid, and Valid() never retried because it only creates when !m_loaded.
     uint8_t* data = permute->Load();
 
     if (!data) {
@@ -62,7 +63,9 @@ void CGxDeviceD3d11::IShaderCreate(CGxShaderPermute* permute) {
 
     if (SUCCEEDED(result)) {
         permute->m_valid = 1;
+        permute->m_loaded = 1;
         permute->m_apiSpecific = shader;
+    } else {
     }
 
     SMemFree(data, __FILE__, __LINE__, 0);

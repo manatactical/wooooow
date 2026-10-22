@@ -408,6 +408,11 @@ class CGxDevice {
     void RsInit();
     void RsPush();
     void RsSet(EGxRenderState which, void* value);
+    // 3.3.5a call sites hand a whole CGxShader to RsSet and relied on it being a void*; the D3d11
+    // backend stores a CGxShaderPermute*. This overload keeps their meaning instead of silently
+    // binding the shader pointer as if it were a permute. A 2-arg form would make every existing
+    // `RsSet(which, nullptr)` ambiguous, so the permute is explicit.
+    void RsSet(EGxRenderState which, CGxShader* shader, uint32_t permute);
     void RsSet(EGxRenderState which, int32_t value);
     void RsSet(EGxRenderState which, float value);
     void RsSet(EGxRenderState which, const C3Vector& value);

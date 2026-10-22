@@ -353,7 +353,7 @@ void Snow::RenderPackets() {
     GxRsSet(GxRs_Texture0, texture);
     C4Vector color(World::s_weather->m_color);
     g_theGxDevicePtr->ShaderConstantsSet(GxSh_Vertex, 8, reinterpret_cast<const float*>(&color), 1);
-    GxRsSet(GxRs_VertexShader, this->m_shaderPtr);
+    GxRsSet(GxRs_VertexShader, this->m_shaderPtr, 0);
     C44Matrix view;
     GxXformView(view);
     C44Matrix projection;

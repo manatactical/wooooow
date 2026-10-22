@@ -139,8 +139,8 @@ void CMap::RenderWaterRipples() {
     world.d2 = -CWorldScene::s_activeWorldView.z;
 
     if (s_ripplesInitialized) {
-        g_theGxDevicePtr->RsSet(GxRs_VertexShader, WaterRipple::s_vsWaterRipples);
-        g_theGxDevicePtr->RsSet(GxRs_PixelShader, WaterRipple::s_psWaterRipples);
+        g_theGxDevicePtr->RsSet(GxRs_VertexShader, WaterRipple::s_vsWaterRipples, 0);
+        g_theGxDevicePtr->RsSet(GxRs_PixelShader, WaterRipple::s_psWaterRipples, 0);
 
         CGxDevice* device = g_theGxDevicePtr;
         C44Matrix view;

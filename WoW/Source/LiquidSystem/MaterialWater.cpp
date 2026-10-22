@@ -184,8 +184,8 @@ void Liquid::CMaterialWater::Render(Liquid::IEnvironment* environment, Liquid::I
         lightCount = 3;
     }
 
-    g_theGxDevicePtr->RsSet(GxRs_VertexShader, Liquid::CMaterialWater::s_vertexShaders[lightCount]);
-    g_theGxDevicePtr->RsSet(GxRs_PixelShader, Liquid::CMaterialWater::s_pixelShader);
+    g_theGxDevicePtr->RsSet(GxRs_VertexShader, Liquid::CMaterialWater::s_vertexShaders[lightCount], 0);
+    g_theGxDevicePtr->RsSet(GxRs_PixelShader, Liquid::CMaterialWater::s_pixelShader, 0);
 
     CGxBuf* vertexBuf = nullptr;
     CGxBuf* indexBuf = nullptr;
@@ -263,8 +263,8 @@ void Liquid::CMaterialWaterNoSpec::Render(Liquid::IEnvironment* environment, Liq
         lightCount = 3;
     }
 
-    g_theGxDevicePtr->RsSet(GxRs_VertexShader, Liquid::CMaterialWaterNoSpec::s_vertexShaders[lightCount]);
-    g_theGxDevicePtr->RsSet(GxRs_PixelShader, Liquid::CMaterialWaterNoSpec::s_pixelShader);
+    g_theGxDevicePtr->RsSet(GxRs_VertexShader, Liquid::CMaterialWaterNoSpec::s_vertexShaders[lightCount], 0);
+    g_theGxDevicePtr->RsSet(GxRs_PixelShader, Liquid::CMaterialWaterNoSpec::s_pixelShader, 0);
 
     CGxBuf* vertexBuf = nullptr;
     CGxBuf* indexBuf = nullptr;

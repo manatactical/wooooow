@@ -684,7 +684,10 @@ char* CGxDeviceD3d11::IBufLock(CGxBuf* buf) {
                 index = 0;
             }
 
-            buf->m_index = index / buf->m_itemSize;
+            // m_index is a byte offset here: every BufCreate caller passes one (i * m_blockSize,
+            // sizeof(T) * count * i, 0). cata stores an item index instead and multiplies it back in
+            // IBufLock, which turned a 4 MB pool offset into a 96 MB write.
+            buf->m_index = index;
             pool->m_offset = index + buf->m_size;
 
             if (FAILED(this->m_d3dContext->Map(buffer, 0, mapType, 0, &mapped))) {
@@ -698,7 +701,7 @@ char* CGxDeviceD3d11::IBufLock(CGxBuf* buf) {
             return NULL;
     }
 
-    return static_cast<char*>(mapped.pData) + buf->m_itemSize * buf->m_index;
+    return static_cast<char*>(mapped.pData) + buf->m_index;
 }
 
 // OFFSET: 0x00852960/0x140582480
@@ -1587,7 +1590,7 @@ void CGxDeviceD3d11::IBufUnlock(CGxBuf* buf, uint32_t size) {
             }
 
             D3D11_BOX box;
-            box.left = buf->m_itemSize * buf->m_index;
+            box.left = buf->m_index;
             box.top = 0;
             box.front = 0;
             box.right = size + box.left;

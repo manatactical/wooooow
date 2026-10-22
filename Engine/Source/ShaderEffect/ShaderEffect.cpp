@@ -292,8 +292,8 @@ void CShaderEffect::SetShaders(uint32_t vertexPermute, uint32_t pixelPermute) {
     int32_t useAlphaRef = 1;
 
     if (CShaderEffect::s_enableShaders) {
-        g_theGxDevicePtr->RsSet(GxRs_VertexShader, CShaderEffect::s_curEffect->m_vertexShaders[vertexPermute]);
-        g_theGxDevicePtr->RsSet(GxRs_PixelShader, CShaderEffect::s_curEffect->m_pixelShaders[pixelPermute]);
+        g_theGxDevicePtr->RsSet(GxRs_VertexShader, CShaderEffect::s_curEffect->m_vertexShaders[vertexPermute], 0);
+        g_theGxDevicePtr->RsSet(GxRs_PixelShader, CShaderEffect::s_curEffect->m_pixelShaders[pixelPermute], 0);
         useAlphaRef = (pixelPermute & 8) == 0;
     }
 

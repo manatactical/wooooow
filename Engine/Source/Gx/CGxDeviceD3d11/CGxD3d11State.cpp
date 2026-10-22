@@ -9,7 +9,6 @@
 #include "Engine/Source/Gx/Gx.h"
 #include "Engine/Source/Storm/H/storm.h"
 #include "Engine/Source/Tempest/C4Vector.h"
-
 const uint32_t CGxDeviceD3d11::s_gxAttribToSemanticIndex[GxVAs_Last] = { 0, 0, 0, 0, 0, 1, 0, 1, 2, 3, 4, 5, 6, 7 };
 
 const DXGI_FORMAT CGxDeviceD3d11::s_gxAttribToDxgiFormat[8] = { DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UINT, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R32G32_FLOAT, DXGI_FORMAT_R32G32B32_FLOAT, DXGI_FORMAT_R16G16_SINT, DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R32G32B32A32_FLOAT };
@@ -703,10 +702,6 @@ void CGxDeviceD3d11::ScenePresent() {
 
     if (FAILED(result)) {
         GxLog("Present Error: 0x%08X\n", result);
-        if (this->m_d3dDevice) {
-            HRESULT reason = this->m_d3dDevice->GetDeviceRemovedReason();
-            GxLog("Device removed reason: 0x%08X\n", reason);
-        }
 
         if (result == DXGI_ERROR_DEVICE_REMOVED || result == DXGI_ERROR_DEVICE_RESET) {
             CGxFormat format = this->m_format;
@@ -957,6 +952,7 @@ void CGxDeviceD3d11::DrawNonIndexed(const CGxBatch& batch) {
         return;
     }
 
+
     this->IStateSync();
     this->ISetInputLayout();
     this->ISetVertexBuffer();
@@ -984,6 +980,7 @@ void CGxDeviceD3d11::Draw(const CGxBatch& batch) {
         return;
     }
 
+
     this->IStateSync();
     this->ISetInputLayout();
     this->ISetIndexBuffer();
@@ -995,7 +992,13 @@ void CGxDeviceD3d11::Draw(const CGxBatch& batch) {
         this->m_d3dContext->IASetPrimitiveTopology(s_primitiveTopology[batch.m_primType]);
     }
 
-    this->m_d3dContext->DrawIndexed(batch.m_count, batch.m_start + this->m_primIndexBuf->m_index, this->m_primVertexBufs[0]->m_index);
+    // m_index is a byte offset (see IBufLock); D3D11 wants item offsets. Guard itemSize 0: the stream
+    // buffers are created with itemSize 0 and their offset is always 0 too.
+    CGxBuf* indexBuf = this->m_primIndexBuf;
+    CGxBuf* vertexBuf = this->m_primVertexBufs[0];
+    UINT indexOffset = indexBuf->m_itemSize ? indexBuf->m_index / indexBuf->m_itemSize : 0;
+    UINT vertexOffset = vertexBuf->m_itemSize ? vertexBuf->m_index / vertexBuf->m_itemSize : 0;
+    this->m_d3dContext->DrawIndexed(batch.m_count, batch.m_start + indexOffset, vertexOffset);
 }
 
 // OFFSET: 0x00871090/0x1405A6E70
@@ -1011,6 +1014,7 @@ void CGxDeviceD3d11::DrawInstancedNonIndexed(const CGxBatch& batch) {
     if (!vsPermute || !vsPermute->Valid()) {
         return;
     }
+
 
     this->IStateSync();
     this->ISetInputLayoutInstanced();
@@ -1039,6 +1043,7 @@ void CGxDeviceD3d11::DrawInstanced(const CGxBatch& batch) {
         return;
     }
 
+
     this->IStateSync();
     this->ISetInputLayoutInstanced();
     this->ISetIndexBuffer();
@@ -1050,7 +1055,13 @@ void CGxDeviceD3d11::DrawInstanced(const CGxBatch& batch) {
         this->m_d3dContext->IASetPrimitiveTopology(s_primitiveTopology[batch.m_primType]);
     }
 
-    this->m_d3dContext->DrawIndexedInstanced(batch.m_count, this->m_instanceCount, batch.m_start + this->m_primIndexBuf->m_index, this->m_primVertexBufs[0]->m_index, this->m_primVertexBufs[1] ? this->m_primVertexBufs[1]->m_index : 0);
+    CGxBuf* indexBuf = this->m_primIndexBuf;
+    CGxBuf* vertexBuf = this->m_primVertexBufs[0];
+    CGxBuf* vertexBuf1 = this->m_primVertexBufs[1];
+    UINT indexOffset = indexBuf->m_itemSize ? indexBuf->m_index / indexBuf->m_itemSize : 0;
+    UINT vertexOffset = vertexBuf->m_itemSize ? vertexBuf->m_index / vertexBuf->m_itemSize : 0;
+    UINT vertexOffset1 = (vertexBuf1 && vertexBuf1->m_itemSize) ? vertexBuf1->m_index / vertexBuf1->m_itemSize : 0;
+    this->m_d3dContext->DrawIndexedInstanced(batch.m_count, this->m_instanceCount, batch.m_start + indexOffset, vertexOffset, vertexOffset1);
 }
 
 // NOT IN BINARY: this client's only draw entry point (GxDraw calls Draw(batch, count)); the D3d11

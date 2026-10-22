@@ -108,8 +108,8 @@ void Liquid::CMaterialMagma::Render(Liquid::IEnvironment* environment, Liquid::I
 
     g_theGxDevicePtr->RsSet(GxRs_Texture0, texture0);
     Liquid::SetShaderConstants();
-    g_theGxDevicePtr->RsSet(GxRs_VertexShader, Liquid::CMaterialMagma::s_vertexShader);
-    g_theGxDevicePtr->RsSet(GxRs_PixelShader, Liquid::CMaterialMagma::s_pixelShader);
+    g_theGxDevicePtr->RsSet(GxRs_VertexShader, Liquid::CMaterialMagma::s_vertexShader, 0);
+    g_theGxDevicePtr->RsSet(GxRs_PixelShader, Liquid::CMaterialMagma::s_pixelShader, 0);
 
     CGxBuf* vertexBuf = nullptr;
     CGxBuf* indexBuf = nullptr;

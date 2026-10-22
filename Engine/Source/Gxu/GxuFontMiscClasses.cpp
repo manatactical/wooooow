@@ -551,8 +551,8 @@ void CGxStringBatch::RenderBatch() {
 
     if (vertexShader && GxShaderValid(vertexShader, 0) && g_fontPixelShader && GxShaderValid(g_fontPixelShader, 0)) {
         C44Matrix viewProj;
-        GxRsSet(GxRs_VertexShader, vertexShader);
-        GxRsSet(GxRs_PixelShader, g_fontPixelShader);
+        GxRsSet(GxRs_VertexShader, vertexShader, 0);
+        GxRsSet(GxRs_PixelShader, g_fontPixelShader, 0);
         GxXformViewProjNativeTranspose(viewProj);
         GxShaderConstantsSet(GxSh_Vertex, 0, reinterpret_cast<const float*>(&viewProj), 4);
     } else {

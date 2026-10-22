@@ -320,8 +320,8 @@ void Liquid::CMaterialProcWater::Render(Liquid::IEnvironment* environment, Liqui
         lightCount = 3;
     }
 
-    g_theGxDevicePtr->RsSet(GxRs_VertexShader, Liquid::CMaterialProcWater::s_vertexShaders[lightCount]);
-    g_theGxDevicePtr->RsSet(GxRs_PixelShader, Liquid::CMaterialProcWater::s_pixelShader);
+    g_theGxDevicePtr->RsSet(GxRs_VertexShader, Liquid::CMaterialProcWater::s_vertexShaders[lightCount], 0);
+    g_theGxDevicePtr->RsSet(GxRs_PixelShader, Liquid::CMaterialProcWater::s_pixelShader, 0);
     g_theGxDevicePtr->Draw(&batch, 1);
     g_theGxDevicePtr->RsPop();
 }

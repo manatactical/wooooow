@@ -75,11 +75,13 @@ const char* CGxDevice::s_vertexShaderTargetNames[12] = { "none", "vs_1_1", "vs_2
 
 // NOT IN BINARY: the .bls directories. These were string literals at every ShaderCreate call site in
 // 3.3.5a; cata's loader owns them instead, which is why IShaderLoad no longer takes a path.
-const char* CGxDevice::s_vertexShaderPath = "Shaders\\Vertex";
-const char* CGxDevice::s_hullShaderPath = "Shaders\\Hull";
-const char* CGxDevice::s_domainShaderPath = "Shaders\\Domain";
-const char* CGxDevice::s_geometryShaderPath = "Shaders\\Geometry";
-const char* CGxDevice::s_pixelShaderPath = "Shaders\\Pixel";
+// The shaders only exist under custom.MPQ's Custom\ tree, so the root has to be part of the path;
+// "Shaders\Vertex\..." resolved to nothing and every shader load failed.
+const char* CGxDevice::s_vertexShaderPath = "Custom\\Shaders\\Vertex";
+const char* CGxDevice::s_hullShaderPath = "Custom\\Shaders\\Hull";
+const char* CGxDevice::s_domainShaderPath = "Custom\\Shaders\\Domain";
+const char* CGxDevice::s_geometryShaderPath = "Custom\\Shaders\\Geometry";
+const char* CGxDevice::s_pixelShaderPath = "Custom\\Shaders\\Pixel";
 
 // STATIC: 0x00AD8864
 static const char* s_geometryShaderTargetNames[3] = { "none", "gs_4_0", "gs_5_0" };
@@ -611,8 +613,8 @@ void CGxDevice::ICursorDraw() {
         ortho.d3 = 0.0f;
         GxXformSetProjection(ortho);
 
-        GxRsSet(GxRs_VertexShader, CGxDevice::s_uiVertexShader[1]);
-        GxRsSet(GxRs_PixelShader, CGxDevice::s_uiPixelShader);
+        GxRsSet(GxRs_VertexShader, CGxDevice::s_uiVertexShader[1], 0);
+        GxRsSet(GxRs_PixelShader, CGxDevice::s_uiPixelShader, 0);
 
         C44Matrix viewProj;
         GxXformViewProjNativeTranspose(viewProj);
@@ -1530,6 +1532,17 @@ void CGxDevice::RsSet(EGxRenderState which, void* value) {
     }
 }
 
+// NOT IN BINARY: cata's permute-addressed form of the 3.3.5a `RsSet(which, shader)` calls. Resolves the
+// shader to its permute here so callers keep writing what they always wrote.
+void CGxDevice::RsSet(EGxRenderState which, CGxShader* shader, uint32_t permute) {
+    if (!shader || permute >= shader->m_permutes.Count()) {
+        this->RsSet(which, static_cast<void*>(nullptr));
+        return;
+    }
+
+    this->RsSet(which, static_cast<void*>(&shader->m_permutes[permute]));
+}
+
 // VERIFY: cbb13905 manual
 // OFFSET: 0x00685FB0
 void CGxDevice::RsPop() {
@@ -1962,8 +1975,8 @@ bool CGxDevice::IShaderLoad(CGxShader* shader, EGxShTarget target, const char* n
             sprintf(filename, "%s\\%s\\%s.bls", path, profileName, name);
 
 
-            SFileImpl* file;
-            SFileOpenFile(filename, &file);
+            SFileImpl* file = nullptr;
+            int32_t opRc = SFileOpenFile(filename, &file);
 
             if (file) {
                 uint32_t size = SFileGetFileSize(file, nullptr);
@@ -1979,6 +1992,7 @@ bool CGxDevice::IShaderLoad(CGxShader* shader, EGxShTarget target, const char* n
                 }
 
                 SFileCloseFile(file);
+
 
                 if (loaded) {
                     return true;

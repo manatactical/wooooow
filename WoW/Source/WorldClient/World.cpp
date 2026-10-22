@@ -2620,7 +2620,7 @@ void CWorldScene::RenderChunksSolid() {
     CMapRenderChunk::SetShaders(0, 0);
 
     if (CMapRenderChunk::s_currentShaderX[0]) {
-        g_theGxDevicePtr->RsSet(GxRs_PixelShader, CMapRenderChunk::s_currentShaderX[0]);
+        g_theGxDevicePtr->RsSet(GxRs_PixelShader, CMapRenderChunk::s_currentShaderX[0], 0);
     }
 
     TSExplicitList<CMapRenderChunk, offsetof(CMapRenderChunk, m_renderChunkLink)>& list = CWorldScene::sortTable.m_renderChunkList[0];
@@ -3659,7 +3659,7 @@ void CWorldScene::RenderChunksSinglePass() {
 
         for (uint32_t layers = 1; layers <= 4; layers++) {
             if (CMapRenderChunk::s_currentShaderX[layers - 1]) {
-                g_theGxDevicePtr->RsSet(GxRs_PixelShader, CMapRenderChunk::s_currentShaderX[layers - 1]);
+                g_theGxDevicePtr->RsSet(GxRs_PixelShader, CMapRenderChunk::s_currentShaderX[layers - 1], 0);
             }
 
             TSExplicitList<CMapRenderChunk, offsetof(CMapRenderChunk, m_renderChunkLink)>& list = CWorldScene::sortTable.m_renderChunkList[4 * layers + pass];

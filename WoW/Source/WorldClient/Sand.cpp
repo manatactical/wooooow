@@ -352,7 +352,7 @@ void Sand::RenderPacketsShader() {
     }
 
     GxRsSet(GxRs_PointScaleMax, pointScale);
-    GxRsSet(GxRs_VertexShader, this->m_shader);
+    GxRsSet(GxRs_VertexShader, this->m_shader, 0);
     C44Matrix view;
     GxXformView(view);
     C44Matrix projection;

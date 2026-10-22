@@ -120,7 +120,7 @@ void PassDeathNVRC::Execute() {
     GxPrimIndexPtr(4, FFX::s_quadIndices);
 
     g_theGxDevicePtr->RsSet(GxRs_Texture0, TextureGetGxTex(this->m_inputs[0]->m_texture, 1, nullptr));
-    g_theGxDevicePtr->RsSet(GxRs_PixelShader, this->m_shader);
+    g_theGxDevicePtr->RsSet(GxRs_PixelShader, this->m_shader, 0);
     GxRsSet(GxRs_BlendingMode, this->m_blend);
     GxUpdateAlphaRef(GxRs_AlphaRef);
     g_theGxDevicePtr->Draw(&FFX::s_quadBatch, 1);
@@ -487,8 +487,8 @@ void PassNetherBlur::Execute() {
 
     g_theGxDevicePtr->PrimVertexMask(0x51);
     FFX::SetupIB(6, 6);
-    g_theGxDevicePtr->RsSet(GxRs_VertexShader, this->m_vertexShader);
-    g_theGxDevicePtr->RsSet(GxRs_PixelShader, this->m_pixelShaders[this->m_useRect]);
+    g_theGxDevicePtr->RsSet(GxRs_VertexShader, this->m_vertexShader, 0);
+    g_theGxDevicePtr->RsSet(GxRs_PixelShader, this->m_pixelShaders[this->m_useRect], 0);
 
     float constants[4];
     constants[0] = angle;
@@ -587,7 +587,7 @@ void PassPropagateFog::Execute() {
         GxRsSet(static_cast<EGxRenderState>(state), 0);
     }
 
-    g_theGxDevicePtr->RsSet(GxRs_PixelShader, this->m_pixelShaders[this->m_useRect]);
+    g_theGxDevicePtr->RsSet(GxRs_PixelShader, this->m_pixelShaders[this->m_useRect], 0);
     float constants[4];
     constants[0] = this->unk_005C;
     constants[1] = constants[0];
@@ -737,7 +737,7 @@ void PassDeath::Execute() {
 
     g_theGxDevicePtr->RsSet(GxRs_Texture0, TextureGetGxTex(this->m_inputs[0]->m_texture, 1, nullptr));
     g_theGxDevicePtr->RsSet(GxRs_Texture1, TextureGetGxTex(this->m_inputs[1]->m_texture, 1, nullptr));
-    g_theGxDevicePtr->RsSet(GxRs_PixelShader, this->m_shaders[this->m_useRect]);
+    g_theGxDevicePtr->RsSet(GxRs_PixelShader, this->m_shaders[this->m_useRect], 0);
 
     CImVector color;
     color.b = 0xA8;
@@ -771,7 +771,7 @@ void PassNetherCombine::Execute() {
 
     g_theGxDevicePtr->RsSet(GxRs_Texture0, TextureGetGxTex(this->m_inputs[0]->m_texture, 1, nullptr));
     g_theGxDevicePtr->RsSet(GxRs_Texture1, TextureGetGxTex(this->m_inputs[1]->m_texture, 1, nullptr));
-    g_theGxDevicePtr->RsSet(GxRs_PixelShader, this->m_pixelShaders[this->m_useRect]);
+    g_theGxDevicePtr->RsSet(GxRs_PixelShader, this->m_pixelShaders[this->m_useRect], 0);
 
     CImVector color;
     *reinterpret_cast<uint32_t*>(&color) = 0xFFFFFFFF;
@@ -826,7 +826,7 @@ void PassFogCombine::Execute() {
         GxRsSet(static_cast<EGxRenderState>(rs), 0);
     }
 
-    g_theGxDevicePtr->RsSet(GxRs_PixelShader, this->m_pixelShaders[this->m_useRect]);
+    g_theGxDevicePtr->RsSet(GxRs_PixelShader, this->m_pixelShaders[this->m_useRect], 0);
 
     float density;
     float minimum;

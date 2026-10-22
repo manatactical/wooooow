@@ -1010,7 +1010,7 @@ void CUnitOutline::StampMask(const CGxBatch& batch, const float color[4], CGxTex
     // carries them in the same way. The texture at stage 0 is likewise left alone: the cutout shader
     // samples the model's own diffuse from it, and the plain fill ignores it.
     GxRsSet(GxRs_ColorWrite, 15);
-    GxRsSet(GxRs_PixelShader, cutout ? s_cutoutPS : s_colorPS);
+    GxRsSet(GxRs_PixelShader, cutout ? s_cutoutPS : s_colorPS, 0);
     GxShaderConstantsSet(GxSh_Pixel, 0, color, 1);
 
     if (cutout) {
@@ -1085,7 +1085,7 @@ void CUnitOutline::BlurPass() {
     float stepX = kSoftness * kSoftnessScale * s_maskTex.m_texelSize.x;
     float stepY = kSoftness * kSoftnessScale * s_maskTex.m_texelSize.y;
 
-    GxRsSet(GxRs_PixelShader, s_blurPS);
+    GxRsSet(GxRs_PixelShader, s_blurPS, 0);
     GxRsSet(GxRs_BlendingMode, GxBlend_Opaque);
     // Inherited state the world's last draw left behind would clip or discard this full-screen quad, so
     // only part of the target is written: the alpha test runs on a pixel shader's OUTPUT, so a stale alpha
@@ -1118,7 +1118,7 @@ void CUnitOutline::EdgePass() {
     float c1[4] = { kOpacity, kThreshold, s_playerMaskCleared ? 1.0f : 0.0f, s_visMaskCleared ? 1.0f : 0.0f };
     float c2[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 
-    GxRsSet(GxRs_PixelShader, s_edgePS);
+    GxRsSet(GxRs_PixelShader, s_edgePS, 0);
     // GxBlend_Alpha is SRCALPHA / INVSRCALPHA: result = col * alpha + background * (1 - alpha).
     //
     // That is the right blend for this line, even though it is not the flashiest. In the core alpha is 1, so

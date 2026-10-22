@@ -682,6 +682,13 @@ void GxFrameBufferSet(CGxFrameBuffer* frameBuffer) {
 }
 
 void GxRsSet(EGxRenderState which, CGxShader* shader, uint32_t permute) {
+    // Same empty-array hazard GxShaderValid guards: a shader whose .bls never loaded has no permutes, and
+    // indexing it hands the backend a garbage CGxShaderPermute*. Unbind instead.
+    if (!shader || permute >= shader->m_permutes.Count()) {
+        g_theGxDevicePtr->RsSet(which, static_cast<void*>(nullptr));
+        return;
+    }
+
     g_theGxDevicePtr->RsSet(which, &shader->m_permutes[permute]);
 }
 

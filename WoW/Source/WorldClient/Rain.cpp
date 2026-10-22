@@ -631,7 +631,7 @@ void Rain::RenderPatterPackets() {
     g_theGxDevicePtr->ShaderConstantsSet(GxSh_Vertex, 7, reinterpret_cast<const float*>(&color), 1);
     GxRsSet(GxRs_FogColor, static_cast<int32_t>(0x80808080));
     GxRsSet(GxRs_Texture0, texture);
-    GxRsSet(GxRs_VertexShader, this->m_shaderPatter);
+    GxRsSet(GxRs_VertexShader, this->m_shaderPatter, 0);
     C44Matrix view;
     GxXformView(view);
     C44Matrix projection;
@@ -711,7 +711,7 @@ void Rain::RenderDropPackets() {
     g_theGxDevicePtr->ShaderConstantsSet(GxSh_Vertex, 7, reinterpret_cast<const float*>(&color), 1);
     GxRsSet(GxRs_FogColor, static_cast<int32_t>(0x80808080));
     GxRsSet(GxRs_Texture0, texture);
-    GxRsSet(GxRs_VertexShader, this->m_shaderRain);
+    GxRsSet(GxRs_VertexShader, this->m_shaderRain, 0);
     C44Matrix view;
     GxXformView(view);
     C44Matrix projection;

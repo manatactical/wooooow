@@ -377,7 +377,7 @@ void CAntiAlias::Apply() {
     // last batch must not transform it first. The colour comes from the vertex buffer, which is why the mask
     // includes GxVA_Color0 (see FFX::SetupVB_PCT4's own passes).
     GxRsSet(GxRs_VertexShader, nullptr);
-    GxRsSet(GxRs_PixelShader, s_shader);
+    GxRsSet(GxRs_PixelShader, s_shader, 0);
     GxRsSet(GxRs_BlendingMode, GxBlend_Opaque);
     GxRsSet(GxRs_ColorWrite, 15);
     GxRsSet(GxRs_AlphaRef, 0);

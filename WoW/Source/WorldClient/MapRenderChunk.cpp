@@ -2103,7 +2103,7 @@ void CMapRenderChunk::SetVertexShader(CMapRenderChunk* renderChunk, int32_t laye
     consts.m_texScale[layerCount] = alphaScale;
 
     CGxShader* shader = CMapRenderChunk::GetVertexShader(pointLights, layerCount - 1, specular, vertexColor, a3, CShadowCache::GetShadowValue());
-    g_theGxDevicePtr->RsSet(GxRs_VertexShader, shader);
+    g_theGxDevicePtr->RsSet(GxRs_VertexShader, shader, 0);
     g_theGxDevicePtr->ShaderConstantsSet(GxSh_Vertex, 0, reinterpret_cast<const float*>(&consts), sizeof(SVertexShaderConstants) / sizeof(C4Vector));
 }
 
@@ -2315,7 +2315,7 @@ void CMapRenderChunk::RenderMultiPassPixelShaderBigAlpha(CMapRenderChunk* render
     g_theGxDevicePtr->RsSet(GxRs_Texture1, TextureGetGxTex(renderChunk->m_terrainBlendTexture, 1, nullptr));
 
     int32_t specular = (renderChunk->m_renderFlags & 0x4) != 0;
-    g_theGxDevicePtr->RsSet(GxRs_PixelShader, CMapRenderChunk::s_pixelShader[1]);
+    g_theGxDevicePtr->RsSet(GxRs_PixelShader, CMapRenderChunk::s_pixelShader[1], 0);
 
     for (int32_t i = 0; i < renderChunk->m_layersCount; i++) {
         CMapRenderChunkLayer* layer = &renderChunk->m_layers[i];
@@ -2361,7 +2361,7 @@ void CMapRenderChunk::RenderMultiPassPixelShaderBigAlpha(CMapRenderChunk* render
                 GxShaderConstantsSet(GxSh_Pixel, 2, &black.x, 1);
             }
 
-            g_theGxDevicePtr->RsSet(GxRs_PixelShader, CMapRenderChunk::s_pixelShader[0]);
+            g_theGxDevicePtr->RsSet(GxRs_PixelShader, CMapRenderChunk::s_pixelShader[0], 0);
         }
 
         GxShaderConstantsSet(GxSh_Pixel, 0, s_layerChannel[i], 1);
@@ -2410,7 +2410,7 @@ void CMapRenderChunk::RenderMultiPassPixelShader(CMapRenderChunk* renderChunk) {
     g_theGxDevicePtr->RsSet(GxRs_Texture1, TextureGetGxTex(renderChunk->m_terrainBlendTexture, 1, nullptr));
 
     int32_t specular = (renderChunk->m_renderFlags & 0x4) != 0;
-    g_theGxDevicePtr->RsSet(GxRs_PixelShader, CMapRenderChunk::s_pixelShader[1]);
+    g_theGxDevicePtr->RsSet(GxRs_PixelShader, CMapRenderChunk::s_pixelShader[1], 0);
 
     for (int32_t i = 0; i < renderChunk->m_layersCount; i++) {
         CMapRenderChunkLayer* layer = &renderChunk->m_layers[i];
@@ -2439,7 +2439,7 @@ void CMapRenderChunk::RenderMultiPassPixelShader(CMapRenderChunk* renderChunk) {
         if (i == 1) {
             GxRsSet(GxRs_BlendingMode, GxBlend_Alpha);
             GxUpdateAlphaRef(GxRs_AlphaRef);
-            g_theGxDevicePtr->RsSet(GxRs_PixelShader, CMapRenderChunk::s_pixelShader[0]);
+            g_theGxDevicePtr->RsSet(GxRs_PixelShader, CMapRenderChunk::s_pixelShader[0], 0);
         }
 
         GxShaderConstantsSet(GxSh_Pixel, 0, s_layerChannel[i], 1);
@@ -2483,7 +2483,7 @@ void CMapRenderChunk::RenderMultiPassVertexPixelShaderBigAlpha(CMapRenderChunk* 
     CGxShader* pixelShader = CMapRenderChunk::s_pixelShader[1];
     int32_t specular = (renderChunk->m_renderFlags & 0x4) != 0;
     CMapRenderChunk::SetVertexShader(renderChunk, 2, specular);
-    g_theGxDevicePtr->RsSet(GxRs_PixelShader, pixelShader);
+    g_theGxDevicePtr->RsSet(GxRs_PixelShader, pixelShader, 0);
 
     for (int32_t i = 0; i < renderChunk->m_layersCount; i++) {
         CMapRenderChunkLayer* layer = &renderChunk->m_layers[i];
@@ -2523,7 +2523,7 @@ void CMapRenderChunk::RenderMultiPassVertexPixelShaderBigAlpha(CMapRenderChunk* 
                 GxShaderConstantsSet(GxSh_Pixel, 2, &black.x, 1);
             }
 
-            g_theGxDevicePtr->RsSet(GxRs_PixelShader, CMapRenderChunk::s_pixelShader[0]);
+            g_theGxDevicePtr->RsSet(GxRs_PixelShader, CMapRenderChunk::s_pixelShader[0], 0);
 
             if (specular) {
                 CMapRenderChunk::SetVertexShader(renderChunk, 2, 0);
@@ -2575,7 +2575,7 @@ void CMapRenderChunk::RenderMultiPassVertexPixelShader(CMapRenderChunk* renderCh
     CGxShader* pixelShader = CMapRenderChunk::s_pixelShader[1];
     int32_t specular = (renderChunk->m_renderFlags & 0x4) != 0;
     CMapRenderChunk::SetVertexShader(renderChunk, 2, specular);
-    g_theGxDevicePtr->RsSet(GxRs_PixelShader, pixelShader);
+    g_theGxDevicePtr->RsSet(GxRs_PixelShader, pixelShader, 0);
 
     for (int32_t i = 0; i < renderChunk->m_layersCount; i++) {
         CMapRenderChunkLayer* layer = &renderChunk->m_layers[i];
@@ -2598,7 +2598,7 @@ void CMapRenderChunk::RenderMultiPassVertexPixelShader(CMapRenderChunk* renderCh
         if (i == 1) {
             GxRsSet(GxRs_BlendingMode, GxBlend_Alpha);
             GxUpdateAlphaRef(GxRs_AlphaRef);
-            g_theGxDevicePtr->RsSet(GxRs_PixelShader, CMapRenderChunk::s_pixelShader[0]);
+            g_theGxDevicePtr->RsSet(GxRs_PixelShader, CMapRenderChunk::s_pixelShader[0], 0);
 
             if (specular) {
                 CMapRenderChunk::SetVertexShader(renderChunk, 2, 0);

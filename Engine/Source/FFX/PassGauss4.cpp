@@ -58,7 +58,7 @@ void PassGauss4::Execute() {
     FFX::SetupGeo_Quad(this->m_output->m_size, this->m_inputs[0]->m_size, this->m_inputs[0]->m_texSize, FFX::s_gridPos, FFX::s_gridTex, this->m_flip);
     g_theGxDevicePtr->PrimVertexMask(0x3D1);
     FFX::SetupIB();
-    g_theGxDevicePtr->RsSet(GxRs_PixelShader, this->m_shaders[this->m_shaderIndex]);
+    g_theGxDevicePtr->RsSet(GxRs_PixelShader, this->m_shaders[this->m_shaderIndex], 0);
 
     CImVector white;
     white.b = 0xFF;

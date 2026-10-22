@@ -67,7 +67,11 @@ enum EGxTexFormat {
     GxTex_Gr1616F = 10,
     GxTex_R32F = 11,
     GxTex_D24X8 = 12,
-    GxTexFormats_Last = 13,
+    // Not in the original binary. Depth in INTZ, the one D3D9 depth format that can also be sampled as a texture.
+    // The client ships D24X8 depth, which a shader can never read, so anything that needs a pixel's scene depth has
+    // to have the frame drawn into this format instead.
+    GxTex_INTZ = 13,
+    GxTexFormats_Last = 14,
 };
 
 enum EGxVertexBufferFormat {

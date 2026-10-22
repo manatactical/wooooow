@@ -27,6 +27,7 @@
 #include "Engine/Source/Services/Texture.h"
 #include "Engine/Source/ShaderEffect/ShaderEffect.h"
 #include "Engine/Source/AntiAlias/AntiAlias.h"
+#include "Engine/Source/ModernWater/ModernWater.h"
 #include "Engine/Source/UnitOutline/UnitOutline.h"
 #include "Engine/Source/Tempest/C4Vector.h"
 #include "Engine/Source/Tempest/CAaBox.h"
@@ -1273,6 +1274,8 @@ CGWorldFrame::CGWorldFrame(CSimpleFrame* parent) : CSimpleFrame(parent) {
     CAntiAlias::Init();
     // Registers the lootBeam cvar. Idempotent for the same reason.
     LootBeam::Init();
+    // Registers the modern water pass's device-restored callback. Idempotent for the same reason.
+    ModernWater::Init();
 
     CGWorldFrame::ffxEffectGlow = new (__FILE__, __LINE__) EffectGlow();
     CGWorldFrame::ffxEffectDeath = new (__FILE__, __LINE__) EffectDeath();

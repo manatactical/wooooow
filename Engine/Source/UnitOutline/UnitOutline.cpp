@@ -778,8 +778,15 @@ bool CUnitOutline::EnsureDepthTexture() {
 
     // Same non-power-of-two target as the masks, and for the same reason: the depth has to be the frame's
     // exact size to pair with a colour target that size, and GxTexCreate rejects 1920x1200 on GxTex_2d.
+    //
+    // INTZ rather than D24X8: the modern water pass reads this same depth to reconstruct where each water pixel's
+    // scene is, and D3D9 can never sample a D24X8 surface. The outline itself only needs to bind it, so it loses
+    // nothing; the water gains the one thing it cannot otherwise have. A device without INTZ falls back to D24X8 and
+    // the water stands down, which is the same outcome as before for the outline.
     CGxTexFlags flags(GxTex_Linear, 0, 0, 0, 0, 1, 1, 0, 0, 0);
-    s_depthTexture = TextureCreate(GxTex_NonPow2, size.x, size.y, 0, GxTex_D24X8, GxTex_D24X8, flags, nullptr, GxTexNullUserFunc, "UnitOutline::s_depthTexture", 0);
+    const EGxTexFormat depthFormat =
+        g_theGxDevicePtr->Caps().m_rttFormat[GxTex_INTZ] ? GxTex_INTZ : GxTex_D24X8;
+    s_depthTexture = TextureCreate(GxTex_NonPow2, size.x, size.y, 0, depthFormat, depthFormat, flags, nullptr, GxTexNullUserFunc, "UnitOutline::s_depthTexture", 0);
 
     if (!s_depthTexture) {
         s_depthSize.x = 0;
@@ -903,6 +910,12 @@ void CUnitOutline::EndDepthPass() {
 // Not in the original binary. See the declaration: what a draw between the two calls can test against.
 bool CUnitOutline::IsDepthPassBound() {
     return s_depthBound;
+}
+
+// Not in the original binary. The shared depth, borrowed rather than owned: the caller must not release it, and it
+// is only valid while the depth pass is bound. See the declaration for why INTZ matters here.
+CGxTex* CUnitOutline::DepthPassTexture() {
+    return s_depth;
 }
 
 // ---------------------------------------------------------------------------------------------

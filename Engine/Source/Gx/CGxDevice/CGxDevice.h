@@ -250,6 +250,13 @@ class CGxDevice {
     virtual void* DeviceGetBoundDepthSurface();
     virtual void* DeviceGetTexSurface(CGxTex* texture);
 
+    // Not in the original binary. The native D3D9 device, or null on any other backend. For modules whose own
+    // pixel shaders need to create resources through D3D9 directly -- the modern water pass is the only one --
+    // and which therefore cannot be written through Gx alone. Render-state changes must still go through this
+    // facade: gx caches hardware state in m_deviceStates and early-outs when a write matches the cache, so a
+    // direct SetRenderState would leave the cache disagreeing with the hardware.
+    virtual void* DeviceNativeD3d9Device();
+
     static HSLOG m_log;
     static C2iVector s_clientAdjust;
     static const char* s_pixelShaderTargetNames[14];

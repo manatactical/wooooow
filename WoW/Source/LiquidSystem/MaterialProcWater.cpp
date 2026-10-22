@@ -1,4 +1,5 @@
 #include "Liquid.h"
+#include "Engine/Source/ModernWater/ModernWater.h"
 #include "Engine/Source/Tempest/CMath.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/Gx.h"
@@ -220,7 +221,12 @@ void Liquid::CMaterialProcWater::Render(Liquid::IEnvironment* environment, Liqui
     g_theGxDevicePtr->PrimIndexPtr(indexBuf);
 
     g_theGxDevicePtr->RsSet(GxRs_Culling, 0);
-    g_theGxDevicePtr->RsSet(GxRs_DepthWrite, 0);
+
+    // The client's procedural water deliberately writes no depth: it is drawn last in the transparent pass and nothing
+    // after it needs to know where the surface is. The modern water pass does -- it finds its pixels by comparing the
+    // frame depth before and after these draws, so the surface has to leave its depth behind. This is the one change
+    // the pass needs from the liquid material, and it is in this tree's own source rather than a patch.
+    g_theGxDevicePtr->RsSet(GxRs_DepthWrite, ModernWater::WaterPassArmed() ? 1 : 0);
     g_theGxDevicePtr->RsSet(GxRs_BlendingMode, 2);
     GxUpdateAlphaRef(GxRs_AlphaRef);
     g_theGxDevicePtr->RsSet(GxRs_Fog, 1);

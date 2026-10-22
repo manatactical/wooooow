@@ -49,6 +49,7 @@ target_link_libraries(Wow
         Gxu
         Images
         Model2
+        ModernWater
         Os
         Scrn
         Services

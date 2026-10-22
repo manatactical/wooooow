@@ -11,7 +11,7 @@
 #include "Engine/Source/Storm/H/storm.h"
 
 // STATIC: 0x00A2D57C
-static const uint32_t s_texelSize[GxTexFormats_Last] = { 0, 4, 4, 2, 2, 2, 2, 4, 4, 2, 4, 4, 4 };
+static const uint32_t s_texelSize[GxTexFormats_Last] = { 0, 4, 4, 2, 2, 2, 2, 4, 4, 2, 4, 4, 4, 4 };
 
 // NOT IN BINARY. Backends lower this when the driver has fewer light slots than Gx_MAX_LIGHTS.
 uint32_t g_gxMaxHardwareLights = Gx_MAX_LIGHTS;
@@ -62,7 +62,7 @@ static const int32_t s_vertexAttribOffset[GxVertexBufferFormats_Last][GxVAs_Last
 static BlitFormat s_blitFormats[GxTexFormats_Last] = {
     BlitFormat_Unknown, BlitFormat_Abgr8888, BlitFormat_Argb8888, BlitFormat_Argb4444, BlitFormat_Argb1555,
     BlitFormat_Rgb565, BlitFormat_Dxt1, BlitFormat_Dxt3, BlitFormat_Dxt5, BlitFormat_Uv88, BlitFormat_Gr1616F,
-    BlitFormat_R32F, BlitFormat_D24X8
+    BlitFormat_R32F, BlitFormat_D24X8, BlitFormat_D24X8
 };
 
 // STATIC: 0x00AD87E4

@@ -96,6 +96,12 @@ class CUnitOutline {
     // pixel silently. False on a device that cannot pair the depth texture with the colour target.
     static bool IsDepthPassBound();
 
+    // Not in the original binary. The frame-sized depth the 3D pass shares, for a module that needs to read the
+    // scene's depth rather than write to it. Returns null when the outline is not sharing a depth this frame. The
+    // texture is INTZ when the device has it, which is the only reason it can be sampled at all; a D24X8 fallback
+    // is returned too, but a caller that needs to sample it will find it unreadable.
+    static CGxTex* DepthPassTexture();
+
     private:
     static bool Enabled();
     static bool EnsureResources();

@@ -1,4 +1,5 @@
 #include "Liquid.h"
+#include "Engine/Source/ModernWater/ModernWater.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/Gx.h"
 #include "Engine/Source/Model2/M2Light.h"
@@ -146,7 +147,7 @@ void Liquid::CMaterialWater::Render(Liquid::IEnvironment* environment, Liquid::I
     g_theGxDevicePtr->RsSet(GxRs_Culling, 0);
     g_theGxDevicePtr->RsSet(GxRs_BlendingMode, 2);
     GxUpdateAlphaRef(GxRs_AlphaRef);
-    GxRsSet(GxRs_DepthWrite, g_theGxDevicePtr->Caps().m_maxClipPlanes == 0);
+    GxRsSet(GxRs_DepthWrite, ModernWater::WaterPassArmed() || g_theGxDevicePtr->Caps().m_maxClipPlanes == 0);
     g_theGxDevicePtr->RsSet(GxRs_Fog, 1);
 
     Liquid::s_vsConstants.m_projection = g_theGxDevicePtr->m_projNative;
@@ -225,7 +226,7 @@ void Liquid::CMaterialWaterNoSpec::Render(Liquid::IEnvironment* environment, Liq
     g_theGxDevicePtr->RsSet(GxRs_Culling, 0);
     g_theGxDevicePtr->RsSet(GxRs_BlendingMode, 2);
     GxUpdateAlphaRef(GxRs_AlphaRef);
-    GxRsSet(GxRs_DepthWrite, g_theGxDevicePtr->Caps().m_maxClipPlanes == 0);
+    GxRsSet(GxRs_DepthWrite, ModernWater::WaterPassArmed() || g_theGxDevicePtr->Caps().m_maxClipPlanes == 0);
     g_theGxDevicePtr->RsSet(GxRs_Fog, 1);
 
     Liquid::s_vsConstants.m_projection = g_theGxDevicePtr->m_projNative;
@@ -305,7 +306,7 @@ void Liquid::CMaterialWaterFFP::Render(Liquid::IEnvironment* environment, Liquid
     g_theGxDevicePtr->RsSet(GxRs_Culling, 0);
     g_theGxDevicePtr->RsSet(GxRs_BlendingMode, 2);
     GxUpdateAlphaRef(GxRs_AlphaRef);
-    GxRsSet(GxRs_DepthWrite, g_theGxDevicePtr->Caps().m_maxClipPlanes == 0);
+    GxRsSet(GxRs_DepthWrite, ModernWater::WaterPassArmed() || g_theGxDevicePtr->Caps().m_maxClipPlanes == 0);
 
     C44Matrix world = *transform;
 

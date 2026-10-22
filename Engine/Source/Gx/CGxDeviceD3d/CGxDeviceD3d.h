@@ -268,6 +268,7 @@ class CGxDeviceD3d : public CGxDevice {
     virtual void DeviceCopyTex(CGxTex* source, uint32_t sourcePlane, CGxTex* dest, uint32_t destPlane);
     virtual void* DeviceGetBoundDepthSurface();
     virtual void* DeviceGetTexSurface(CGxTex* texture);
+    virtual void* DeviceNativeD3d9Device();
     virtual void DeviceOverride(EGxOverride override, uint32_t value);
     virtual void CapsWindowSize(CRect& rect);
     virtual void CapsWindowSizeInScreenCoords(CRect& rect);

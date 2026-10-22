@@ -2,7 +2,11 @@
 #include <cstdlib>
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/CGxLight.h"
+#include "Engine/Source/ModernWater/ModernWater.h"
+#include "Engine/Source/ModernWater/water_inputs.h"
+#include "Engine/Source/ModernWater/water_renderer.h"
 #include "Engine/Source/Storm/H/storm.h"
+#include <d3d9.h>
 
 // STATIC: 0x00B23F6C
 Liquid::CRenderer::DrawListSorter Liquid::CRenderer::s_drawListSorter[2] = {
@@ -121,13 +125,58 @@ void Liquid::CRenderer::Flush(const C3Vector& cameraPos, uint32_t pass) {
 
     uint32_t count = instances.Count();
 
+    // Not in the original binary. The transparent pass is where the water surfaces are, and it is the moment the modern
+    // water pass needs: everything opaque and the sky are already in the frame, and the water itself is not yet.
+    //
+    // The instances are already sorted by material and then by settings, so the draws of one water class are
+    // contiguous. That is what lets each class be shaded as soon as its own run of draws is down: with only that
+    // class in the frame since the last shade, the depth difference is exactly that class's pixels, so no per-class
+    // mask (and no stencil) is needed to keep two classes from painting over each other.
+    WaterRenderer& water = GlobalWaterRenderer();
+    IDirect3DDevice9* device = static_cast<IDirect3DDevice9*>(g_theGxDevicePtr->DeviceNativeD3d9Device());
+    bool armed = false;
+
+    if (pass == 1 && water.Active()) {
+        WaterFrameInputs frameInputs;
+
+        if (ModernWater::BuildFrameInputs(frameInputs)) {
+            WaterContactFrame contacts;
+            ModernWater::ReadContacts(frameInputs, contacts);
+            water.SetContacts(contacts);
+            armed = water.Begin(device, this, frameInputs, ModernWater::WaterSettings());
+        }
+    }
+
+    WaterClass pendingClass = WaterClass::None;
+
     for (uint32_t i = 0; i < count; i++) {
         Liquid::CInstance* instance = instances.m_data[i];
+        const WaterClass waterClass = armed ? ModernWater::ClassifyLiquidInstance(instance) : WaterClass::None;
+
+        // Before drawing a different class, the class that was drawing has nothing more coming, so its run is
+        // finished and can be shaded.
+        if (armed && waterClass != pendingClass && pendingClass != WaterClass::None) {
+            water.ShadeRun(device, pendingClass);
+        }
+
+        if (armed && waterClass != WaterClass::None) {
+            water.Tag(device, waterClass);
+            pendingClass = waterClass;
+        }
+
         instance->m_material->Render(instance->m_environment, instance->m_geomFactory, instance->m_waveManager, cameraPos, &instance->m_transform, &instance->m_bounds, instance->m_settings);
         instance->m_queued = 0;
     }
 
     instances.Clear();
+
+    if (armed) {
+        if (pendingClass != WaterClass::None) {
+            water.ShadeRun(device, pendingClass);
+        }
+
+        water.End(device);
+    }
 
     for (uint32_t i = 0; i < limit; i++) {
         if (lights[i].m_flags & 0x1) {

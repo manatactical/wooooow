@@ -102,7 +102,7 @@ PassDeathNVRC::~PassDeathNVRC() {
 // VERIFY: 7ab3fdf0 manual
 // OFFSET: 0x007E8970
 bool PassDeathNVRC::Valid() {
-    return this->m_shader && this->m_shader->Valid();
+    return this->m_shader && GxShaderValid(this->m_shader, 0);
 }
 
 // VERIFY: 45689fc4 manual
@@ -263,10 +263,10 @@ PassNetherBlur::~PassNetherBlur() {
 // VERIFY: 8f3d2550 auto
 // OFFSET: 0x007E8B90
 bool PassNetherBlur::Valid() {
-    if (this->m_vertexShader && this->m_vertexShader->Valid()) {
+    if (this->m_vertexShader && GxShaderValid(this->m_vertexShader, 0)) {
         CGxShader* shader = this->m_pixelShaders[this->m_useRect];
 
-        if (shader && shader->Valid()) {
+        if (shader && GxShaderValid(shader, 0)) {
             return true;
         }
     }
@@ -564,7 +564,7 @@ void PassNetherBlur::Execute() {
 // OFFSET: 0x007E8180
 bool PassPropagateFog::Valid() {
     CGxShader* shader = this->m_pixelShaders[this->m_useRect];
-    return shader && shader->Valid();
+    return shader && GxShaderValid(shader, 0);
 }
 
 // VERIFY: 67b3055e manual
@@ -722,7 +722,7 @@ void PassFogCombine::BuildIndices() {
 // OFFSET: 0x008C2020
 bool PassDeath::Valid() {
     CGxShader* shader = this->m_shaders[this->m_useRect];
-    return (shader ? shader->Valid() : 0) != 0;
+    return (shader ? GxShaderValid(shader, 0) : 0) != 0;
 }
 
 // VERIFY: 883cadff manual
@@ -756,7 +756,7 @@ void PassDeath::Execute() {
 // OFFSET: 0x008C2020
 bool PassNetherCombine::Valid() {
     CGxShader* shader = this->m_pixelShaders[this->m_useRect];
-    return (shader ? shader->Valid() : 0) != 0;
+    return (shader ? GxShaderValid(shader, 0) : 0) != 0;
 }
 
 // VERIFY: 74b70bbd manual
@@ -795,7 +795,7 @@ void PassNetherCombine::Execute() {
 // OFFSET: 0x007E8180
 bool PassFogCombine::Valid() {
     CGxShader* shader = this->m_pixelShaders[this->m_useRect];
-    return shader && shader->Valid();
+    return shader && GxShaderValid(shader, 0);
 }
 
 // VERIFY: 0e25f7e9 manual

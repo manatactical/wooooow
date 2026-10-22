@@ -80,6 +80,7 @@ namespace
         static const char* const names[GxTexFormats_Last] = {
             "Unknown", "Abgr8888", "Argb8888", "Argb4444", "Argb1555", "Rgb565",
             "Dxt1", "Dxt3", "Dxt5", "Uv88", "Gr1616F", "R32F", "D24X8",
+            "R16", "Abgr16161616F", "R24X8", "Abgr32323232F", "D16", "D32",
         };
 
         return static_cast<uint32_t>(format) < GxTexFormats_Last ? names[format] : "?";

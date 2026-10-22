@@ -39,6 +39,15 @@ class CGxFormat {
     /* 0035 */ uint8_t unused_0035[3];
     /* 0038 */ int32_t m_fixedFunction [6];
     /* 0050 */ C2iVector m_pos;
+    // NOT IN BINARY: cata's format description carries the requested shader model and the DXGI mode
+    // fields its D3d11 backend fills in. Appended, so every 3.3.5a offset above is unchanged.
+    /* 0058 */ bool unk_002C;
+    /* 005C */ uint32_t m_refreshRateDenom;
+    /* 0060 */ uint32_t m_scanlineOrdering;
+    /* 0064 */ uint32_t m_scaling;
+    /* 0068 */ int32_t m_shaderModel;
+    // NOT IN BINARY: which monitor the window is placed on; the D3d11 window setup reads it.
+    /* 006C */ int32_t m_monitor;
 
     CGxFormat();
     CGxFormat(bool window, const C2iVector& size, CGxFormat::Format colorFormat, CGxFormat::Format depthFormat, uint32_t refreshRate, uint32_t vsync, bool hwTnL, bool fixLag, bool hwCursor, bool aspect, int32_t maximize);

@@ -552,7 +552,7 @@ Snow::Snow(float width, float height) : m_bbox(C3Vector(0.0f, 0.0f, 0.0f), C3Vec
     CStatus status;
     this->m_snowFlakeTex = TextureCreate(World::s_weather->m_precipTexture, CGxTexFlags(GxTex_LinearMipLinear, 0, 0, 0, 0, 0, 1, 0, 0, 0), &status, 1);
 
-    if (!this->m_shaderPtr || !this->m_shaderPtr->Valid() || !g_theGxDevicePtr->Caps().m_pointSprite) {
+    if (!this->m_shaderPtr || !GxShaderValid(this->m_shaderPtr, 0) || !g_theGxDevicePtr->Caps().m_pointSprite) {
         this->m_useWeatherShaders = 0;
     }
 

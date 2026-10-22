@@ -664,7 +664,7 @@ void CSimpleRender::DrawBatch(CRenderBatch* batch) {
 
         CGxShader* vertexShader = g_theGxDevicePtr->StereoEnabled() ? CSimpleRender::s_vertexShader[1] : CSimpleRender::s_vertexShader[0];
 
-        if (vertexShader && vertexShader->Valid()) {
+        if (vertexShader && GxShaderValid(vertexShader, 0)) {
             C44Matrix viewProj;
             GxRsSet(GxRs_VertexShader, vertexShader);
             GxXformViewProjNativeTranspose(viewProj);
@@ -2300,7 +2300,7 @@ void CSimpleTexture::SetPosition(const CRect& rect, C3Vector* position) {
 // VERIFY: da5e4d9e auto
 // OFFSET: 0x00483290
 CGxShader* CSimpleTexture::GetImageModePixelShader(TextureImageMode mode) {
-    if (CSimpleTexture::s_imageModePixelShaders[mode] && CSimpleTexture::s_imageModePixelShaders[mode]->Valid()) {
+    if (CSimpleTexture::s_imageModePixelShaders[mode] && GxShaderValid(s_imageModePixelShaders[mode], 0)) {
         return CSimpleTexture::s_imageModePixelShaders[mode];
     }
 

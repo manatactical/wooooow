@@ -17,13 +17,46 @@
 #include "Engine/Source/Os/TimeManager.h"
 
 // STATIC: 0x00A2DAF8
-const uint32_t CGxDevice::s_texFormatBitDepth[GxTexFormats_Last] = { 0, 32, 32, 16, 16, 16, 4, 8, 8, 16, 32, 32, 32 };
+// NOT IN BINARY: cata's polygon-offset depth-bias steps, read by the D3d11 rasterizer state.
+// NOT IN BINARY: cata's monitor count / reset, used by the display-change handler.
+uint32_t CGxDevice::AdapterMonitorCount() {
+    if (!CGxDevice::s_monitorsInit) {
+        CGxDevice::AdapterInitMonitors();
+    }
+
+    return CGxDevice::s_monitors.Count();
+}
+
+void CGxDevice::AdapterResetMonitors() {
+    CGxDevice::s_monitorsInit = 0;
+}
+
+// NOT IN BINARY: cata's monitor list. See Win64/D3d11Platform.cpp.
+int32_t CGxDevice::s_cursorVisible;
+uint32_t CGxDevice::s_cursorHotspotX;
+uint32_t CGxDevice::s_cursorHotspotY;
+uint32_t CGxDevice::s_cursor[1024];
+// NOT IN BINARY: cata's list of live pools; the D3d11 backend walks it when it
+// releases D3D pools.
+TSList<CGxPool, TSGetLink<CGxPool> > CGxDevice::s_poolList;
+
+int32_t CGxDevice::s_monitorsInit;
+TSGrowableArray<void*> CGxDevice::s_monitors;
+
+const float CGxDevice::s_polygonOffsetValues[3] = { 0.0f, 3.05180438e-05f, 3.81469727e-06f };
+
+const uint32_t CGxDevice::s_texFormatBitDepth[GxTexFormats_Last] = { 0, 32, 32, 16, 16, 16, 4, 8, 8, 16, 32, 32, 32, 16, 64, 24, 128, 16, 32 };
 
 // STATIC: 0x00A2DB2C
-const uint32_t CGxDevice::s_texFormatBlockSize[GxTexFormats_Last] = { 1, 1, 1, 1, 1, 1, 4, 4, 4, 1, 1, 1, 1 };
+const uint32_t CGxDevice::s_texFormatBlockSize[GxTexFormats_Last] = { 1, 1, 1, 1, 1, 1, 4, 4, 4, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
 
 // STATIC: 0x00A2DB60
-const uint32_t CGxDevice::s_texFormatBytesPerBlock[GxTexFormats_Last] = { 0, 4, 4, 2, 2, 2, 8, 16, 16, 2, 4, 4, 4 };
+const uint32_t CGxDevice::s_texFormatBytesPerBlock[GxTexFormats_Last] = { 0, 4, 4, 2, 2, 2, 8, 16, 16, 2, 4, 4, 4, 2, 8, 4, 16, 2, 4 };
+
+// NOT IN BINARY: which formats are depth formats. Only the D3d11 backend asks (a depth view needs a
+// typeless DXGI format), so 3.3.5a carries no such table. GxTex_D24X8 is the only depth format this
+// client's EGxTexFormat defines, and it is the last entry (index 12) in that enum's order.
+const uint32_t CGxDevice::s_texFormatIsDepth[GxTexFormats_Last] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1 };
 
 // STATIC: 0x00AD8B4C
 static uint32_t s_primVertsPerPrim[GxPrims_Last] = { 1, 2, 1, 3, 1, 1 };
@@ -39,6 +72,14 @@ const char* CGxDevice::s_pixelShaderTargetNames[14] = { "none", "ps_1_1", "ps_1_
 
 // STATIC: 0x00AD8834
 const char* CGxDevice::s_vertexShaderTargetNames[12] = { "none", "vs_1_1", "vs_2_0", "vs_3_0", "vs_4_0", "vs_5_0", "arbvp1", "arbvp1_cg12", "nvvp", "nvvp2", "nvvp3", "glsl" };
+
+// NOT IN BINARY: the .bls directories. These were string literals at every ShaderCreate call site in
+// 3.3.5a; cata's loader owns them instead, which is why IShaderLoad no longer takes a path.
+const char* CGxDevice::s_vertexShaderPath = "Shaders\\Vertex";
+const char* CGxDevice::s_hullShaderPath = "Shaders\\Hull";
+const char* CGxDevice::s_domainShaderPath = "Shaders\\Domain";
+const char* CGxDevice::s_geometryShaderPath = "Shaders\\Geometry";
+const char* CGxDevice::s_pixelShaderPath = "Shaders\\Pixel";
 
 // STATIC: 0x00AD8864
 static const char* s_geometryShaderTargetNames[3] = { "none", "gs_4_0", "gs_5_0" };
@@ -134,7 +175,44 @@ void CGxDevice::LogCrashInfo(char* buffer, uint32_t size) {
 void CGxDevice::SceneClear(uint32_t mask, CImVector color) {
 }
 
+// NOT IN BINARY: cata's clear-to-viewport; the D3d11 backend implements it and calls back into this.
+void CGxDevice::SceneClearToViewport(uint32_t mask, CImVector color) {
+}
+
+// NOT IN BINARY: cata's frame-buffer binding. The base has no frame buffers of its own.
+void CGxDevice::FrameBufferSet(CGxFrameBuffer* frameBuffer) {
+}
+
+CGxFrameBuffer* CGxDevice::BackBuffer() {
+    return nullptr;
+}
+
 void CGxDevice::Draw(CGxBatch* batch, int32_t count) {
+    // This client's only entry point is the D3d9-shaped Draw(batch, count); the D3d11 backend implements the
+    // per-batch overrides, so forward to them here.
+    for (int32_t i = 0; i < count; i++) {
+        this->Draw(batch[i]);
+    }
+}
+
+// NOT IN BINARY: cata's batch-shaped draw entry points. Backends that do not batch fall through to the one
+// Draw(batch, count) they already implement.
+void CGxDevice::DrawNonIndexed(const CGxBatch& batch) {
+}
+
+void CGxDevice::Draw(const CGxBatch& batch) {
+}
+
+void CGxDevice::DrawInstancedNonIndexed(const CGxBatch& batch) {
+}
+
+void CGxDevice::DrawInstanced(const CGxBatch& batch) {
+}
+
+void CGxDevice::SetInstanceCount(uint32_t count) {
+}
+
+void CGxDevice::ResetInstancing() {
 }
 
 void CGxDevice::PrimPointSize(float size) {
@@ -502,7 +580,7 @@ void CGxDevice::ICursorDraw() {
     float depth = 1.0f;
     C44Matrix projection;
 
-    if (this->StereoEnabled() && CGxDevice::s_uiVertexShader[1] && CGxDevice::s_uiVertexShader[1]->Valid() && CGxDevice::s_uiPixelShader && CGxDevice::s_uiPixelShader->Valid()) {
+    if (this->StereoEnabled() && CGxDevice::s_uiVertexShader[1] && GxShaderValid(CGxDevice::s_uiVertexShader[1], 0) && CGxDevice::s_uiPixelShader && GxShaderValid(CGxDevice::s_uiPixelShader, 0)) {
         depth = this->m_cursorDepth;
 
         float minX;
@@ -638,6 +716,11 @@ void CGxDevice::XformPush(EGxXform xf) {
 
 // VERIFY: a5c0394a auto
 // OFFSET: 0x00682D20
+// NOT IN BINARY: cata's accessor for the device format.
+const CGxFormat& CGxDevice::DeviceFormat() {
+    return this->m_format;
+}
+
 EGxApi CGxDevice::DeviceApi() {
     return this->m_api;
 }
@@ -1201,6 +1284,62 @@ void CGxDevice::PrimVertexPtr(CGxBuf* buf, EGxVertexBufferFormat format) {
     this->m_primVertexFormat = format;
     this->m_primVertexBuf = buf;
     this->m_primVertexSize = Buffer::s_vertexBufDesc[format].size;
+    // Keep the per-stream mirror in step for single-stream draws.
+    this->m_primVertexFormats[0] = format;
+    this->m_primVertexBufs[0] = buf;
+}
+
+// NOT IN BINARY: cata's two-stream vertex setup; the D3d11 backend draws from both streams.
+void CGxDevice::PrimVertexPtrs(CGxBuf** bufs, const EGxVertexBufferFormat* formats, EGxVertexBufferFormat format) {
+    this->m_primVertexBufs[0] = bufs[0];
+    this->m_primVertexBufs[1] = bufs[1];
+    this->m_primVertexFormat = format;
+    this->m_primVertexFormats[0] = formats[0];
+    this->m_primVertexFormats[1] = formats[1];
+}
+
+// NOT IN BINARY: the D3d11 backend matches a vertex attribute against the shader's input signature by
+// the signature's register index, not by EGxVertexAttrib. Cata's CGxDevice::IVertexAttribToShAttrib
+// (3.3.5a has no such function because its D3d9 path uses the fixed function declaration instead):
+// BLENDWEIGHT/BLENDINDICES keep 1/2, NORMAL 3, COLOR0/COLOR1 land on 9/10, TEXCOORDn on 11+n, and
+// POSITION maps to 0.
+uint32_t CGxDevice::IVertexAttribToShAttrib(EGxVertexAttrib attrib) {
+    switch (attrib) {
+        case GxVA_Position:
+            return 0;
+
+        case GxVA_BlendWeight:
+            return 1;
+
+        case GxVA_BlendIndices:
+            return 2;
+
+        case GxVA_Normal:
+            return 3;
+
+        case GxVA_Color0:
+            return 9;
+
+        case GxVA_Color1:
+            return 10;
+
+        case GxVA_TexCoord0:
+        case GxVA_TexCoord1:
+        case GxVA_TexCoord2:
+        case GxVA_TexCoord3:
+        case GxVA_TexCoord4:
+        case GxVA_TexCoord5:
+        case GxVA_TexCoord6:
+        case GxVA_TexCoord7:
+            return 11 + (attrib - GxVA_TexCoord0);
+
+        default:
+            // No register: callers use this as a bitmask shift, so returning 0 would silently mean
+            // "POSITION" and mis-build the input layout. 32 is past every register the caller tests
+            // (and past GxVAs_Last, which is a valid index -- TEXCOORD3 lands on 14), so the shift is
+            // undefined-free on the 32-bit mask and the attribute is left out.
+            return 32;
+    }
 }
 
 // VERIFY: dabc8a7e manual
@@ -1574,6 +1713,11 @@ void CGxDevice::Log(const char* format, ...) {
     va_end(args);
 }
 
+// NOT IN BINARY: cata's name for the va_list overload above. The D3d11 backend calls it directly.
+void CGxDevice::LogV(const char* format, va_list args) {
+    CGxDevice::Log(format, args);
+}
+
 // VERIFY: e580fa38 auto
 // OFFSET: 0x00684C40
 void CGxDevice::Log(const CGxCaps& caps) const {
@@ -1650,7 +1794,7 @@ CGxDevice::CGxDevice() : m_defWindowRect(), m_curWindowRect(), m_viewport(), m_s
     this->m_gammaRamp.Set(1.0f);
     this->m_systemGammaRamp.Set(1.0f);
 
-    for (uint32_t i = 0; i < 2; i++) {
+    for (uint32_t i = 0; i < GxBuffers_Last; i++) {
         this->m_textureTarget[i].m_texture = nullptr;
         this->m_textureTarget[i].m_plane = 0;
         this->m_textureTarget[i].m_apiSpecific = nullptr;
@@ -1752,52 +1896,101 @@ void CGxDevice::DeviceCreatePools() {
     this->m_vertexPool = this->PoolCreate(GxPoolTarget_Vertex, GxPoolUsage_Stream, s_streamVertexPoolSize, GxPoolHintBit_Unk3, "Stream_vtx");
     this->m_indexPool = this->PoolCreate(GxPoolTarget_Index, GxPoolUsage_Stream, s_streamIndexPoolSize, GxPoolHintBit_Unk3, "Stream_idx");
 }
-
 // VERIFY: 3ce50085 manual
 // OFFSET: 0x00684970
-void CGxDevice::IShaderLoad(CGxShader** shaders, EGxShTarget target, const char* path, const char* name, uint32_t permutations) {
+//
+// Ported to cata's permute model. The 3.3.5a original read 0x10003 files field-by-field straight into a
+// CGxShader; cata instead hands the whole file to CGxShader::Load, which keeps it and lets each
+// CGxShaderPermute decode its own permutation out of the shared zlib block table. The filename layout and
+// the fallback chain are this client's own (its m_shaderTargets indices into s_vertexShaderTargetNames /
+// s_pixelShaderTargetNames, which already spell vs_4_0 / vs_5_0 / ps_4_0 / ps_5_0).
+bool CGxDevice::IShaderLoad(CGxShader* shader, EGxShTarget target, const char* name) {
     int32_t profile = this->m_caps.m_shaderTargets[target];
 
     if (profile <= 0) {
-        return;
+        return false;
     }
 
+    const char* path = nullptr;
+
+    switch (target) {
+        case GxSh_Vertex:
+            path = CGxDevice::s_vertexShaderPath;
+            break;
+
+        case GxSh_Hull:
+            path = CGxDevice::s_hullShaderPath;
+            break;
+
+        case GxSh_Domain:
+            path = CGxDevice::s_domainShaderPath;
+            break;
+
+        case GxSh_Geometry:
+            path = CGxDevice::s_geometryShaderPath;
+            break;
+
+        case GxSh_Pixel:
+            path = CGxDevice::s_pixelShaderPath;
+            break;
+
+        default:
+            return false;
+    }
+
+    // The profile names, highest first. s_shaderProfileFallback walks a profile down to the next older one
+    // that exists; a backend that supports only one profile just never walks.
     while (true) {
-        char filename[260];
-        sprintf(filename, "%s\\%s\\%s.bls", path, s_shaderTargetNames[target][profile], name);
+        const char* profileName = nullptr;
 
-        SFileImpl* file;
-        SFileOpenFile(filename, &file);
-
-        if (file) {
-            uint32_t magic;
-            SFileReadFile(file, &magic, 4, nullptr, nullptr, 0);
-
-            if (magic == 'GXSH') {
-                uint32_t version;
-                SFileReadFile(file, &version, 4, nullptr, nullptr, 0);
-
-                if (version == 0x10003) {
-                    uint32_t unknown;
-                    SFileReadFile(file, &unknown, 4, nullptr, nullptr, 0);
-
-                    for (uint32_t i = 0; i < permutations; i++) {
-                        shaders[i]->Load(file);
-                        shaders[i]->m_loaded = 0;
-                        shaders[i]->unused_0034 = 0;
-                    }
-
-                    profile = 0;
-                }
+        if (target == GxSh_Pixel) {
+            if (profile < static_cast<int32_t>(sizeof(CGxDevice::s_pixelShaderTargetNames) / sizeof(char*))) {
+                profileName = CGxDevice::s_pixelShaderTargetNames[profile];
             }
-
-            SFileCloseFile(file);
+        } else if (target == GxSh_Vertex) {
+            if (profile < static_cast<int32_t>(sizeof(CGxDevice::s_vertexShaderTargetNames) / sizeof(char*))) {
+                profileName = CGxDevice::s_vertexShaderTargetNames[profile];
+            }
+        } else {
+            // Hull/domain/geometry have one profile each in this client's data (hs_5_0/ds_5_0/gs_5_0).
+            static const char* s_shaderModelNames[] = { "hs_5_0", "ds_5_0", "gs_5_0" };
+            profileName = s_shaderModelNames[target - GxSh_Hull];
         }
 
+        if (profileName) {
+            char filename[260];
+            sprintf(filename, "%s\\%s\\%s.bls", path, profileName, name);
+
+
+            SFileImpl* file;
+            SFileOpenFile(filename, &file);
+
+            if (file) {
+                uint32_t size = SFileGetFileSize(file, nullptr);
+                uint8_t* data = static_cast<uint8_t*>(SMemAlloc(size, __FILE__, __LINE__, 0));
+                bool loaded = false;
+
+                if (data) {
+                    if (SFileReadFile(file, data, size, nullptr, nullptr, 0) && shader->Load(data, size)) {
+                        loaded = true;
+                    } else {
+                        SMemFree(data, __FILE__, __LINE__, 0);
+                    }
+                }
+
+                SFileCloseFile(file);
+
+                if (loaded) {
+                    return true;
+                }
+            }
+        }
+
+        // Fall back one profile. Kept identical to the 3.3.5a chain so the same files are tried.
         if (target == GxSh_Vertex) {
             switch (profile) {
-                case 2:
-                    profile = 1;
+                case 4:
+                    profile = 3;
                     break;
 
                 case 3:
@@ -1805,33 +1998,155 @@ void CGxDevice::IShaderLoad(CGxShader** shaders, EGxShTarget target, const char*
                     break;
 
                 default:
-                    return;
+                    return false;
             }
         } else if (target == GxSh_Pixel) {
             switch (profile) {
-                case 2:
-                    profile = 1;
+                case 6:
+                    profile = 5;
                     break;
 
-                case 3:
-                    profile = 2;
+                case 5:
+                    profile = 4;
                     break;
 
                 case 4:
                     profile = 3;
                     break;
 
-                case 9:
-                case 10:
-                    profile = 8;
-                    break;
-
                 default:
-                    return;
+                    return false;
             }
         } else {
-            return;
+            return false;
         }
+    }
+}
+
+// NOT IN BINARY: cata's ChooseShaderModel picks a profile set out of its own 38-entry EGxShaderProfile
+// numbering. This client's IShaderLoad indexes s_vertexShaderTargetNames / s_pixelShaderTargetNames
+// instead ("none", "vs_1_1", "vs_2_0", "vs_3_0", "vs_4_0", "vs_5_0" and the ps_ equivalents), so the
+// mapping is done here rather than by cata's table. The profile flags in m_shaderProfiles come straight
+// from the backend (SetCaps), so this only has to choose the newest supported one, capped by the request.
+void CGxDevice::ChooseShaderModel(int32_t shaderModel) {
+    // -1 / 7 means "whatever the device supports".
+    const bool allow5 = shaderModel < 0 || shaderModel >= 5;
+    const bool allow4 = shaderModel < 0 || shaderModel >= 4;
+
+    int32_t vertexProfile = 0;
+
+    if (allow5 && this->m_caps.m_shaderProfiles[GxShProfile_Vs50]) {
+        vertexProfile = 5; // vs_5_0
+    } else if (allow4 && this->m_caps.m_shaderProfiles[GxShProfile_Vs40]) {
+        vertexProfile = 4; // vs_4_0
+    } else if (this->m_caps.m_shaderProfiles[GxShProfile_Vs30]) {
+        vertexProfile = 3; // vs_3_0
+    } else if (this->m_caps.m_shaderProfiles[GxShProfile_Vs20]) {
+        vertexProfile = 2; // vs_2_0
+    } else if (this->m_caps.m_shaderProfiles[GxShProfile_Vs11]) {
+        vertexProfile = 1; // vs_1_1
+    }
+
+    int32_t pixelProfile = 0;
+
+    if (allow5 && this->m_caps.m_shaderProfiles[GxShProfile_Ps50]) {
+        pixelProfile = 6; // ps_5_0
+    } else if (allow4 && this->m_caps.m_shaderProfiles[GxShProfile_Ps40]) {
+        pixelProfile = 5; // ps_4_0
+    } else if (this->m_caps.m_shaderProfiles[GxShProfile_Ps30]) {
+        pixelProfile = 4; // ps_3_0
+    } else if (this->m_caps.m_shaderProfiles[GxShProfile_Ps20]) {
+        pixelProfile = 3; // ps_2_0
+    } else if (this->m_caps.m_shaderProfiles[GxShProfile_Ps14]) {
+        pixelProfile = 2; // ps_1_4
+    } else if (this->m_caps.m_shaderProfiles[GxShProfile_Ps11]) {
+        pixelProfile = 1; // ps_1_1
+    }
+
+    this->m_caps.m_shaderTargets[GxSh_Vertex] = vertexProfile;
+    this->m_caps.m_shaderTargets[GxSh_Pixel] = pixelProfile;
+
+    // Hull/domain/geometry have a single profile each (hs_5_0 / ds_5_0 / gs_5_0), so "supported" is 1/0.
+    this->m_caps.m_shaderTargets[GxSh_Hull] = this->m_caps.m_shaderProfiles[GxShProfile_Hs50] ? 1 : 0;
+    this->m_caps.m_shaderTargets[GxSh_Domain] = this->m_caps.m_shaderProfiles[GxShProfile_Ds50] ? 1 : 0;
+    this->m_caps.m_shaderTargets[GxSh_Geometry] = (this->m_caps.m_shaderProfiles[GxShProfile_Gs50] || this->m_caps.m_shaderProfiles[GxShProfile_Gs40]) ? 1 : 0;
+    this->m_caps.m_shaderTargets[GxSh_Compute] = (this->m_caps.m_shaderProfiles[GxShProfile_Cs50] || this->m_caps.m_shaderProfiles[GxShProfile_Cs40]) ? 1 : 0;
+
+    this->m_caps.m_shaderModel = vertexProfile > pixelProfile ? vertexProfile : pixelProfile;
+}
+
+// NOT IN BINARY: cata's software-cursor hook; the D3d11 backend overrides it. The base has no cursor.
+int32_t CGxDevice::ISetCursor() {
+    return 0;
+}
+
+// NOT IN BINARY: cata's display-change fan-out. Nothing in this client registers for it yet.
+void CGxDevice::NotifyOnDisplayChange(uint32_t value) {
+}
+
+// NOT IN BINARY: the base cannot create device objects; a backend override does the real work.
+void CGxDevice::ShaderCreateCompiled(CGxShaderPermute* permute, const void* bytecode, uint32_t bytecodeSize) {
+    permute->m_loaded = 1;
+    permute->m_valid = 0;
+}
+
+// NOT IN BINARY: cata's per-bind hook; the base has nothing to do.
+void CGxDevice::IShaderBind(CGxShaderPermute* permute) {
+}
+
+// NOT IN BINARY: cata's single-shader convenience overload. Same lookup/insert/load sequence as the
+// array form above, but returns the shader (or null) instead of filling a permutation list.
+CGxShader* CGxDevice::ShaderCreate(EGxShTarget target, const char* name) {
+    TSHashTable<CGxShader, HASHKEY_STRI>& list = this->m_shaderList[target];
+    CGxShader* shader = list.Ptr(name);
+
+    if (shader) {
+        shader->m_refCount++;
+        return shader;
+    }
+
+    shader = list.New(name, 0, 0);
+    shader->m_refCount++;
+    shader->m_target = target;
+
+    if (this->IShaderLoad(shader, target, name)) {
+        return shader;
+    }
+
+    list.Delete(shader);
+    return nullptr;
+}
+
+// OFFSET: 0x00849000/0x140576CA0
+void CGxDevice::ShaderRelease(CGxShader* shader) {
+    if (!shader) {
+        return;
+    }
+
+    // m_refCount is unsigned: releasing an already-zero shader used to wrap to 0xFFFFFFFF and leak it.
+    if (!shader->m_refCount) {
+        return;
+    }
+
+    if (--shader->m_refCount) {
+        return;
+    }
+
+    for (uint32_t i = 0; i < shader->m_permutes.Count(); i++) {
+        this->IShaderDestroy(&shader->m_permutes[i]);
+    }
+
+    // Shaders built from run-time bytecode (AntiAlias, UnitOutline) were never inserted into a list. Delete()
+    // is still correct for them: Unlink() is guarded by IsLinked(), and InternalDelete() runs the destructor
+    // and frees the block, which is what those callers want. The target index is bounded so a shader left with
+    // an unset target cannot index outside m_shaderList.
+    int32_t target = shader->m_target;
+
+    if (target >= 0 && target < GxShTargets_Last) {
+        this->m_shaderList[target].Delete(shader);
+    } else {
+        shader->~CGxShader();
+        SMemFree(shader, __FILE__, __LINE__, 0);
     }
 }
 
@@ -1883,19 +2198,64 @@ void CGxDevice::ShaderCreate(CGxShader** shaders, EGxShTarget target, const char
         }
     }
 
-    this->IShaderLoad(shaders, target, path, name, permutations);
+    for (uint32_t i = 0; i < permutations; i++) {
+        if (!shaders[i]->m_permutes.Count() && !this->IShaderLoad(shaders[i], target, name)) {
+            // Leave the shader in the list with no permutes: ShaderCreate's callers expect a non-null
+            // CGxShader (ShaderEffect stores them unconditionally) and every permute access is guarded by
+            // Count(). Dropping it here would hand out a null the callers do not check.
+        }
+    }
 }
 
 // VERIFY: 10cd5175 manual
 // OFFSET: 0x00687820
 void CGxDevice::ShaderDestroy(CGxShader*& shader) {
-    shader->m_refCount--;
-
-    if (!shader->m_refCount) {
-        this->m_shaderList[shader->m_target].Delete(shader);
+    if (!shader) {
+        return;
     }
 
+    this->ShaderRelease(shader);
     shader = nullptr;
+}
+
+// NOT IN BINARY: cata's ShaderReload re-reads one shader from disk and rebuilds its device permutes.
+bool CGxDevice::ShaderReload(CGxShader* shader, const char* name) {
+    if (!shader) {
+        return false;
+    }
+
+    for (uint32_t i = 0; i < shader->m_permutes.Count(); i++) {
+        this->IShaderDestroy(&shader->m_permutes[i]);
+    }
+
+    SMemFree(shader->m_data, __FILE__, __LINE__, 0);
+    shader->m_data = nullptr;
+    shader->m_permuteOffsets = nullptr;
+    shader->m_blockOffsets = nullptr;
+    shader->m_blockData = nullptr;
+    shader->m_blockCount = 0;
+    shader->m_permuteCount = 0;
+    shader->m_permutes.SetCount(0);
+
+    if (!this->IShaderLoad(shader, static_cast<EGxShTarget>(shader->m_target), name)) {
+        // No offsets and no permutes left: nothing can rebind it. Drop it from the list rather than leave a
+        // shader whose Load() would dereference null.
+        return false;
+    }
+
+    return true;
+}
+
+// NOT IN BINARY: reload every loaded shader, for the shader-reload debug command.
+void CGxDevice::ShaderReloadAll() {
+    for (uint32_t target = 0; target < GxShTargets_Last; target++) {
+        CGxShader* next;
+
+        for (CGxShader* shader = this->m_shaderList[target].Head(); shader; shader = next) {
+            next = this->m_shaderList[target].Next(shader);
+            this->ShaderReload(shader, shader->m_key.m_str);
+        }
+    }
 }
 
 // VERIFY: 4f26ed72 manual
@@ -2194,4 +2554,10 @@ void CGxDevice::RsInit() {
 CGxMonitorMode::CGxMonitorMode() {
     this->m_size.x = 0;
     this->m_size.y = 0;
+
+    // NOT IN BINARY: the appended DXGI mode fields. m_refreshRateDenom is divided by when modes are
+    // sorted, so it starts at 1 rather than 0.
+    this->m_refreshRateDenom = 1;
+    this->m_scanlineOrdering = 0;
+    this->m_scaling = 0;
 }

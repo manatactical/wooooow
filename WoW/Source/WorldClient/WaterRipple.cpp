@@ -270,7 +270,7 @@ void WaterRipple::Initialize() {
     g_theGxDevicePtr->ShaderCreate(&WaterRipple::s_vsWaterRipples, GxSh_Vertex, "Shaders\\Vertex", "WaterRipples", 1);
     g_theGxDevicePtr->ShaderCreate(&WaterRipple::s_psWaterRipples, GxSh_Pixel, "Shaders\\Pixel", "WaterRipples", 1);
 
-    if (WaterRipple::s_vsWaterRipples && WaterRipple::s_vsWaterRipples->Valid() && WaterRipple::s_psWaterRipples && WaterRipple::s_psWaterRipples->Valid()) {
+    if (WaterRipple::s_vsWaterRipples && GxShaderValid(s_vsWaterRipples, 0) && WaterRipple::s_psWaterRipples && GxShaderValid(s_psWaterRipples, 0)) {
         s_ripplesInitialized = 1;
     }
 }

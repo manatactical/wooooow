@@ -6,6 +6,7 @@
 #include <cstdint>
 #include "Engine/Source/Gx/CGxBuf.h"
 #include "Engine/Source/Gx/CGxDevice/CGxShader.h"
+#include "Engine/Source/Gx/CGxFrameBuffer.h"
 #include "Engine/Source/Gx/CGxDevice/EmergencyMem.h"
 #include "Engine/Source/Gx/CGxDevice/Types.h"
 #include "Engine/Source/Gx/CGxFormat.h"
@@ -138,13 +139,22 @@ class CGxDevice {
     /* 28B0 */ EGxVertexBufferFormat m_primVertexFormat;
     /* 28B4 */ CGxBuf* m_primVertexBuf;
     /* 28B8 */ uint32_t m_primVertexSize;
+    // NOT IN BINARY, APPENDED: cata's base keeps per-stream vertex state (the D3d11 backend draws from two
+    // streams, the second carrying per-instance data) and PrimVertexPtrs fills it.
+    //
+    // These two are declared out of layout order on purpose: they were added last, so the 3.3.5a offsets
+    // documented below (m_primIndexBuf at 0x28BC onwards) are still the offsets of a 3.3.5a build. Every
+    // field after this point sits 0x10 bytes later than its comment says on x64; nothing in this tree
+    // depends on those absolute offsets, they are kept only as a record of the original layout.
+    EGxVertexBufferFormat m_primVertexFormats [2];
+    CGxBuf* m_primVertexBufs [2];
     /* 28BC */ CGxBuf* m_primIndexBuf;
     /* 28C0 */ int32_t m_primIndexDirty;
     /* 28C4 */ EmergencyMem m_emergencyMem [2];
     /* 28EC */ TSFixedArray<CGxAppRenderState> m_appRenderStates;
     /* 28F8 */ TSFixedArray<CGxStateBom> m_hwRenderStates;
     /* 2904 */ TSExplicitList<CGxTex, offsetof(CGxTex, m_link)> m_textures;
-    /* 2910 */ CGxDevice::TextureTarget m_textureTarget [2];
+    /* 2910 */ CGxDevice::TextureTarget m_textureTarget [GxBuffers_Last];
     /* 2928 */ TSExplicitList<CGxQuery, offsetof(CGxQuery, m_link)> m_queryList;
     /* 2934 */ int32_t m_scrShotClick;
     /* 2938 */ uint32_t m_scrShotWidth;
@@ -164,6 +174,8 @@ class CGxDevice {
     virtual void ICursorDestroy();
     virtual void ICursorDraw();
     virtual void NotifyOnDeviceRestored();
+    // NOT IN BINARY: cata's display-change fan-out, raised by the window proc on WM_DISPLAYCHANGE.
+    virtual void NotifyOnDisplayChange(uint32_t value);
     virtual void NotifyOnTextureRecreation();
     virtual void NotifyOnStereoChanged();
     virtual ~CGxDevice();
@@ -197,10 +209,25 @@ class CGxDevice {
     virtual void CapsWindowSizeInScreenCoords(CRect& rect) = 0;
     virtual void LogCrashInfo(char* buffer, uint32_t size);
     virtual void ScenePresent();
+    // NOT IN BINARY: cata's frame-buffer interface. The D3d11 backend binds render targets through it.
+    virtual void FrameBufferSet(CGxFrameBuffer* frameBuffer);
+    virtual CGxFrameBuffer* BackBuffer();
     virtual void SceneClear(uint32_t mask, CImVector color);
+    // NOT IN BINARY: cata's SceneClearToViewport; the D3d11 backend implements it and calls back into this.
+    virtual void SceneClearToViewport(uint32_t mask, CImVector color);
     virtual void XformSetProjection(const C44Matrix& matrix);
     virtual void XformSetView(const C44Matrix& matrix);
     virtual void Draw(CGxBatch* batch, int32_t count);
+    // NOT IN BINARY: cata's two-stream and per-batch draw interface. This client's D3d9-shaped
+    // Draw(CGxBatch*, count) stays as the entry point GxDraw uses; the D3d11 backend overrides the batch
+    // ones and forwards from Draw.
+    virtual void DrawNonIndexed(const CGxBatch& batch);
+    virtual void Draw(const CGxBatch& batch);
+    virtual void DrawInstancedNonIndexed(const CGxBatch& batch);
+    virtual void DrawInstanced(const CGxBatch& batch);
+    virtual void SetInstanceCount(uint32_t count);
+    virtual void ResetInstancing();
+    virtual void PrimVertexPtrs(CGxBuf** bufs, const EGxVertexBufferFormat* formats, EGxVertexBufferFormat format);
     virtual void PrimBegin(EGxPrim primType);
     virtual void PrimDrawElements();
     virtual void PrimVertex(const C3Vector& v);
@@ -229,10 +256,16 @@ class CGxDevice {
     virtual void ShaderCreate(CGxShader** shaders, EGxShTarget target, const char* path, const char* name, uint32_t permutations);
     virtual void ShaderDestroy(CGxShader*& shader);
     virtual void ShaderConstantsSet(EGxShTarget target, uint32_t index, const float* constants, uint32_t count);
-    virtual void IShaderReload(CGxShader* shader, const char* path, const char* name) = 0;
-    virtual void IShaderCreate(CGxShader* shader) = 0;
+    // Cata's permute-based shader interface: a CGxShader owns N CGxShaderPermute records and the backend
+    // creates a device shader per permute. Replaces the flat single-code IShaderCreate(CGxShader*).
+    // NOT IN BINARY: cata's per-bind hook. The base has nothing to do; a backend overrides it if it needs
+    // to see every shader binding.
+    virtual void IShaderBind(CGxShaderPermute* permute);
+    virtual void IShaderCreate(CGxShaderPermute* permute) = 0;
+    virtual void IShaderDestroy(CGxShaderPermute* permute) = 0;
     virtual void CursorSetVisible(int32_t visible);
     virtual uint32_t* CursorLock();
+    virtual int32_t ISetCursor();
     virtual void CursorUnlock(uint32_t x, uint32_t y);
     virtual void StereoSetConvergence(float convergence) = 0;
     virtual float StereoGetConvergence() = 0;
@@ -254,14 +287,36 @@ class CGxDevice {
     static C2iVector s_clientAdjust;
     static const char* s_pixelShaderTargetNames[14];
     static const char* s_vertexShaderTargetNames[12];
+    // NOT IN BINARY: the .bls directories, spelled out so IShaderLoad no longer takes a path argument
+    // (cata's loader derives them itself). Same strings the call sites used to pass in.
+    static const char* s_vertexShaderPath;
+    static const char* s_hullShaderPath;
+    static const char* s_domainShaderPath;
+    static const char* s_geometryShaderPath;
+    static const char* s_pixelShaderPath;
     static C3Vector s_pointScaleAttenuation;
     static CGxShader* s_uiPixelShader;
     static CGxShader* s_uiVertexShader[2];
     static ShadowConstants s_shadowConstants[2];
     static uint32_t s_alphaRef[12];
+    // NOT IN BINARY: cata's cursor/monitor/pool statics. The D3d11 backend uses the cursor visibility flag
+    // and walks s_poolList when it releases D3D pools.
+    static int32_t s_cursorVisible;
+    // NOT IN BINARY: cata's software-cursor bitmap and hotspot, read by IWindowCursorCreate
+    // (Win64/D3d11Platform.cpp). 32x32 ARGB.
+    static uint32_t s_cursorHotspotX;
+    static uint32_t s_cursorHotspotY;
+    static uint32_t s_cursor[1024];
+    // NOT IN BINARY: cata's monitor list, filled by AdapterInitMonitors and read by
+    // AdapterGetMonitorHandle (both in Win64/D3d11Platform.cpp here).
+    static int32_t s_monitorsInit;
+    static TSGrowableArray<void*> s_monitors;
+    static TSList<CGxPool, TSGetLink<CGxPool> > s_poolList;
     static const uint32_t s_texFormatBitDepth[GxTexFormats_Last];
     static const uint32_t s_texFormatBlockSize[GxTexFormats_Last];
     static const uint32_t s_texFormatBytesPerBlock[GxTexFormats_Last];
+    // NOT IN BINARY: depth formats, for the D3d11 backend's depth views. See CGxDevice.cpp.
+    static const uint32_t s_texFormatIsDepth[GxTexFormats_Last];
     static uint32_t m_logBytes;
 
     static int32_t AdapterDesktopMode(CGxMonitorMode& mode);
@@ -281,11 +336,37 @@ class CGxDevice {
     static void ClampRectTopByAspect(CiRect& windowRect);
     static void Log(const char* format, ...);
     static void Log(const char* format, va_list args);
+    // NOT IN BINARY: cata's LogV is the va_list core of Log; the D3d11 backend calls it directly.
+    static void LogV(const char* format, va_list args);
     static void LogClose();
     static void LogOpen();
     static void ClampRectLeft(CiRect& windowRect);
+    // NOT IN BINARY: the D3d11 adapter/enumeration entry points. Cata declares these on the base too,
+    // because its CGxDevice.cpp dispatches per-API through them; the implementations live in the D3d11
+    // backend (CGxD3d11Device.cpp), which is why they are declared here rather than there.
+    static void* AdapterGetMonitorHandle(uint32_t monitor);
+    static void AdapterInitMonitors();
+    static void AdapterResetMonitors();
+    static uint32_t AdapterMonitorCount();
+    static int32_t D3d11AdapterInfer(uint16_t& deviceID);
+    static int32_t D3d11AdapterMonitorModes(uint32_t monitor, TSGrowableArray<CGxMonitorMode>& modes);
+    static int32_t D3d11AdapterDesktopMode(uint32_t monitor, CGxMonitorMode& mode);
+    static void D3d11ApiQuery(int32_t& supported, int32_t& selectable);
+    static int32_t D3d11AdapterFormats(TSGrowableArray<CGxFormat>& formats);
+    static int32_t D3d11EnumMonitorModes(uint32_t monitor, TSGrowableArray<CGxMonitorMode>& modes);
+    static int32_t WinAdapterMonitorModes(uint32_t monitor, TSGrowableArray<CGxMonitorMode>& modes);
+    static int32_t WinAdapterDesktopMode(uint32_t monitor, CGxMonitorMode& mode);
+    // NOT IN BINARY: the Win32 window plumbing the D3d11 backend needs to create its own window.
+    uint16_t IWindowClassCreate();
+    void IWindowClassDestroy(uint16_t* windowClass);
+    int32_t IWindowCreate(void* window, CGxFormat& format, int32_t show);
+    void IWindowCursorCreate(void* window, void* cursor);
+    void IWindowCursorDestroy(void* cursor);
+    void IWindowDestroy(void* window);
     static void ClampRectRight(CiRect& windowRect);
     static void ClampRectTop(CiRect& windowRect);
+    // NOT IN BINARY: cata's polygon-offset depth-bias table, read by the D3d11 rasterizer state.
+    static const float s_polygonOffsetValues[3];
     static void ICursorUpdate(EGxTexCommand command, uint32_t width, uint32_t height, uint32_t face, uint32_t level, void* userArg, uint32_t& texelStrideInBytes, const void*& texels);
 
     CGxDevice();
@@ -293,7 +374,21 @@ class CGxDevice {
     void BufDestroy(CGxBuf*& buf);
     void DeviceCreatePools();
     void DeviceCreateStreamBufs();
-    void IShaderLoad(CGxShader** shaders, EGxShTarget target, const char* path, const char* name, uint32_t permutations);
+    // NOT IN BINARY: cata's single-shader convenience overload; the D3d11 backend uses it to load
+    // its Clear/Resolve/UI/PassThrough shaders at create time.
+    CGxShader* ShaderCreate(EGxShTarget target, const char* name);
+    // NOT IN BINARY: builds a CGxShader around bytecode compiled at run time (AntiAlias), which has no
+    // .bls container. The backend stores bytecode as its own device object and marks the permute valid.
+    virtual void ShaderCreateCompiled(CGxShaderPermute* permute, const void* bytecode, uint32_t bytecodeSize);
+    void ShaderRelease(CGxShader* shader);
+    bool ShaderReload(CGxShader* shader, const char* name);
+    void ShaderReloadAll();
+    // NOT IN BINARY: picks the shader profiles this device will load. Writes m_caps.m_shaderModel
+    // and m_caps.m_shaderTargets using THIS client's profile numbering (see the tables in
+    // CGxDevice.cpp), which is what IShaderLoad indexes.
+    void ChooseShaderModel(int32_t shaderModel);
+
+    bool IShaderLoad(CGxShader* shader, EGxShTarget target, const char* name);
     CGxPool* PoolCreate(EGxPoolTarget target, EGxPoolUsage usage, int32_t size, EGxPoolHintBits hint, const char* name);
     CGxBuf* BufStream(EGxPoolTarget target, uint32_t itemSize, uint32_t itemCount);
     void BufSizeSet(CGxBuf* buf, uint32_t itemSize, uint32_t itemCount);
@@ -321,6 +416,8 @@ class CGxDevice {
     void ClipPlaneSet(uint32_t index, const C4Plane& plane);
     void CursorSetDepth(float depth);
     EGxApi DeviceApi();
+    // NOT IN BINARY: cata exposes the device format; the D3d11 backend reads it.
+    const CGxFormat& DeviceFormat();
     uint32_t DeviceBaseMipLevel();
     void DeviceClearScreenShot();
     const CRect& DeviceCurWindow();
@@ -344,6 +441,8 @@ class CGxDevice {
     void PrimIndexPtr(CGxBuf* buf);
     void PrimVertexFormat(CGxBuf* buf, const CGxVertexAttrib* attribs, uint32_t count);
     void PrimVertexMask(uint32_t mask);
+    // NOT IN BINARY: EGxVertexAttrib -> shader input register index. See CGxDevice.cpp.
+    static uint32_t IVertexAttribToShAttrib(EGxVertexAttrib attrib);
     void PrimVertexPtr(CGxBuf* buf, EGxVertexBufferFormat format);
     void SetScissor(const CRect& rect);
     void ShaderConstantsClear();

@@ -29,6 +29,10 @@ class CGxVertexAttrib {
     /* 0004 */ uint32_t m_type;
     /* 0008 */ uint32_t m_offset;
     /* 000C */ uint32_t m_bufSize;
+    // NOT IN BINARY: which vertex stream this attribute comes from; cata's CGxVertexAttrib has it and the
+    // D3d11 backend reads it to mark input elements as per-instance. Appended rather than inserted so the
+    // 3.3.5a tables in Buffer.cpp keep their 4-value initialisers (the field stays 0 = single stream).
+    /* 0010 */ uint32_t m_stream;
 };
 
 class CGxMonitorMode {
@@ -36,6 +40,11 @@ class CGxMonitorMode {
     /* 0000 */ C2iVector m_size;
     /* 0008 */ uint32_t m_bpp;
     /* 000C */ uint32_t m_refreshRate;
+    // NOT IN BINARY: cata's mode description carries the DXGI refresh-rate rational and scanline/scaling
+    // hints, which its D3d11 mode enumeration fills in. Appended, so the 3.3.5a fields above are unchanged.
+    /* 0010 */ uint32_t m_refreshRateDenom;
+    /* 0014 */ uint32_t m_scanlineOrdering;
+    /* 0018 */ uint32_t m_scaling;
 
     CGxMonitorMode();
 };
@@ -79,7 +88,14 @@ enum EGxTexTarget {
     GxTex_CubeMap = 1,
     GxTex_Rectangle = 2,
     GxTex_NonPow2 = 3,
-    GxTexTargets_Last = 4,
+    // NOT IN BINARY: 3.3.5a has no volume textures, but the D3d11 backend is written against cata's
+    // target list and its caps tables are indexed by feature level per target. Appended so the three
+    // 3.3.5a values keep theirs. The two spare slots exist only because cata's ICreateTargets/ISetCaps
+    // write m_texTarget[5] and [6]; the array must be sized to match or those writes run past the caps.
+    GxTex_Volume = 4,
+    GxTex_5 = 5,
+    GxTex_6 = 6,
+    GxTexTargets_Last = 7,
 };
 
 #endif

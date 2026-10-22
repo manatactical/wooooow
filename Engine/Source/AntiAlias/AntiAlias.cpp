@@ -153,9 +153,30 @@ CGxShader* CompilePixelShader(const char* hlsl) {
     CGxShader* shader = new (__FILE__, __LINE__) CGxShader();
     shader->m_target = GxSh_Pixel;
     shader->m_refCount = 1;
-    shader->m_code.SetCount(static_cast<uint32_t>(code->GetBufferSize()));
-    memcpy(shader->m_code.m_data, code->GetBufferPointer(), code->GetBufferSize());
+
+    // The bytecode came from D3DCompile, not from a .bls container, so the permute is filled directly and the
+    // backend creates the device object. m_data belongs to the shader after this point (CGxShader::~CGxShader
+    // frees it), and the permute reads the bytecode out of it.
+    uint32_t bytecodeSize = static_cast<uint32_t>(code->GetBufferSize());
+    uint8_t* bytecode = static_cast<uint8_t*>(SMemAlloc(bytecodeSize, __FILE__, __LINE__, 0));
+    memcpy(bytecode, code->GetBufferPointer(), bytecodeSize);
+    shader->m_data = bytecode;
     code->Release();
+
+    shader->m_permutes.SetCount(1);
+    CGxShaderPermute& permute = shader->m_permutes[0];
+    permute.m_index = 0;
+    permute.m_shader = shader;
+    permute.m_apiSpecific = nullptr;
+    permute.m_target = static_cast<uint8_t>(GxSh_Pixel);
+
+    // A full-screen pass takes no vertex inputs and uploads no vertex constants, but the fields must be
+    // defined: the input-layout and constant-flush paths read them.
+    permute.SetInterface(bytecodeSize, 0, 0);
+
+    if (g_theGxDevicePtr) {
+        g_theGxDevicePtr->ShaderCreateCompiled(&permute, bytecode, bytecodeSize);
+    }
 
     return shader;
 }

@@ -17,6 +17,8 @@ class C44Matrix;
 class CGxBatch;
 class CGxDevice;
 class CGxFormat;
+class CGxShader;
+class CGxFrameBuffer;
 struct CGxBuf;
 class CGxQuery;
 class CGxTex;
@@ -54,6 +56,7 @@ class GxDrawListEntry {
 CGxDevice* CreateCGxDeviceD3d();
 CGxDevice* CreateCGxDeviceD3d9Ex();
 CGxDevice* CreateCGxDeviceOpenGl();
+CGxDevice* CreateCGxDeviceD3d11();
 CGxDevice* CreateGxDevice(EGxApi api, GxWindowProc windowProc, const CGxFormat& format);
 int32_t GxAdapterDesktopMode(CGxMonitorMode& mode);
 int32_t GxAdapterID(uint16_t& vendorID, uint16_t& deviceID, uint32_t& driverVersionHi, uint32_t& driverVersionLo);
@@ -68,6 +71,13 @@ void GxBufDestroy(CGxBuf* buf);
 void GxRenderTargetSet(EGxBuffer buffer, CGxTex* texture, uint32_t plane);
 void GxBufData(CGxBuf* buf, const void* data, uint32_t size, uint32_t offset);
 CGxBuf* GxBufStream(EGxPoolTarget target, uint32_t itemSize, uint32_t itemCount);
+// NOT IN BINARY: cata's permute-addressed renderstate setters. The D3d11 backend stores a
+// CGxShaderPermute* for GxRs_VertexShader/PixelShader, so callers pick the permute by index.
+void GxRsSet(EGxRenderState which, CGxShader* shader, uint32_t permute);
+void GxFrameBufferSet(CGxFrameBuffer* frameBuffer);
+int32_t GxShaderValid(CGxShader* shader, uint32_t permute);
+// NOT IN BINARY: cata's overload for an already-streamed index buffer; used by the D3d11 backend.
+void GxPrimIndexPtr(CGxBuf* buf);
 void GxPrimIndexPtr(uint32_t indexCount, const uint16_t* indices);
 void GxPrimLockVertexPtrs(uint32_t vertexCount, const C3Vector* pos, uint32_t posStride, const C3Vector* normal, uint32_t normalStride, const CImVector* color, uint32_t colorStride, const uint8_t* bone, uint32_t boneStride, const C2Vector* tex0, uint32_t tex0Stride, const C2Vector* tex1, uint32_t tex1Stride);
 void GxPrimVertexPtr(CGxBuf* buf, EGxVertexBufferFormat format);

@@ -67,7 +67,64 @@ enum EGxTexFormat {
     GxTex_Gr1616F = 10,
     GxTex_R32F = 11,
     GxTex_D24X8 = 12,
-    GxTexFormats_Last = 13,
+
+    // NOT IN BINARY: the formats cata's D3d11 backend's tables and its SceneClearToViewport switch name.
+    // Appended so every 3.3.5a value keeps its number. The 3.3.5a backend tables in CGxDeviceD3d /
+    // CGxDeviceD3d9Ex / CGxDeviceOpenGL / Services/Texture / Texture_Console carry explicit initialisers
+    // for 13 entries and are no longer built (D3d/D3d9Ex are excluded; the rest are updated here).
+    GxTex_R16 = 13,
+    GxTex_Abgr16161616F = 14,
+    GxTex_R24X8 = 15,
+    GxTex_Abgr32323232F = 16,
+    GxTex_D16 = 17,
+    GxTex_D32 = 18,
+    GxTexFormats_Last = 19,
+};
+
+// NOT IN BINARY: cata's shader-profile capability indices. The D3d11 backend records which profiles the
+// feature level supports (m_caps.m_shaderProfiles[...]) but this client selects the profile by its own
+// m_shaderTargets index -- see CGxDevice::ChooseShaderModel -- so these values are only ever used as
+// capability flags.
+enum EGxShaderProfile {
+    GxShProfile_None = 0,
+    GxShProfile_VsFf = 1,
+    GxShProfile_PsFf = 2,
+    GxShProfile_Vs11 = 3,
+    GxShProfile_Vs20 = 4,
+    GxShProfile_Vs30 = 5,
+    GxShProfile_Vs40 = 6,
+    GxShProfile_Vs50 = 7,
+    GxShProfile_Ps11 = 8,
+    GxShProfile_Ps14 = 9,
+    GxShProfile_Ps20 = 10,
+    GxShProfile_Ps30 = 11,
+    GxShProfile_Ps40 = 12,
+    GxShProfile_Ps50 = 13,
+    GxShProfile_Gs40 = 14,
+    GxShProfile_Gs50 = 15,
+    GxShProfile_Hs50 = 16,
+    GxShProfile_Ds50 = 17,
+    GxShProfile_Cs40 = 18,
+    GxShProfile_Cs50 = 19,
+    GxShProfile_Arbvp1 = 20,
+    GxShProfile_Arbvp1Cg12 = 21,
+    GxShProfile_Arbfp1 = 22,
+    GxShProfile_Glslv = 23,
+    GxShProfile_Glslf = 24,
+    GxShProfile_Opencl = 25,
+    GxShProfile_Vp20 = 26,
+    GxShProfile_Vp30 = 27,
+    GxShProfile_Vp40 = 28,
+    GxShProfile_Gp4vp = 29,
+    GxShProfile_Fp10 = 30,
+    GxShProfile_Fp20 = 31,
+    GxShProfile_Fp25 = 32,
+    GxShProfile_Fp30 = 33,
+    GxShProfile_Fp40 = 34,
+    GxShProfile_Gp4fp = 35,
+    GxShProfile_Gp4gp = 36,
+    GxShProfile_Cuda = 37,
+    GxShProfiles_Last = 38,
 };
 
 enum EGxVertexBufferFormat {
@@ -89,9 +146,16 @@ enum EGxVertexBufferFormat {
 };
 
 enum EGxBuffer {
-    GxBuffers_Color = 0,
-    GxBuffers_Depth = 1,
-    GxBuffers_Last = 2,
+    // 3.3.5a order, kept: Depth 0, Color 1. Cata numbers them the other way round and its D3d11 backend
+    // loops `GxBuffers_Color .. GxBuffers_Color3`; that range is colour-only there. Here the order is
+    // load-bearing for 3.3.5a code that indexes m_textureTarget by EGxBuffer, so the D3d11 render-target
+    // loops were rewritten to enumerate the colour slots explicitly instead.
+    GxBuffers_Depth = 0,
+    GxBuffers_Color = 1,
+    GxBuffers_Color1 = 2,
+    GxBuffers_Color2 = 3,
+    GxBuffers_Color3 = 4,
+    GxBuffers_Last = 5,
 };
 
 enum EGxBufferBit : uint32_t {
@@ -236,11 +300,11 @@ class CGxCaps {
     /* 0018 */ int32_t unk_0018;
     /* 001C */ uint32_t m_maxIndex;
     /* 0020 */ int32_t m_generateMipMaps;
-    /* 0024 */ int32_t m_texFmt [13];
-    /* 0058 */ int32_t m_texTarget [4];
+    /* 0024 */ int32_t m_texFmt [GxTexFormats_Last];
+    /* 0058 */ int32_t m_texTarget [GxTexTargets_Last];
     /* 0068 */ uint32_t m_texNonPow2;
-    /* 006C */ uint32_t m_texMaxSize [4];
-    /* 007C */ int32_t m_rttFormat [13];
+    /* 006C */ uint32_t m_texMaxSize [GxTexTargets_Last];
+    /* 007C */ int32_t m_rttFormat [GxTexFormats_Last];
     /* 00B0 */ uint32_t unk_00B0;
     /* 00B4 */ int32_t m_shaderTargets [6];
     /* 00CC */ uint32_t m_shaderConstants [6];
@@ -262,6 +326,25 @@ class CGxCaps {
     /* 0130 */ int32_t m_shaderAlphaRef;
     /* 0134 */ int32_t unk_0134;
     /* 0138 */ int32_t unk_0138;
+    // NOT IN BINARY: cata's CGxCaps carries the chosen shader model, the per-profile capability flags and
+    // the adapter identity, and its D3d11 backend reads all of them. Appended so every 3.3.5a offset above
+    // is unchanged; only the D3d11 backend writes or reads these.
+    /* 013C */ int32_t m_shaderModel;
+    /* 0140 */ int32_t m_shaderProfiles [GxShProfiles_Last];
+    /* 01D8 */ int32_t m_numVertexTmus;
+    /* 01DC */ int32_t m_numShaderTmus;
+    /* 01E0 */ uint32_t m_numRenderTargets;
+    /* 01E4 */ int32_t m_vertexTexFmt [GxTexFormats_Last];
+    /* 0230 */ int32_t m_pcfFormat [GxTexFormats_Last];
+    /* 027C */ int32_t unk_02BC;
+    /* 0280 */ uint32_t unk_02D8 [5];
+    /* 0294 */ int32_t unk_02F4;
+    /* 0298 */ int32_t unk_02FC;
+    /* 029C */ int32_t unk_0300;
+    /* 02A0 */ int32_t unk_0304;
+    /* 02A4 */ int32_t unk_0314;
+    /* 02A8 */ uint32_t m_vendorId;
+    /* 02AC */ uint32_t m_deviceId;
 };
 
 class CGxQuery {
@@ -379,7 +462,22 @@ enum EGxRenderState {
     GxRs_PointSprite = 83,
     Unk84 = 84,
     GxRs_ColorMaterial = 85,
-    GxRenderStates_Last = 86,
+
+    // NOT IN BINARY: 3.3.5a stops at GxRs_ColorMaterial, so these are appended rather than inserted and
+    // every value 0..85 keeps its meaning. They name the D3d11 backend's extra stages and its
+    // SceneClearToViewport blend-factor case; nothing else reads them. GxRenderStates_Last only sizes the
+    // per-state arrays (CGxDevice::RsInit), so growing it costs the other backends one unused slot each.
+    GxRs_HullShader = 86,
+    GxRs_DomainShader = 87,
+    GxRs_GeometryShader = 88,
+    GxRs_BlendFactor = 89,
+    GxRs_LineWidth = 90,
+    GxRs_VertexTexture0 = 91,
+    GxRs_VertexTexture1 = 92,
+    GxRs_VertexTexture2 = 93,
+    GxRs_VertexTexture3 = 94,
+    GxRs_Unk41 = 95,
+    GxRenderStates_Last = 96,
 };
 
 enum EGxShTarget {

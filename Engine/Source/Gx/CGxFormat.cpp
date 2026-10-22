@@ -17,6 +17,15 @@ CGxFormat::CGxFormat() {
     for (uint32_t i = 0; i < 6; i++) {
         this->m_fixedFunction[i] = -1;
     }
+
+    // NOT IN BINARY: the fields cata's CGxFormat carries. m_refreshRateDenom must never be 0 (it is a
+    // DXGI rational denominator) and m_shaderModel feeds ChooseShaderModel, so both are set explicitly.
+    this->unk_002C = false;
+    this->m_refreshRateDenom = 1;
+    this->m_scanlineOrdering = 0;
+    this->m_scaling = 0;
+    this->m_shaderModel = -1;
+    this->m_monitor = 0;
 }
 
 // VERIFY: 22ad4f7a auto

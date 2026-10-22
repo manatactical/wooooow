@@ -14,11 +14,12 @@ class CDetailDoodadData;
 // WarcraftXL extension for the same 12340 client, but where that module needed three detours this tree owns
 // three seams of its own:
 //
-//   * the shader is rewritten once from CDetailDoodad::Initialize, after ShaderCreate has read the .bls
-//     bytecode and before anything has bound one. `m_loaded` is still 0 there, so the device has not
-//     compiled it yet and the patched text is what it compiles. Each permutation is recognised by identity
-//     against the array ShaderCreate filled, so a permutation this module cannot handle is left alone
-//     instead of mis-patched.
+//   * the shader rewrite is DISABLED under the D3d11 backend. The original implementation disassembled the
+//     vs_3_0 bytecode, edited the assembly and reassembled it; D3d11 loads the vs_4_0/vs_5_0 DXBC
+//     permutations instead, which have no assembler round-trip, so CGrassMotion::PatchVertexShader is now
+//     a no-op that logs once. `s_patched` therefore stays false and the module is inert: the wind
+//     displacement is not applied in the vertex shader. The design notes below remain correct for a future
+//     port that can build shaders from source.
 //   * the per-frame and per-doodad values ride vertex-constant rows uploaded right beside the engine's own
 //     block in CDetailDoodad::SetupVertexShader. The engine uses c0..c13; c14..c18 and c35..c55 are ours.
 //   * the per-doodad row is a register written between a batch's own sub-draws, so the shader needs no

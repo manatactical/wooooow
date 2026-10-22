@@ -28,7 +28,7 @@ PassGauss4::~PassGauss4() {
 
 bool PassGauss4::Valid() {
     CGxShader* shader = this->m_shaders[this->m_shaderIndex];
-    return (shader ? shader->Valid() : 0) != 0;
+    return (shader ? GxShaderValid(shader, 0) : 0) != 0;
 }
 
 // VERIFY: e4ef82d7 manual

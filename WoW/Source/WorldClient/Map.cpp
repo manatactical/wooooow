@@ -2530,18 +2530,18 @@ void CMap::ValidateShaders() {
     if (CWorld::enables & Enable_PixelShaders) {
         CGxShader* specularShader = CMap::GetPixelShader(flag, true, false);
         CGxShader* shader = CMap::GetPixelShader(flag, false, false);
-        valid = specularShader && specularShader->Valid() && shader && shader->Valid();
+        valid = specularShader && GxShaderValid(specularShader, 0) && shader && GxShaderValid(shader, 0);
         CMap::gTerrainPixelShadersValid = valid;
     }
 
     if (CMap::enableSpecular && valid) {
         CGxShader* specularShader = CMap::GetPixelShader(flag, true, false);
         CGxShader* shader = CMap::GetPixelShader(flag, false, false);
-        CMap::enableSpecularTerrain = specularShader && specularShader->Valid() && shader && shader->Valid();
+        CMap::enableSpecularTerrain = specularShader && GxShaderValid(specularShader, 0) && shader && GxShaderValid(shader, 0);
     }
 
     if (CMap::enableVertexShaders) {
-        CMap::enableTerrainShaderVertex = CMap::gTerrainPixelShadersValid && CMap::vertexShader_Terrain[0] && CMap::vertexShader_Terrain[0]->Valid();
+        CMap::enableTerrainShaderVertex = CMap::gTerrainPixelShadersValid && CMap::vertexShader_Terrain[0] && GxShaderValid(vertexShader_Terrain[0], 0);
     }
 
     CMap::enableChunkBatching = 0;

@@ -549,7 +549,7 @@ void CGxStringBatch::RenderBatch() {
         }
     }
 
-    if (vertexShader && vertexShader->Valid() && g_fontPixelShader && g_fontPixelShader->Valid()) {
+    if (vertexShader && GxShaderValid(vertexShader, 0) && g_fontPixelShader && GxShaderValid(g_fontPixelShader, 0)) {
         C44Matrix viewProj;
         GxRsSet(GxRs_VertexShader, vertexShader);
         GxRsSet(GxRs_PixelShader, g_fontPixelShader);

@@ -843,7 +843,7 @@ Rain::Rain(float width, float height) : m_bbox(C3Vector(0.0f, 0.0f, 0.0f), C3Vec
     g_theGxDevicePtr->ShaderCreate(&this->m_shaderPatter, GxSh_Vertex, "Shaders\\Vertex", "patter", 1);
     this->m_rainDropSplashTex = TextureCreate("textures\\Weather\\RainDropSplash01.blp", CGxTexFlags(GxTex_LinearMipLinear, 0, 0, 0, 0, 0, 1, 0, 0, 0), &status, 1);
 
-    if (!this->m_shaderRain || !this->m_shaderRain->Valid() || !this->m_shaderPatter || !this->m_shaderPatter->Valid()) {
+    if (!this->m_shaderRain || !GxShaderValid(this->m_shaderRain, 0) || !this->m_shaderPatter || !GxShaderValid(this->m_shaderPatter, 0)) {
         this->m_useWeatherShaders = 0;
     }
 

@@ -596,7 +596,7 @@ static void LoadingScreenPaint(void* param, const RECTF* rect, const RECTF* visi
 
     C44Matrix transform;
 
-    if (s_vertexShader[0]->Valid() && s_pixelShader[0]->Valid()) {
+    if (GxShaderValid(s_vertexShader[0], 0) && GxShaderValid(s_pixelShader[0], 0)) {
         g_theGxDevicePtr->RsSet(GxRs_VertexShader, s_vertexShader[0]);
         g_theGxDevicePtr->RsSet(GxRs_PixelShader, s_pixelShader[0]);
         GxXformViewProjNativeTranspose(transform);
@@ -610,7 +610,7 @@ static void LoadingScreenPaint(void* param, const RECTF* rect, const RECTF* visi
     if (!PaintBackgroundImage()) {
         PaintSimpleBackground();
 
-        if (s_vertexShader[0]->Valid() && s_pixelShader[0]->Valid()) {
+        if (GxShaderValid(s_vertexShader[0], 0) && GxShaderValid(s_pixelShader[0], 0)) {
             GxShaderConstantsSet(GxSh_Vertex, 0, &transform.a0, 4);
         }
 
@@ -983,7 +983,7 @@ static void LoadingScreenMiniPaint(void* param, const RECTF* rect, const RECTF* 
 
     C44Matrix transform;
 
-    if (s_vertexShader[0]->Valid() && s_pixelShader[0]->Valid()) {
+    if (GxShaderValid(s_vertexShader[0], 0) && GxShaderValid(s_pixelShader[0], 0)) {
         g_theGxDevicePtr->RsSet(GxRs_VertexShader, s_vertexShader[0]);
         g_theGxDevicePtr->RsSet(GxRs_PixelShader, s_pixelShader[0]);
         GxXformViewProjNativeTranspose(transform);

@@ -2772,7 +2772,7 @@ void CMapRenderChunk::SetShaders(int32_t a1, int32_t a2) {
     for (int32_t layers = 1; layers <= 4; layers++) {
         CGxShader* shader = CMap::GetTerrainPixelShader(bigAlpha, layers, shadowMode, a1, a2);
 
-        if (layers <= g_theGxDevicePtr->Caps().m_numTmus && shader && shader->Valid()) {
+        if (layers <= g_theGxDevicePtr->Caps().m_numTmus && shader && GxShaderValid(shader, 0)) {
             CMapRenderChunk::s_currentShaderX[layers - 1] = shader;
         }
     }

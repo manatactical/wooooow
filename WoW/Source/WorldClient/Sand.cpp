@@ -421,7 +421,7 @@ Sand::Sand(float width, float height) : m_bbox(C3Vector(0.0f, 0.0f, 0.0f), C3Vec
     this->m_bbox.t.z = halfHeight;
     g_theGxDevicePtr->ShaderCreate(&this->m_shader, GxSh_Vertex, "Shaders\\Vertex", "sand", 1);
 
-    if (!this->m_shader || !this->m_shader->Valid() || !g_theGxDevicePtr->Caps().m_pointParameters) {
+    if (!this->m_shader || !GxShaderValid(this->m_shader, 0) || !g_theGxDevicePtr->Caps().m_pointParameters) {
         this->m_useWeatherShaders = 0;
     }
 

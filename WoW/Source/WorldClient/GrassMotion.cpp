@@ -650,77 +650,18 @@ void CGrassMotion::AnalyzeDoodad(CDetailDoodadData* data) {
 // misses either line, or that fails to assemble, is left exactly stock: a half-patched shader is a crash or
 // silent corruption, where stock grass is a visible and diagnosable outcome.
 void CGrassMotion::PatchVertexShader(CGxShader* shader, uint32_t permutation) {
-    if (!shader || !shader->m_code.Count()) {
-        return;
+    // D3d11 only. The former implementation disassembled the vs_3_0 bytecode, inserted a prologue and
+    // body, reassembled it and wrote it back. There is no vs_3_0 shader to patch any more: the D3d11
+    // backend loads the vs_4_0/vs_5_0 DXBC permutations out of the same .bls sets, and those are compiled
+    // DXBC with no assembler round-trip, so this module cannot rewrite them.
+    //
+    // The wind displacement is therefore not applied in the vertex shader. Everything else this module
+    // does (the per-frame constants in c14..c22, the sway data) still runs; only this last rewrite cannot.
+    // Reported once so the behaviour is diagnosable from the log rather than silent.
+    static bool s_reported;
+
+    if (!s_reported && shader) {
+        s_reported = true;
+        CGxDevice::Log("grass wind: vertex-shader patching is not available on D3d11 (permutation %u left stock)", permutation);
     }
-
-    // The version token is the first dword. Only vs_3_0 is patched: the dormant point-light permutations
-    // live in the same array and read c14..c22, the rows this module now owns, so they must be recognised
-    // and left alone rather than written over.
-    uint32_t token = 0;
-    memcpy(&token, shader->m_code.m_data, sizeof(token));
-
-    if (token != 0xFFFE0300u) {
-        CGxDevice::Log("grass wind: permutation %u has shader model token %08x, left stock", permutation, token);
-        return;
-    }
-
-    std::string source;
-    std::string error;
-
-    if (!Disassemble(shader->m_code.m_data, shader->m_code.Count(), source, error)) {
-        CGxDevice::Log("grass wind: permutation %u left stock (%s)", permutation, error.c_str());
-        return;
-    }
-
-    size_t versionEnd = source.find('\n');
-
-    if (versionEnd == std::string::npos) {
-        CGxDevice::Log("grass wind: permutation %u has no version line, left stock", permutation);
-        return;
-    }
-
-    source.insert(versionEnd + 1, kPrologue);
-
-    const char* const kAnchor = "add r0, r0, c3";
-    size_t anchor = source.find(kAnchor);
-
-    if (anchor == std::string::npos) {
-        CGxDevice::Log("grass wind: permutation %u has no '%s' anchor, left stock", permutation, kAnchor);
-        return;
-    }
-
-    size_t anchorEnd = source.find('\n', anchor);
-
-    if (anchorEnd == std::string::npos) {
-        CGxDevice::Log("grass wind: permutation %u anchor has no line end, left stock", permutation);
-        return;
-    }
-
-    source.insert(anchorEnd + 1, BuildBody());
-
-    std::vector<uint8_t> code;
-
-    if (!Assemble(source, code, error)) {
-        CGxDevice::Log("grass wind: permutation %u left stock (%s)", permutation, error.c_str());
-        return;
-    }
-
-    uint32_t stockLength = shader->m_code.Count();
-    shader->m_code.SetCount(static_cast<uint32_t>(code.size()));
-    memcpy(shader->m_code.m_data, code.data(), code.size());
-
-    // Nothing has bound this yet -- Initialize patches before the first bind -- but a reload could have
-    // compiled it, so the flags are cleared rather than assumed stale.
-    if (shader->m_apiSpecific) {
-        g_theGxDevicePtr->ShaderDestroy(shader);
-        shader->m_refCount = 1;
-    }
-
-    shader->m_loaded = 0;
-    shader->m_valid = 0;
-
-    s_patched = true;
-
-    CGxDevice::Log("grass wind: permutation %u patched (%u -> %u bytes)", permutation, stockLength, static_cast<uint32_t>(code.size()));
 }

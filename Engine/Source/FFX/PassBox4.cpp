@@ -30,7 +30,7 @@ PassBox4::~PassBox4() {
 // OFFSET: 0x008C2020
 bool PassBox4::Valid() {
     CGxShader* shader = this->m_shaders[this->m_shaderIndex];
-    return (shader ? shader->Valid() : 0) != 0;
+    return (shader ? GxShaderValid(shader, 0) : 0) != 0;
 }
 
 // VERIFY: 3361e6e6 manual

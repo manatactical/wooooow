@@ -8,8 +8,8 @@
 #include <windows.h>
 #include <d3d9.h>
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
-#include "Engine/Source/Gx/CGxDeviceD3d/CGxDeviceD3d.h"
-#include "Engine/Source/Gx/CGxDeviceD3d9Ex/CGxDeviceD3d9Ex.h"
+// The D3d11 adapter-inference path below calls into the backend.
+#include "Engine/Source/Gx/CGxDeviceD3d11/CGxDeviceD3d11.h"
 
 // STATIC: 0x00AD8CE8
 static D3DMULTISAMPLE_TYPE s_d3dMultisampleTypes[9] = { D3DMULTISAMPLE_NONE, D3DMULTISAMPLE_2_SAMPLES, D3DMULTISAMPLE_4_SAMPLES, D3DMULTISAMPLE_6_SAMPLES, D3DMULTISAMPLE_8_SAMPLES, D3DMULTISAMPLE_10_SAMPLES, D3DMULTISAMPLE_12_SAMPLES, D3DMULTISAMPLE_14_SAMPLES, D3DMULTISAMPLE_16_SAMPLES };
@@ -36,19 +36,10 @@ int32_t CGxDevice::AdapterFormats(EGxApi api, TSGrowableArray<CGxFormat>& format
     formats.Reserve(256, 0);
 
     switch (api) {
-        case GxApi_OpenGl:
-            CGxDevice::OpenGlAdapterFormats(formats);
-            break;
-
-        case GxApi_D3d9:
-            CGxDevice::D3dAdapterFormats(formats);
-            break;
-
-        case GxApi_D3d9Ex:
-            CGxDevice::D3d9ExAdapterFormats(formats);
-            break;
-
+        // Only D3d11 is built; the D3d/D3d9Ex/OpenGl enumeration paths went with their backends.
+        case GxApi_D3d11:
         default:
+            CGxDevice::D3d11AdapterFormats(formats);
             break;
     }
 
@@ -201,22 +192,8 @@ int32_t CGxDevice::DeviceAdapterID(uint16_t& vendorID, uint16_t& deviceID, uint3
     }
 
     if (!result) {
-        HINSTANCE d3dLib = nullptr;
-        LPDIRECT3D9 d3d = nullptr;
-
-        if (CGxDeviceD3d::ILoadD3dLib(d3dLib, d3d)) {
-            D3DADAPTER_IDENTIFIER9 identifier;
-
-            if (SUCCEEDED(d3d->GetAdapterIdentifier(0, 0, &identifier))) {
-                vendorID = static_cast<uint16_t>(identifier.VendorId);
-                deviceID = static_cast<uint16_t>(identifier.DeviceId);
-                driverVersionHi = identifier.DriverVersion.HighPart;
-                driverVersionLo = identifier.DriverVersion.LowPart;
-                result = 1;
-            }
-
-            CGxDeviceD3d::IUnloadD3dLib(d3dLib, d3d);
-        }
+        // The D3d9 adapter-identifier fallback went with its backend. The DISPLAY_DEVICEA pass above already
+        // recovers vendor/device for any DXGI-capable adapter, so there is nothing left to fall back to.
     }
 
     CGxDevice::Log("CGxDevice::DeviceAdapterID(): RET: %d, VID: %x, DID: %x, DVER: %x.%x", result, vendorID, deviceID, driverVersionHi, driverVersionLo);
@@ -225,37 +202,33 @@ int32_t CGxDevice::DeviceAdapterID(uint16_t& vendorID, uint16_t& deviceID, uint3
 }
 
 // OFFSET: 0x00689DB0
+//
+// The "is this machine good enough, and if so which tier" probe. 3.3.5a answered it with D3D9 device caps;
+// this client renders through D3d11, so it asks the D3d11 backend instead (cata's CGxDevice::AdapterInfer
+// does the same). ConsoleDetectDetectHardware needs a non-zero answer here when the exact vendor/device pair
+// is not in VideoHardware.dbc: it sets vendorID to 0xFFFF and calls this to pick a generic tier, and exits
+// with "Failed to find a suitable display device" if nothing comes back.
 int32_t CGxDevice::DeviceAdapterInfer(uint16_t& deviceID) {
-    int32_t result = 0;
-    deviceID = 0;
-
-    HINSTANCE d3dLib = nullptr;
-    LPDIRECT3D9 d3d = nullptr;
-
-    if (!CGxDeviceD3d::ILoadD3dLib(d3dLib, d3d)) {
-        return 0;
+    if (CGxDevice::D3d11AdapterInfer(deviceID)) {
+        return 1;
     }
 
-    D3DCAPS9 caps;
+    // Second chance. D3d11AdapterInfer only accepts an adapter that answers CheckInterfaceSupport for
+    // ID3D10Device, which some drivers refuse even though they create a D3D11 device happily. Being able to
+    // create one is the real question, and IHardwareSupported asks exactly that.
+    if (CGxDeviceD3d11::ILoadD3dLib()) {
+        int32_t creatable = CGxDeviceD3d11::IHardwareSupported();
+        CGxDeviceD3d11::IUnloadD3dLib();
 
-    if (SUCCEEDED(d3d->GetDeviceCaps(0, D3DDEVTYPE_HAL, &caps))) {
-        if ((caps.DevCaps & D3DDEVCAPS_HWTRANSFORMANDLIGHT) && caps.MaxSimultaneousTextures > 2 && static_cast<uint16_t>(caps.PixelShaderVersion) >= 0x200) {
+        if (creatable) {
             deviceID = 3;
-        } else if ((caps.DevCaps & D3DDEVCAPS_HWTRANSFORMANDLIGHT) && caps.MaxSimultaneousTextures > 2 && static_cast<uint16_t>(caps.PixelShaderVersion) >= 0x101) {
-            deviceID = 2;
-        } else if ((caps.DevCaps & D3DDEVCAPS_HWTRANSFORMANDLIGHT) && caps.MaxSimultaneousTextures >= 2) {
-            deviceID = 1;
-        } else {
-            deviceID = 0;
+            CGxDevice::Log("CGxDevice::DeviceAdapterInfer(): D3D11 device creatable, DID: 3");
+            return 1;
         }
-
-        result = 1;
     }
 
-    CGxDeviceD3d::IUnloadD3dLib(d3dLib, d3d);
-    CGxDevice::Log("CGxDevice::DeviceAdapterInfer(): RET: %d, DID: %x", result, deviceID);
-
-    return result;
+    CGxDevice::Log("CGxDevice::DeviceAdapterInfer(): no usable D3D11 adapter");
+    return 0;
 }
 
 // OFFSET: 0x00689E80
@@ -305,264 +278,6 @@ int32_t CGxDevice::AdapterDesktopMode(CGxMonitorMode& mode) {
     mode.m_bpp = devMode.dmBitsPerPel;
 
     return 1;
-}
-
-// OFFSET: 0x0068A170
-int32_t CGxDevice::D3dAdapterFormats(TSGrowableArray<CGxFormat>& formats) {
-    HINSTANCE d3dLib = nullptr;
-    LPDIRECT3D9 d3d = nullptr;
-
-    if (!CGxDeviceD3d::ILoadD3dLib(d3dLib, d3d)) {
-        return 0;
-    }
-
-    for (uint32_t i = 0; i < 3; i++) {
-        D3DFORMAT adapterFormat = s_d3dAdapterFormats[i];
-        uint32_t modeCount = d3d->GetAdapterModeCount(0, adapterFormat);
-
-        for (uint32_t mode = 0; mode < modeCount; mode++) {
-            D3DDISPLAYMODE displayMode;
-
-            if (d3d->EnumAdapterModes(0, adapterFormat, mode, &displayMode) != D3D_OK) {
-                continue;
-            }
-
-            CGxFormat format;
-            memset(&format, 0, sizeof(format));
-
-            switch (displayMode.Format) {
-                case D3DFMT_A8R8G8B8:
-                    format.m_colorFormat = CGxFormat::Fmt_Argb8888;
-                    break;
-
-                case D3DFMT_X8R8G8B8:
-                    format.m_colorFormat = CGxFormat::Fmt_ArgbX888;
-                    break;
-
-                case D3DFMT_R5G6B5:
-                    format.m_colorFormat = CGxFormat::Fmt_Rgb565;
-                    break;
-
-                default:
-                    continue;
-            }
-
-            for (uint32_t depth = 0; depth < 4; depth++) {
-                if (FAILED(d3d->CheckDeviceFormat(0, D3DDEVTYPE_HAL, displayMode.Format, D3DUSAGE_DEPTHSTENCIL, D3DRTYPE_SURFACE, s_d3dDepthFormats[depth]))) {
-                    continue;
-                }
-
-                switch (s_d3dDepthFormats[depth]) {
-                    case D3DFMT_D32:
-                        format.m_depthFormat = CGxFormat::Fmt_Ds320;
-                        break;
-
-                    case D3DFMT_D24S8:
-                        format.m_depthFormat = CGxFormat::Fmt_Ds248;
-                        break;
-
-                    case D3DFMT_D24X8:
-                        format.m_depthFormat = CGxFormat::Fmt_Ds24X;
-                        break;
-
-                    case D3DFMT_D16:
-                        format.m_depthFormat = CGxFormat::Fmt_Ds160;
-                        break;
-
-                    default:
-                        break;
-                }
-
-                for (uint32_t multisample = 0; multisample < 9; multisample++) {
-                    if (FAILED(d3d->CheckDeviceMultiSampleType(0, D3DDEVTYPE_HAL, displayMode.Format, FALSE, s_d3dMultisampleTypes[multisample], nullptr))) {
-                        continue;
-                    }
-
-                    if (FAILED(d3d->CheckDeviceMultiSampleType(0, D3DDEVTYPE_HAL, s_d3dDepthFormats[depth], FALSE, s_d3dMultisampleTypes[multisample], nullptr))) {
-                        continue;
-                    }
-
-                    switch (s_d3dMultisampleTypes[multisample]) {
-                        case D3DMULTISAMPLE_NONE:
-                            format.m_multisampleCount = 1;
-                            break;
-
-                        case D3DMULTISAMPLE_2_SAMPLES:
-                            format.m_multisampleCount = 2;
-                            break;
-
-                        case D3DMULTISAMPLE_4_SAMPLES:
-                            format.m_multisampleCount = 4;
-                            break;
-
-                        case D3DMULTISAMPLE_6_SAMPLES:
-                            format.m_multisampleCount = 6;
-                            break;
-
-                        case D3DMULTISAMPLE_8_SAMPLES:
-                            format.m_multisampleCount = 8;
-                            break;
-
-                        case D3DMULTISAMPLE_10_SAMPLES:
-                            format.m_multisampleCount = 10;
-                            break;
-
-                        case D3DMULTISAMPLE_12_SAMPLES:
-                            format.m_multisampleCount = 12;
-                            break;
-
-                        case D3DMULTISAMPLE_14_SAMPLES:
-                            format.m_multisampleCount = 14;
-                            break;
-
-                        case D3DMULTISAMPLE_16_SAMPLES:
-                            format.m_multisampleCount = 16;
-                            break;
-
-                        default:
-                            break;
-                    }
-
-                    if (!CGxDevice::FormatExists(formats, format)) {
-                        *formats.New() = format;
-                    }
-                }
-            }
-        }
-    }
-
-    CGxDeviceD3d::IUnloadD3dLib(d3dLib, d3d);
-
-    return formats.Count() != 0;
-}
-
-// OFFSET: 0x0068C250
-int32_t CGxDevice::D3d9ExAdapterFormats(TSGrowableArray<CGxFormat>& formats) {
-    HINSTANCE d3dLib = nullptr;
-    LPDIRECT3D9 d3d = nullptr;
-
-    if (!CGxDeviceD3d9Ex::ILoadD3dLib(d3dLib, d3d)) {
-        return 0;
-    }
-
-    for (uint32_t i = 0; i < 3; i++) {
-        D3DFORMAT adapterFormat = s_d3d9ExAdapterFormats[i];
-        uint32_t modeCount = d3d->GetAdapterModeCount(0, adapterFormat);
-
-        for (uint32_t mode = 0; mode < modeCount; mode++) {
-            D3DDISPLAYMODE displayMode;
-
-            if (d3d->EnumAdapterModes(0, adapterFormat, mode, &displayMode) != D3D_OK) {
-                continue;
-            }
-
-            CGxFormat format;
-            memset(&format, 0, sizeof(format));
-
-            switch (displayMode.Format) {
-                case D3DFMT_A8R8G8B8:
-                    format.m_colorFormat = CGxFormat::Fmt_Argb8888;
-                    break;
-
-                case D3DFMT_X8R8G8B8:
-                    format.m_colorFormat = CGxFormat::Fmt_ArgbX888;
-                    break;
-
-                case D3DFMT_R5G6B5:
-                    format.m_colorFormat = CGxFormat::Fmt_Rgb565;
-                    break;
-
-                default:
-                    continue;
-            }
-
-            for (uint32_t depth = 0; depth < 4; depth++) {
-                if (FAILED(d3d->CheckDeviceFormat(0, D3DDEVTYPE_HAL, displayMode.Format, D3DUSAGE_DEPTHSTENCIL, D3DRTYPE_SURFACE, s_d3d9ExDepthFormats[depth]))) {
-                    continue;
-                }
-
-                switch (s_d3d9ExDepthFormats[depth]) {
-                    case D3DFMT_D32:
-                        format.m_depthFormat = CGxFormat::Fmt_Ds320;
-                        break;
-
-                    case D3DFMT_D24S8:
-                        format.m_depthFormat = CGxFormat::Fmt_Ds248;
-                        break;
-
-                    case D3DFMT_D24X8:
-                        format.m_depthFormat = CGxFormat::Fmt_Ds24X;
-                        break;
-
-                    case D3DFMT_D16:
-                        format.m_depthFormat = CGxFormat::Fmt_Ds160;
-                        break;
-
-                    default:
-                        break;
-                }
-
-                for (uint32_t multisample = 0; multisample < 9; multisample++) {
-                    if (FAILED(d3d->CheckDeviceMultiSampleType(0, D3DDEVTYPE_HAL, displayMode.Format, FALSE, s_d3d9ExMultisampleTypes[multisample], nullptr))) {
-                        continue;
-                    }
-
-                    if (FAILED(d3d->CheckDeviceMultiSampleType(0, D3DDEVTYPE_HAL, s_d3d9ExDepthFormats[depth], FALSE, s_d3d9ExMultisampleTypes[multisample], nullptr))) {
-                        continue;
-                    }
-
-                    switch (s_d3d9ExMultisampleTypes[multisample]) {
-                        case D3DMULTISAMPLE_NONE:
-                            format.m_multisampleCount = 1;
-                            break;
-
-                        case D3DMULTISAMPLE_2_SAMPLES:
-                            format.m_multisampleCount = 2;
-                            break;
-
-                        case D3DMULTISAMPLE_4_SAMPLES:
-                            format.m_multisampleCount = 4;
-                            break;
-
-                        case D3DMULTISAMPLE_6_SAMPLES:
-                            format.m_multisampleCount = 6;
-                            break;
-
-                        case D3DMULTISAMPLE_8_SAMPLES:
-                            format.m_multisampleCount = 8;
-                            break;
-
-                        case D3DMULTISAMPLE_10_SAMPLES:
-                            format.m_multisampleCount = 10;
-                            break;
-
-                        case D3DMULTISAMPLE_12_SAMPLES:
-                            format.m_multisampleCount = 12;
-                            break;
-
-                        case D3DMULTISAMPLE_14_SAMPLES:
-                            format.m_multisampleCount = 14;
-                            break;
-
-                        case D3DMULTISAMPLE_16_SAMPLES:
-                            format.m_multisampleCount = 16;
-                            break;
-
-                        default:
-                            break;
-                    }
-
-                    if (!CGxDevice::FormatExists(formats, format)) {
-                        *formats.New() = format;
-                    }
-                }
-            }
-        }
-    }
-
-    CGxDeviceD3d9Ex::IUnloadD3dLib(d3dLib, d3d);
-
-    return formats.Count() != 0;
 }
 
 // OFFSET: 0x0068A4C0

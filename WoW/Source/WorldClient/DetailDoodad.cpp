@@ -449,8 +449,8 @@ void CDetailDoodadInstBatch::FillVertices() {
 
         // The spawn/despawn fade is NOT applied here. The vertex colour's alpha reaches the pixel shader as
         // v0.w and is multiplied into RGB there, so writing a fade into it darkens the grass instead of
-        // fading it. The fade lives in c19.x and is applied by the patched vertex shader to the alpha ramp
-        // (o2.x), which the pixel shader multiplies into oC0.w. See CGrassMotion::PatchVertexShader.
+        // fading it. It used to be applied by the patched grass vertex shader (CGrassMotion::PatchVertexShader),
+        // which is disabled now that the client renders through D3d11 -- see that function for why.
 
         if (g_theGxDevicePtr->Caps().m_colorFormat == GxCF_rgba) {
             CImVector swapped;
@@ -594,13 +594,8 @@ void CDetailDoodad::Initialize() {
         // bytecode and nothing has bound a shader yet, so m_loaded is still 0, the device has not compiled
         // it, and the patched text is what it will compile. See GrassMotion.h.
         //
-        // Only the first three permutations, which are the live no-shadow / shadow-low / shadow-high trio.
-        // 3..5 are the dormant point-light variants: they read c14..c22, the rows this module writes its
-        // per-frame values into, so patching them would corrupt the very constants they already use. Their
-        // shader-model token is identical, so the length is the only thing that tells them apart.
-        for (uint32_t i = 0; i < 3; i++) {
-            CGrassMotion::PatchVertexShader(CDetailDoodad::s_vertexShader[i], i);
-        }
+        // The grass vertex-shader patch used to run here. It is unavailable under D3d11 (the backend loads
+        // compiled vs_4_0/vs_5_0 DXBC rather than vs_3_0 assembly), so there is nothing to iterate over.
     }
 }
 

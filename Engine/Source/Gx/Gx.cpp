@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include "Engine/Source/Gx/Buffer.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
+#include "Engine/Source/Gx/CGxFrameBuffer.h"
 #include "Engine/Source/Gx/CGxPool.h"
 #include "Engine/Source/Gx/Gx.h"
 #include "Engine/Source/Tempest/C2Vector.h"
@@ -11,7 +12,7 @@
 #include "Engine/Source/Storm/H/storm.h"
 
 // STATIC: 0x00A2D57C
-static const uint32_t s_texelSize[GxTexFormats_Last] = { 0, 4, 4, 2, 2, 2, 2, 4, 4, 2, 4, 4, 4 };
+static const uint32_t s_texelSize[GxTexFormats_Last] = { 0, 4, 4, 2, 2, 2, 2, 4, 4, 2, 4, 4, 4, 2, 8, 4, 16, 2, 4 };
 
 // NOT IN BINARY. Backends lower this when the driver has fewer light slots than Gx_MAX_LIGHTS.
 uint32_t g_gxMaxHardwareLights = Gx_MAX_LIGHTS;
@@ -62,7 +63,8 @@ static const int32_t s_vertexAttribOffset[GxVertexBufferFormats_Last][GxVAs_Last
 static BlitFormat s_blitFormats[GxTexFormats_Last] = {
     BlitFormat_Unknown, BlitFormat_Abgr8888, BlitFormat_Argb8888, BlitFormat_Argb4444, BlitFormat_Argb1555,
     BlitFormat_Rgb565, BlitFormat_Dxt1, BlitFormat_Dxt3, BlitFormat_Dxt5, BlitFormat_Uv88, BlitFormat_Gr1616F,
-    BlitFormat_R32F, BlitFormat_D24X8
+    BlitFormat_R32F, BlitFormat_D24X8,
+    BlitFormat_Unknown, BlitFormat_Unknown, BlitFormat_Unknown, BlitFormat_Unknown, BlitFormat_Unknown, BlitFormat_Unknown
 };
 
 // STATIC: 0x00AD87E4
@@ -151,16 +153,17 @@ static int (*s_drawListSorters[GxuSorts_Last])(const void*, const void*) = { Dra
 // VERIFY: 0b88acbc auto
 // OFFSET: 0x008C8DE0
 EGxApi GxDefaultApi() {
-    return GxApi_D3d9;
+    // D3d11 is this client's rendering API; the D3d/D3d9Ex/OpenGl backends are retired.
+    return GxApi_D3d11;
 }
 
 // VERIFY: cef2b995 auto
 // OFFSET: 0x006811D0
 int32_t GxApiSupported(EGxApi api) {
     switch (api) {
-        case GxApi_OpenGl:
-        case GxApi_D3d9:
-        case GxApi_D3d9Ex:
+        // Only D3d11 is built. The other backends are still declared (they share EGxApi with the
+        // config/cvar surface) but nothing implements them any more.
+        case GxApi_D3d11:
             return 1;
 
         default:
@@ -216,23 +219,15 @@ CGxDevice* CreateGxDevice(EGxApi api, GxWindowProc windowProc, const CGxFormat& 
     CGxDevice* device;
 
     switch (api) {
-        case GxApi_OpenGl:
-            device = CreateCGxDeviceOpenGl();
-            g_theGxDevicePtr = device;
-            break;
-
-        case GxApi_D3d9:
-            device = CreateCGxDeviceD3d();
-            g_theGxDevicePtr = device;
-            break;
-
-        case GxApi_D3d9Ex:
-            device = CreateCGxDeviceD3d9Ex();
+        case GxApi_D3d11:
+            device = CreateCGxDeviceD3d11();
             g_theGxDevicePtr = device;
             break;
 
         default:
-            device = g_theGxDevicePtr;
+            // No other backend is built; fall back to D3d11 rather than handing back a null device.
+            device = CreateCGxDeviceD3d11();
+            g_theGxDevicePtr = device;
             break;
     }
 
@@ -673,6 +668,34 @@ void GxTexSetDataFormat(CGxTex* texId, EGxTexFormat dataFormat) {
     g_theGxDevicePtr->TexSetDataFormat(texId, dataFormat);
 }
 
+// NOT IN BINARY: cata's overload for an already-streamed index buffer. Delegates to the member this
+// client already has.
+void GxPrimIndexPtr(CGxBuf* buf) {
+    g_theGxDevicePtr->PrimIndexPtr(buf);
+}
+
+// NOT IN BINARY: cata's frame-buffer binder. Clears scissor state first, because a frame buffer switch
+// redefines the coordinate space the scissor rect was expressed in.
+void GxFrameBufferSet(CGxFrameBuffer* frameBuffer) {
+    GxRsSet(GxRs_ScissorTest, 0);
+    g_theGxDevicePtr->FrameBufferSet(frameBuffer);
+}
+
+void GxRsSet(EGxRenderState which, CGxShader* shader, uint32_t permute) {
+    g_theGxDevicePtr->RsSet(which, &shader->m_permutes[permute]);
+}
+
+int32_t GxShaderValid(CGxShader* shader, uint32_t permute) {
+    // A shader stays in the list with no permutes when its .bls failed to load (see ShaderCreate),
+    // and callers pass a fixed permute index. Bounds-check before touching the array: indexing an
+    // empty TSGrowableArray hands back garbage that Valid() then calls through.
+    if (!shader || permute >= shader->m_permutes.Count()) {
+        return 0;
+    }
+
+    return shader->m_permutes[permute].Valid();
+}
+
 // VERIFY: cf3f18d6 manual
 // OFFSET: 0x00681AB0
 void GxPrimIndexPtr(uint32_t indexCount, const uint16_t* indices) {
@@ -716,7 +739,7 @@ void GxTexUpdate(CGxTex* texId, CiRect& updateRect, int32_t immediate) {
 int32_t GxTexCreate(uint32_t width, uint32_t height, EGxTexFormat format, CGxTexFlags flags, void* userArg, GxTexUserFunc userFunc, CGxTex*& texId) {
     texId = nullptr;
 
-    if (width > g_theGxDevicePtr->Caps().m_texMaxSize[GxTex_2d] || height > g_theGxDevicePtr->Caps().m_texMaxSize[GxTex_2d] || (width & (width - 1)) || (height & (height - 1)) || format > GxTexFormats_Last) {
+    if (width > g_theGxDevicePtr->Caps().m_texMaxSize[GxTex_2d] || height > g_theGxDevicePtr->Caps().m_texMaxSize[GxTex_2d] || (width & (width - 1)) || (height & (height - 1)) || format >= GxTexFormats_Last) {
         SErrSetLastError(STORM_ERROR_INVALID_PARAMETER);
         return 0;
     }
@@ -739,7 +762,7 @@ int32_t GxTexCreate(uint32_t width, uint32_t height, EGxTexFormat format, CGxTex
 int32_t GxTexCreate(EGxTexTarget target, uint32_t width, uint32_t height, uint32_t depth, EGxTexFormat format, EGxTexFormat dataFormat, CGxTexFlags flags, void* userArg, GxTexUserFunc userFunc, const char* name, CGxTex*& texId) {
     texId = nullptr;
 
-    if (target > GxTexTargets_Last || g_theGxDevicePtr->Caps().m_texTarget[target] != 1 || width < 8 || height < 8 || width > g_theGxDevicePtr->Caps().m_texMaxSize[target] || height > g_theGxDevicePtr->Caps().m_texMaxSize[target]) {
+    if (target >= GxTexTargets_Last || g_theGxDevicePtr->Caps().m_texTarget[target] != 1 || width < 8 || height < 8 || width > g_theGxDevicePtr->Caps().m_texMaxSize[target] || height > g_theGxDevicePtr->Caps().m_texMaxSize[target]) {
         SErrSetLastError(STORM_ERROR_INVALID_PARAMETER);
         return 0;
     }

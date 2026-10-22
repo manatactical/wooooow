@@ -133,7 +133,7 @@ PassGlow::~PassGlow() {
 // OFFSET: 0x008C2290
 bool PassGlow::Valid() {
     CGxShader* shader = this->m_shaders[this->m_shaderIndex];
-    return (shader ? shader->Valid() : 0) != 0;
+    return (shader ? GxShaderValid(shader, 0) : 0) != 0;
 }
 
 // VERIFY: b1fa5360 auto
@@ -183,7 +183,7 @@ PassGlowWave::~PassGlowWave() {
 
 bool PassGlowWave::Valid() {
     CGxShader* shader = this->m_shaders[this->m_shaderIndex];
-    return (shader ? shader->Valid() : 0) != 0;
+    return (shader ? GxShaderValid(shader, 0) : 0) != 0;
 }
 
 // VERIFY: 033fdb6c manual

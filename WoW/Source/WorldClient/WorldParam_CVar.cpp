@@ -851,7 +851,7 @@ void CWorldParam::Initialize() {
     // Not in the original binary. The FXAA quality preset, meaningful only while antiAlias is 1. Registered
     // here for the same reason as the mode. CAntiAlias::Init registers it too, and clamps it itself, so the
     // shader cannot be handed an index off the end of its table.
-    CWorldParam::cvar_fxaaQuality = CVar::Register("fxaaQuality", "FXAA quality: 0 low, 1 medium, 2 high, 3 ultra", 1, "2", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    CWorldParam::cvar_fxaaQuality = CVar::Register("fxaaQuality", "FXAA quality: 0 low, 1 medium, 2 high, 3 ultra, 4 soothed", 1, "2", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
     // Not in the original binary. The grass and wind cvars the Physics tab reads. Registered here for the
     // same reason as unitOutline and antiAlias: the panel asks for their defaults while the login screen is

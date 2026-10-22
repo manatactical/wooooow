@@ -79,14 +79,16 @@ ANTI_ALIASING_OFF = "Off";
 ANTI_ALIASING_FXAA = "FXAA";
 OPTION_TOOLTIP_ANTI_ALIASING = "Smooths the stair-stepped edges of the 3D view with a post-process pass over the finished frame. The interface, text and icons are never filtered, so they stay sharp. Has no effect while Multisample above is anything other than 1x, where the driver has already smoothed the frame itself, and costs some frame rate.";
 
--- The FXAA quality presets. The pass itself is identical at every level; what changes is how eagerly a
--- gradient counts as an edge. Low leaves faint gradients alone, Ultra filters them too.
+-- The FXAA quality presets. The pass is identical at every level; what changes is how much of the filtered
+-- result is applied over the original. Low only takes the sharpest edge off and leaves detail alone, Ultra
+-- applies the full pass and smooths the most.
 FXAA_QUALITY = "FXAA Quality";
 FXAA_QUALITY_LOW = "Low";
 FXAA_QUALITY_MEDIUM = "Medium";
 FXAA_QUALITY_HIGH = "High";
 FXAA_QUALITY_ULTRA = "Ultra";
-OPTION_TOOLTIP_FXAA_QUALITY = "How much FXAA smooths. Low only touches strong, obvious silhouettes and leaves everything else exactly as it was drawn; Ultra also smooths faint gradients such as the shimmer on thin geometry and foliage, which costs some detail in busy textures. Medium and High are the standard settings.";
+FXAA_QUALITY_SOOTHED = "Soothed";
+OPTION_TOOLTIP_FXAA_QUALITY = "How strongly FXAA smooths. Low only takes the sharpest edge off and leaves fine texture and detail almost untouched, which suits busy scenes; Ultra applies the full strength of the filter and smooths the most, at the cost of some detail in dense textures. Medium and High are the standard settings. Soothed runs the filter twice: it smooths the most by a wide margin and is happy to lose fine detail and texture to get there.";
 
 ResolutionPanelOptions = {
 	gxVSync = { text = "VERTICAL_SYNC" },
@@ -497,7 +499,7 @@ function VideoOptionsResolutionPanelFxaaQualityDropDown_OnLoad(self)
 end
 
 function VideoOptionsResolutionPanelFxaaQualityDropDown_Initialize()
-	VideoOptionsResolutionPanel_GetFxaaQualities(FXAA_QUALITY_LOW, FXAA_QUALITY_MEDIUM, FXAA_QUALITY_HIGH, FXAA_QUALITY_ULTRA);
+	VideoOptionsResolutionPanel_GetFxaaQualities(FXAA_QUALITY_LOW, FXAA_QUALITY_MEDIUM, FXAA_QUALITY_HIGH, FXAA_QUALITY_ULTRA, FXAA_QUALITY_SOOTHED);
 end
 
 function VideoOptionsResolutionPanel_GetFxaaQualities(...)

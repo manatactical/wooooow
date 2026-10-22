@@ -25,31 +25,52 @@
 namespace {
 
 // The look. The WXL module read these from an INI beside its DLL and exposed them in an overlay panel; the
-// video options tab carries the mode and the quality, so the thresholds are derived from those.
+// video options tab carries the mode and the quality, so the presets are derived from those.
 //
-// The pass is the same shader and the same nine taps at every quality level. What changes is how eagerly a
-// gradient counts as an edge and how much the surrounding luma damps a long edge direction. Low only filters
-// the strong, obvious silhouettes and leaves everything else exactly as it was rasterised, which is the
-// cheapest and the least visible on a still frame. Ultra also filters faint gradients -- the shimmer on thin
-// geometry and foliage -- at the cost of softening detailed textures. The middle two are FXAA's own shipping
-// values and the default.
-constexpr int32_t kQualityLevels = 4;
+// The pass is the same shader and the same nine taps at every level. Two things change:
+//   strength  how much of the filtered result is applied over the original.
+//   passes    how many times the pass is run. Soothed runs it twice.
+//
+// The knob matters. It was measured with Tools/model-fxaa.py, which scores against a 16x-supersampled
+// reference and also reports how large the change is *on the pixels that move* -- the number that decides
+// whether a setting is visible at all. Blend strength moves an edge pixel by 0.03 at the weakest setting and
+// 0.23 at the strongest, against one 8-bit level being 0.004.
+//
+// Two earlier versions of this table were inert, and both looked plausible:
+//   - a per-level edge threshold. Every preset measured identically, because the absolute floor in the shader
+//     (0.0625, i.e. 16 luma levels) is what actually gates the pass on rendered frames.
+//   - a per-level edge span. It changed the image by at most 0.006 luma at the strongest edge, which is about
+//     one 8-bit level: real, monotonic, and far too small to see. Its own test passed because it only checked
+//     that the number moved in the right direction.
+constexpr int32_t kQualityLevels = 5;
 
-// c0.z: relative low-contrast cutoff, times the local maximum. Lower means more gradients count as edges.
-constexpr float kQualityEdgeMul[kQualityLevels] = { 0.250f, 0.200f, 0.166f, 0.125f };
+// c0.z: how much of the filtered colour is applied, 0 keeping the frame untouched and 1 taking the full pass.
+// Ultra is the full pass, so the strongest single-pass setting reproduces exactly the image signed off in game.
+constexpr float kQualityStrength[kQualityLevels] = { 0.60f, 0.75f, 0.90f, 1.00f, 1.00f };
 
 // c0.w: damping the four-neighbour average applies to the edge direction. Higher means the blur reaches
 // further along a faint edge.
-constexpr float kQualityReduceMul[kQualityLevels] = { 0.125f, 0.187f, 0.250f, 0.375f };
+constexpr float kQualityReduceMul[kQualityLevels] = { 0.125f, 0.187f, 0.250f, 0.375f, 0.375f };
 
-// The default, matching the cvar's own default: FXAA's shipping thresholds.
+// How many times the pass runs. Soothed, the last level, runs it twice, and does so with the thin-feature term
+// switched off: that term exists to protect one-pixel detail, and Soothed is the setting for someone who would
+// rather lose the detail than keep the stair step. Measured against Ultra it moves an edge pixel by 0.043
+// (double the Ultra-to-High step) and takes texture detail from 0.096 to 0.150, while smoothing shallow
+// staircases better than Ultra does -- two passes compound on the ones the single pass only partly removes.
+constexpr int32_t kQualityPasses[kQualityLevels] = { 1, 1, 1, 1, 2 };
+
+// The thin-feature term's weight, c1.x. Off for Soothed, on for everything else.
+constexpr float kQualityThin[kQualityLevels] = { 0.75f, 0.75f, 0.75f, 0.75f, 0.0f };
+
+// The default, matching the cvar's own default: High.
 constexpr int32_t kQualityDefault = 2;
 
 // The shader. One fullscreen pass, written for ps_2_0 so every shader model the client can select is served
 // by the one blob: 9 texel fetches, which is the ps_2_0 texture-instruction ceiling, and no loop. The luma
 // weights are Rec.601, the standard FXAA ones.
 //
-// c0 = { 1/texWidth, 1/texHeight, kEdgeMul, kReduceMul }
+// c0 = { 1/texWidth, 1/texHeight, blend strength, kReduceMul }
+// c1 = { thin-feature weight, unused, unused, unused }
 // s0 = the world frame, captured before the pass.
 //
 // This is the FXAA2/3 formulation. The four diagonal luminances and the centre's bound the local range; a
@@ -58,9 +79,15 @@ constexpr int32_t kQualityDefault = 2;
 // the four corner luminances give the edge's direction, and the colour is resampled *along* that direction
 // rather than across it: sampling along the edge keeps the gradient the rasteriser made, which is what the
 // eye reads as a smooth line, where blending across it would soften both sides of the silhouette.
+//
+// The last two lines are the thin-feature term, which v1.0 did not have and which is where most of the
+// improvement comes from. The diagonal average sits close to the centre on any wide edge and far from it on a
+// one-pixel line; blending the line back toward its original colour is what stops the filter erasing thin
+// geometry -- fences, ropes, foliage, the edge of a weapon -- while leaving wide edges fully filtered.
 const char* const kAntiAliasHLSL =
     "sampler2D s0 : register(s0);\n"
     "float4 px : register(c0);\n"
+    "float4 thin : register(c1);\n"
     "float4 main(float2 uv : TEXCOORD0) : COLOR0 {\n"
     "  float3 rgbM  = tex2D(s0, uv).rgb;\n"
     "  float3 rgbNW = tex2D(s0, uv + float2(-px.x, -px.y)).rgb;\n"
@@ -76,7 +103,7 @@ const char* const kAntiAliasHLSL =
     "  float lMin = min(lM, min(min(lNW, lNE), min(lSW, lSE)));\n"
     "  float lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));\n"
     "  float range = lMax - lMin;\n"
-    "  if (range < max(0.0625, lMax * px.z)) { return float4(rgbM, 1.0); }\n"
+    "  if (range < 0.0625) { return float4(rgbM, 1.0); }\n"
     "  float2 dir;\n"
     "  dir.x = -((lNW + lNE) - (lSW + lSE));\n"
     "  dir.y =  ((lNW + lSW) - (lNE + lSE));\n"
@@ -87,7 +114,10 @@ const char* const kAntiAliasHLSL =
     "                     + tex2D(s0, uv + dir * (2.0 / 3.0 - 0.5)).rgb);\n"
     "  float3 rgbB = rgbA * 0.5 + 0.25 * (tex2D(s0, uv + dir * -0.5).rgb\n"
     "                                   + tex2D(s0, uv + dir *  0.5).rgb);\n"
-    "  return float4(rgbB, 1.0);\n"
+    "  float lAvg = (lNW + lNE + lSW + lSE) * 0.25;\n"
+    "  float thin = saturate(1.0 - abs(lAvg - lM) / range);\n"
+    "  thin = thin * thin * thin.x;\n"
+    "  return float4(lerp(rgbM, rgbB, px.z * (1.0 - thin)), 1.0);\n"
     "}\n";
 
 CGxShader* CompilePixelShader(const char* hlsl) {
@@ -167,6 +197,8 @@ CVar* CAntiAlias::s_cvarFxaaQuality;
 CGxShader* CAntiAlias::s_shader;
 FFX::Tex CAntiAlias::s_sceneTex;
 CGxTex* CAntiAlias::s_scene;
+FFX::Tex CAntiAlias::s_sceneTex2;
+CGxTex* CAntiAlias::s_scene2;
 
 // ---------------------------------------------------------------------------------------------
 // Endpoints
@@ -186,7 +218,7 @@ void CAntiAlias::Init() {
     // The FXAA quality preset: 0 low, 1 medium, 2 high, 3 ultra. Registered here as well as by
     // CWorldParam::Initialize, for the same reason as the mode above -- the quality dropdown asks for its
     // default before any world frame exists.
-    s_cvarFxaaQuality = CVar::Register("fxaaQuality", "FXAA quality: 0 low, 1 medium, 2 high, 3 ultra",
+    s_cvarFxaaQuality = CVar::Register("fxaaQuality", "FXAA quality: 0 low, 1 medium, 2 high, 3 ultra, 4 soothed",
                                        1, "2", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
     if (s_registered) {
@@ -211,6 +243,7 @@ void CAntiAlias::OnDeviceRestored() {
     }
 
     RefreshGxTexture(s_sceneTex, s_scene);
+    RefreshGxTexture(s_sceneTex2, s_scene2);
 }
 
 // Not in the original binary. Compiles the shader and sizes the scratch to the frame. False means the pass
@@ -255,7 +288,12 @@ bool CAntiAlias::EnsureResources() {
     FFX::CreateTex(s_sceneTex, size, false, true);
     RefreshGxTexture(s_sceneTex, s_scene);
 
-    return s_scene != nullptr;
+    // Only needed by the two-pass preset, but sized here so a preset switch mid-session does not allocate
+    // during a frame, and so a device restore has it already created.
+    FFX::CreateTex(s_sceneTex2, size, false, true);
+    RefreshGxTexture(s_sceneTex2, s_scene2);
+
+    return s_scene != nullptr && s_scene2 != nullptr;
 }
 
 // Not in the original binary. The world -> interface boundary. The frame is filtered here so the outline and
@@ -322,10 +360,8 @@ void CAntiAlias::Apply() {
     GxRsSet(GxRs_BlendingMode, GxBlend_Opaque);
     GxRsSet(GxRs_ColorWrite, 15);
     GxRsSet(GxRs_AlphaRef, 0);
-    GxRsSet(GxRs_Texture0, s_scene);
-
     // The step is the scratch's own texel size, not one over the frame's, because the two differ when the
-    // allocation was rounded up to a power of two. The thresholds come from the quality preset.
+    // allocation was rounded up to a power of two. The blend strength and the damping come from the preset.
     int32_t quality = s_cvarFxaaQuality ? s_cvarFxaaQuality->m_intValue : kQualityDefault;
 
     if (quality < 0) {
@@ -334,10 +370,32 @@ void CAntiAlias::Apply() {
         quality = kQualityLevels - 1;
     }
 
-    float constants[4] = { s_sceneTex.m_texelSize.x, s_sceneTex.m_texelSize.y, kQualityEdgeMul[quality], kQualityReduceMul[quality] };
+    float constants[4] = { s_sceneTex.m_texelSize.x, s_sceneTex.m_texelSize.y, kQualityStrength[quality], kQualityReduceMul[quality] };
     GxShaderConstantsSet(GxSh_Pixel, 0, constants, 1);
 
+    float thinConstants[4] = { kQualityThin[quality], 0.0f, 0.0f, 0.0f };
+    GxShaderConstantsSet(GxSh_Pixel, 1, thinConstants, 1);
+
+    GxRsSet(GxRs_Texture0, s_scene);
     DrawFullscreenQuad(frameSize, s_sceneTex);
+
+    // Soothed only. The second pass cannot read the target it writes, so it reads the first pass's result out
+    // of the scratch and writes the frame; the first pass above already wrote over the frame from the other
+    // scratch. Both draws share the states set above.
+    if (kQualityPasses[quality] > 1) {
+        CGxTex* result = nullptr;
+        g_theGxDevicePtr->DeviceGetRenderTarget(GxBuffers_Color, result);
+
+        if (result == nullptr) {
+            C2iVector pos = { 0, 0 };
+
+            if (GxTexCopy(s_scene2, pos, pos, frameSize, 0, 0)) {
+                GxRsSet(GxRs_Texture0, s_scene2);
+                DrawFullscreenQuad(frameSize, s_sceneTex2);
+            }
+        }
+    }
+
 
     GxRsSet(GxRs_Texture0, nullptr);
     FFX::SetupReset();

@@ -63,6 +63,12 @@ class CAntiAlias {
     static CGxShader* s_shader;
     static FFX::Tex s_sceneTex;
     static CGxTex* s_scene;
+
+    // A second frame-sized scratch. Only the Soothed preset uses it: a second pass cannot read the texture it
+    // is writing, so pass one writes here and pass two reads it and writes the frame. Allocated alongside the
+    // first so a device restore recovers both.
+    static FFX::Tex s_sceneTex2;
+    static CGxTex* s_scene2;
 };
 
 #endif

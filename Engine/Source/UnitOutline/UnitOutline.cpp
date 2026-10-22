@@ -52,10 +52,10 @@ constexpr float kSoftnessScale = 2.0f;
 
 constexpr int32_t kMaxTargets   = 64;  // selections and quest givers, each up to two models plus gear
 // The fade a selection plays after it goes idle. Source RGB only, so the line dims rather than disappears
-// (see StampSilhouette); 0.35 is a 65% drop, which is what makes the fade actually readable -- at 0.75 it
-// was a 25% dim and effectively invisible.
+// (see StampSilhouette). The end weight is a light dim, not a drop-off: at 0.45 the settled line was hard to
+// see, which is most of what the player is looking at.
 constexpr uint32_t kFadeMs         = 800;
-constexpr float    kFadeEndOpacity = 0.45f;
+constexpr float    kFadeEndOpacity = 0.62f;
 
 // ---------------------------------------------------------------------------------------------
 // The shaders. Ported from the WXL module's hlsl (its Hlsl.hpp); the port change is that they are
@@ -125,6 +125,7 @@ const char* const kEdgeHLSL =
     "sampler2D vis : register(s2);\n"
     "float4 px : register(c0);\n"
     "float4 par : register(c1);\n"
+    "float4 mode : register(c2);\n"
     "#define CORE_TAP 1.7\n"
     "#define RING_GAIN 0.75\n"
     "#define CORE_GAIN 11.0\n"
@@ -169,16 +170,29 @@ const char* const kEdgeHLSL =
     "  tail = pow(tail, TAIL_POW);\n"
     "  a += r2 + r3 + r4;\n"
     "  float outline = saturate(max(core, tail));\n"
+    "  float visMask = 1.0;\n"
     "  if (par.w > 0.5) {\n"
-    "    outline *= saturate(Ring(vis, uv, o).a * 0.125);\n"
+    "    visMask = saturate(Ring(vis, uv, o).a * 0.125);\n"
     "  }\n"
+    "  outline *= visMask;\n"
     "  clip(outline - par.y);\n"
     "  float3 col = a.a > 0.001 ? a.rgb / a.a : float3(1,1,1);\n"
+    "  float om = tex2D(occ, uv).a * par.z;\n"
+    "  if (mode.x > 0.5) {\n"
+    "    // Solid band pass: a narrow ring hugging the model, placed by the mask's own coverage rather than\n"
+    "    // by the gradient. center is 1 inside the body, 0 outside, 0.5 exactly on the silhouette, so gating\n"
+    "    // on a window around 0.3 puts the band on the outside shoulder of the softened edge and nothing\n"
+    "    // else -- the gradient's skirt, which is the whole visible line, is left to the alpha pass below.\n"
+    "    // Thresholded rather than blended, so the pixel becomes the line colour instead of a mix with\n"
+    "    // what is behind it. The fade lives in the mask's rgb, so a settled target draws it dimmed.\n"
+    "    float band = smoothstep(0.68, 0.42, center) * smoothstep(0.02, 0.20, center);\n"
+    "    clip(band * visMask * par.x * (1.0 - om) - 0.45);\n"
+    "    return float4(col, 1.0);\n"
+    "  }\n"
     "  // With alpha-over blending the core pixel is already the exact colour, so this is purely a saturation\n"
     "  // top-up: CORE_POP past 1 pushes the core channels up and, being gated on outline squared, leaves\n"
     "  // the tail at its true colour.\n"
     "  col *= 1.0 + (CORE_POP - 1.0) * outline * outline;\n"
-    "  float om = tex2D(occ, uv).a * par.z;\n"
     "  return float4(col, saturate(outline * par.x) * (1.0 - om));\n"
     "}\n";
 
@@ -1006,7 +1020,9 @@ void CUnitOutline::StampSilhouette(const CGxBatch& batch, int32_t index) {
     if (!s_targets[index].m_keepFull) {
         uint32_t age = OsGetAsyncTimeMs() - s_targets[index].m_birth;
         float t = age >= kFadeMs ? 1.0f : static_cast<float>(age) / static_cast<float>(kFadeMs);
-        float weight = 1.0f - (1.0f - kFadeEndOpacity) * t;
+        // Squared, so the line holds full brightness for the first part of the fade and does most of its
+        // dimming late, instead of stepping off full strength on the first frame.
+        float weight = 1.0f - (1.0f - kFadeEndOpacity) * (t * t);
 
         color[0] *= weight;
         color[1] *= weight;
@@ -1081,6 +1097,7 @@ void CUnitOutline::BlurPass() {
 void CUnitOutline::EdgePass() {
     float c0[4] = { s_maskTex.m_texelSize.x, s_maskTex.m_texelSize.y, kThickness, kIntensity };
     float c1[4] = { kOpacity, kThreshold, s_playerMaskCleared ? 1.0f : 0.0f, s_visMaskCleared ? 1.0f : 0.0f };
+    float c2[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 
     GxRsSet(GxRs_PixelShader, s_edgePS);
     // GxBlend_Alpha is SRCALPHA / INVSRCALPHA: result = col * alpha + background * (1 - alpha).
@@ -1102,6 +1119,16 @@ void CUnitOutline::EdgePass() {
 
     GxShaderConstantsSet(GxSh_Pixel, 0, c0, 1);
     GxShaderConstantsSet(GxSh_Pixel, 1, c1, 1);
+    GxShaderConstantsSet(GxSh_Pixel, 2, c2, 1);
+
+    DrawFullscreenQuad(s_maskTex);
+
+    // The solid band, drawn on top in the same shader with mode.x set: blending is opaque (src*1 + dst*0),
+    // so that pixel IS the line colour rather than a blend with the frame. This is the one part of the line
+    // that does not wash out over a bright background.
+    GxRsSet(GxRs_BlendingMode, GxBlend_Opaque);
+    c2[0] = 1.0f;
+    GxShaderConstantsSet(GxSh_Pixel, 2, c2, 1);
 
     DrawFullscreenQuad(s_maskTex);
 }

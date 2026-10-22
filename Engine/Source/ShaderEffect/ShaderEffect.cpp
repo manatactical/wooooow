@@ -133,9 +133,10 @@ void CShaderEffect::ComputeLocalLights(LocalLights* localLights, uint32_t lightC
     }
 }
 
-// The lit vs_3_0 shaders carry two 4-light blocks (c17 and c236), which is the whole 8-light budget: the
-// bone palette owns c31..c255, so there is no spare register range for a third. Lights are spread across the
-// two blocks and any slot with no light is fully zeroed so it contributes nothing.
+// Uploads the local lights for the lit vertex shaders. Only the c17 block is written: the second block the
+// shaders carry at c236 overlaps the bone palette (uploaded from c31), and a model with about 69+ bones
+// overwrites it with skeleton rows. Filling it made lights 5..8 read bone data and blink out with camera
+// angle, so the shader path stays at four lights.
 void CShaderEffect::UploadLocalLights(CM2Lighting* lighting, const C3Vector* origin) {
     uint32_t count = lighting->m_lightCount;
 
@@ -143,19 +144,8 @@ void CShaderEffect::UploadLocalLights(CM2Lighting* lighting, const C3Vector* ori
         count = kShaderLightCount;
     }
 
-    static const uint32_t kRegisters[kShaderLightBlocks] = { kFirstLightRegister, kSecondLightRegister };
-
-    for (uint32_t block = 0; block < kShaderLightBlocks; block++) {
-        uint32_t first = block * kShaderLightBlock;
-        uint32_t blockCount = count > first ? count - first : 0;
-
-        if (blockCount > kShaderLightBlock) {
-            blockCount = kShaderLightBlock;
-        }
-
-        CShaderEffect::ComputeLocalLights(&CShaderEffect::s_localLights[block], blockCount, lighting->m_lights + first, origin);
-        GxShaderConstantsSet(GxSh_Vertex, kRegisters[block], reinterpret_cast<const float*>(&CShaderEffect::s_localLights[block]), kLightBlockRows);
-    }
+    CShaderEffect::ComputeLocalLights(&CShaderEffect::s_localLights[0], count, lighting->m_lights, origin);
+    GxShaderConstantsSet(GxSh_Vertex, kFirstLightRegister, reinterpret_cast<const float*>(&CShaderEffect::s_localLights[0]), kLightBlockRows);
 }
 
 // VERIFY: 3d4e9331 auto

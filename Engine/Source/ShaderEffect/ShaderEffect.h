@@ -16,15 +16,14 @@ class CM2Light;
 class CM2Lighting;
 
 // One 4-light block, laid out exactly as the vs_3_0 shaders expect: colors, positions, then the three
-// attenuation vectors packed one float per light. The lit shaders carry two of these — the first at c17 and
-// a second, otherwise unpopulated one at c236 — so a 4-light permutation can shade 8 lights.
-// A third block is not possible: the bone palette owns c31..c255, so any extra light registers would be
-// overwritten by skeleton data.
+// attenuation vectors packed one float per light. Only the first block at c17 is used.
+// The second block the lit shaders carry at c236 cannot be filled safely: it sits inside the bone palette
+// range, and the palette upload (CM2SceneRender, from c31) overwrites it on models with roughly 69 or more
+// bones. Lights 5..8 therefore read bone matrices and drop out as the camera brings those models on screen.
 constexpr uint32_t kShaderLightBlock = 4;
-constexpr uint32_t kShaderLightBlocks = 2;
+constexpr uint32_t kShaderLightBlocks = 1;
 constexpr uint32_t kShaderLightCount = kShaderLightBlock * kShaderLightBlocks;
 constexpr uint32_t kFirstLightRegister = 17;
-constexpr uint32_t kSecondLightRegister = 236;
 // Rows per block: 4 colors + 4 positions + 3 attenuation = 11 vec4.
 constexpr uint32_t kLightBlockRows = 11;
 

@@ -10,9 +10,11 @@ target_include_directories(ModernAssets
 )
 
 # Reads files through the client's own archive set, so it needs BlizzardCore's SFile seam, and it
-# reports through Storm's allocator-backed log helpers.
+# reports through Storm's allocator-backed log helpers. Event carries DiagnosticLogsEnabled(), the
+# WOWLOG_QUIET switch that decides whether the file sink opens.
 target_link_libraries(ModernAssets
     PUBLIC
         BlizzardCore
         Storm
+        Event
 )

@@ -23,6 +23,7 @@
 #include "Engine/Source/Model2/M2Model.h"
 #include "Engine/Source/Os/TimeManager.h"
 #include "Engine/Source/Services/Texture.h"
+#include "Engine/Source/Event/PerfLog.h"
 #include "Engine/Source/Tempest/C2Vector.h"
 #include "Engine/Source/Tempest/C2iVector.h"
 #include "Engine/Source/Tempest/C3Vector.h"
@@ -301,7 +302,7 @@ CGxShader* CompilePixelShader(const char* hlsl) {
         // Deliberately no CGxDevice::Log here: it takes a varargs format, and a failed compile is exactly
         // when the process is already in a bad state -- a fault inside the logger turned a shader error into
         // an unrecoverable crash. A plain file write, no format arguments, is what this path can afford.
-        FILE* file = fopen("Logs\\unitoutline.log", "a");
+        FILE* file = DiagnosticLogsEnabled() ? fopen("Logs\\unitoutline.log", "a") : nullptr;
 
         if (file) {
             fputs("UnitOutline: a pixel shader failed to compile\n", file);
@@ -1147,6 +1148,10 @@ void OutlineDiag(const char* tag) {
     }
 
     s_last = now;
+
+    if (!DiagnosticLogsEnabled()) {
+        return;
+    }
 
     FILE* file = fopen("Logs\\unitoutline.log", "a");
 

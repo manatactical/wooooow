@@ -51,4 +51,15 @@ bool PerfLogOpenFailed();
 // Writes the rolling summary now and starts a new window.
 void PerfLogWriteSummary();
 
+// NOT IN BINARY. The switch for the diagnostic dumps this tree adds on top of the original client
+// (Logs\m2-sequences.csv, modern-assets.log, animationdata-client.db2, custom_mpq.log, unitoutline.log,
+// texaudit.log, spikes.<pid>.log). WOWLOG_QUIET=1 (also true/yes/on) silences them; unset or anything else,
+// including a typo, leaves them enabled, so behaviour is unchanged unless explicitly asked. Not the original
+// client's own logs: gx.log, cpu.log, SESound.log and the FrameXML/GlueXML status files are written
+// regardless, because they are the stock client's behaviour and in several places the only record left
+// after a crash.
+//
+// Read once and cached: the answer must not change mid-run, or a dump could start and then stop writing.
+bool DiagnosticLogsEnabled();
+
 #endif

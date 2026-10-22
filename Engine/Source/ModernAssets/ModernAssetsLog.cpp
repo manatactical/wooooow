@@ -1,5 +1,7 @@
 #include "Engine/Source/ModernAssets/ModernAssetsLog.h"
 
+#include "Engine/Source/Event/PerfLog.h"
+
 #include <windows.h>
 #include <cstdarg>
 #include <cstdio>
@@ -43,6 +45,10 @@ namespace modern::assets
         {
             if (FileTried()) return FileSlot();
             FileTried() = true;
+
+            // WOWLOG_QUIET=1: no Logs\modern-assets.log at all, not even created. The debugger output in
+            // LogWrite still happens, so a run under a debugger keeps its diagnostics.
+            if (!DiagnosticLogsEnabled()) return nullptr;
 
             CreateDirectoryA("Logs", nullptr);
             FileSlot() = std::fopen("Logs\\modern-assets.log", "a");

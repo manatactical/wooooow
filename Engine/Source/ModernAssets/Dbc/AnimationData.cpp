@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "Engine/Source/Os/OsFile.h"
+#include "Engine/Source/Event/PerfLog.h"
 
 // AnimationData.db2 -> the client's AnimationData, in the 8-column WDBC shape its loader reads.
 //
@@ -57,6 +58,11 @@ namespace modern::db2::animation
          */
         void DumpForOfflineDecode(const std::vector<uint8_t>& bytes)
         {
+            // Skipped outright when quiet: the warning below now only ever means a real write failure.
+            if (!DiagnosticLogsEnabled()) {
+                return;
+            }
+
             OsCreateDirectory("Logs", 0);
 
             FILE* file = std::fopen("Logs\\animationdata-client.db2", "wb");

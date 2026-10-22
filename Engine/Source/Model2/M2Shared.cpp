@@ -2081,22 +2081,24 @@ int32_t CM2Shared::FinishLoading() {
 #if defined(WOWDECOMP_MODERN_ASSETS)
     // TEMPORARY ANALYSIS DUMP. Writes every sequence this model authored to Logs\m2-sequences.csv, one row
     // per sequence, so mount animation support can be compared across models from data instead of from
-    // guesses. Remove once the animation design is settled.
+    // guesses. Remove once the animation design is settled. WOWLOG_QUIET=1 skips it.
     {
-        OsCreateDirectory("Logs", 0);
+        if (DiagnosticLogsEnabled()) {
+            OsCreateDirectory("Logs", 0);
 
-        FILE* csv = std::fopen("Logs\\m2-sequences.csv", "a");
+            FILE* csv = std::fopen("Logs\\m2-sequences.csv", "a");
 
-        if (csv)
-        {
-            for (uint32_t i = 0; i < this->m_data->m_sequences.m_count; i++)
+            if (csv)
             {
-                const M2Sequence* seq = &this->m_data->m_sequences[i];
-                std::fprintf(csv, "%s,%u,%u,%u,0x%x,%.3f\n", this->m_fileName, seq->m_id,
-                             seq->m_duration, seq->m_variationIndex, seq->m_flags, seq->m_moveSpeed);
-            }
+                for (uint32_t i = 0; i < this->m_data->m_sequences.m_count; i++)
+                {
+                    const M2Sequence* seq = &this->m_data->m_sequences[i];
+                    std::fprintf(csv, "%s,%u,%u,%u,0x%x,%.3f\n", this->m_fileName, seq->m_id,
+                                 seq->m_duration, seq->m_variationIndex, seq->m_flags, seq->m_moveSpeed);
+                }
 
-            std::fclose(csv);
+                std::fclose(csv);
+            }
         }
     }
 #endif

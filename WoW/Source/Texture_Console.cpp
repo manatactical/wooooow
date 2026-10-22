@@ -14,6 +14,7 @@
 #include "Engine/Source/BLPFile/Types.h"
 #include "Engine/Source/ConsoleBase/ConsoleCommand.h"
 #include "Engine/Source/ConsoleBase/IConsole.h"
+#include "Engine/Source/Event/PerfLog.h"
 #include "Engine/Source/Gx/Blit.h"
 #include "Engine/Source/Gx/Gx.h"
 #include "Engine/Source/Images/MippedImg.h"
@@ -65,7 +66,7 @@ namespace
         OutputDebugStringA(message);
         OutputDebugStringA("\n");
 
-        FILE* file = std::fopen(kLogPath, "a");
+        FILE* file = DiagnosticLogsEnabled() ? std::fopen(kLogPath, "a") : nullptr;
 
         if (file) {
             std::fprintf(file, "%s\n", message);
@@ -625,20 +626,23 @@ namespace
         s_auditCount = 0;
         TextureSetAuditCallback(enable ? AuditEnabled : nullptr, nullptr);
 
-        ConsolePrintf("texaudit: header checks %s; findings go to %s", enable ? "on" : "off", kLogPath);
+        ConsolePrintf("texaudit: header checks %s; findings go to %s", enable ? "on" : "off",
+                     DiagnosticLogsEnabled() ? kLogPath : "the debugger only (WOWLOG_QUIET is set)");
 
         // Write the state down immediately, flushed. Console text is lost when the client is closed, and the
         // point of this command is to survive exactly that: it says whether the hook was on at all, which is
         // the first thing to check when the log turns out to be empty.
-        OsCreateDirectory("Logs", 0);
+        if (DiagnosticLogsEnabled()) {
+            OsCreateDirectory("Logs", 0);
+        }
 
-        FILE* file = std::fopen(kLogPath, "a");
+        FILE* file = DiagnosticLogsEnabled() ? std::fopen(kLogPath, "a") : nullptr;
 
         if (file) {
             std::fprintf(file, "texaudit: header checks %s (first load will be reported below)\n",
                          enable ? "on" : "off");
             std::fclose(file);
-        } else {
+        } else if (DiagnosticLogsEnabled()) {
             ConsolePrintf("texaudit: cannot write %s", kLogPath);
         }
 

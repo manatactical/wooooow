@@ -58,8 +58,9 @@ int32_t CCommand_Perf(const char* command, const char* arguments) {
     option[length] = '\0';
 
     if (!length) {
-        ConsolePrintf("perf: %s, threshold %u ms, log Logs\\spikes.%u.log%s",
+        ConsolePrintf("perf: %s, threshold %u ms, log Logs\\spikes.%u.log%s%s",
                       PerfLogEnabled() ? "on" : "off", PerfLogThreshold(), SGetCurrentProcessId(),
+                      DiagnosticLogsEnabled() ? "" : " (WOWLOG_QUIET is set; nothing is written)",
                       PerfLogOpenFailed() ? " (WRITE FAILED: Logs is not writable)" : "");
         return 1;
     }
@@ -104,6 +105,13 @@ int32_t CCommand_Perf(const char* command, const char* arguments) {
     }
 
     PerfLogSetThreshold(threshold, 0);
+
+    // PerfLogSetThreshold refuses while quiet, so do not claim it is recording when nothing will be written.
+    if (!PerfLogEnabled()) {
+        ConsolePrintf("perf: not enabled -- WOWLOG_QUIET is set, so no spikes log is written");
+        return 1;
+    }
+
     ConsolePrintf("perf: on, threshold %u ms, log Logs\\spikes.%u.log%s", threshold, SGetCurrentProcessId(),
                   PerfLogOpenFailed() ? " (WRITE FAILED: Logs is not writable)" : "");
     return 1;

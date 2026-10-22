@@ -353,6 +353,16 @@ void PerfLogSetThreshold(uint32_t thresholdMs, uint32_t summaryEveryMs) {
         s_headerWritten = false;
     }
 
+    // WOWLOG_QUIET=1 wins over an explicit `perf on`: the quiet switch is for runs where nothing should be
+    // written, and the console command cannot be issued before the file exists anyway.
+    if (!DiagnosticLogsEnabled()) {
+        s_thresholdMs = thresholdMs;
+        s_started = false;
+        LockLeave();
+
+        return;
+    }
+
     // One header's worth of truncation per process: a run split by `perf off` / `perf on` keeps both
     // halves, but the previous process's file is never appended to.
     s_thresholdMs = thresholdMs;
@@ -554,4 +564,29 @@ void PerfLogWriteSummary() {
     WriteSummaryLocked();
     ResetWindow(OsGetAsyncTimeMs());
     LockLeave();
+}
+
+// NOT IN BINARY. See PerfLog.h. Three states, so the unset case cannot be mistaken for a deliberate "off":
+// never asked, asked-and-enabled, asked-and-disabled. Only an explicit truthy value (1/true/yes/on) asks
+// for quiet; anything else, including a typo, leaves diagnostics running. Failing towards "logging on" is
+// deliberate: a mistyped switch that silently discarded a diagnostic would be found only by not finding it.
+bool DiagnosticLogsEnabled() {
+    enum { Unasked, Enabled, Disabled };
+    static std::atomic<int> s_state{ Unasked };
+
+    const int state = s_state.load(std::memory_order_acquire);
+
+    if (state != Unasked) {
+        return state == Enabled;
+    }
+
+    const char* value = getenv("WOWLOG_QUIET");
+
+    const bool quiet = value &&
+                       (_stricmp(value, "1") == 0 || _stricmp(value, "true") == 0 ||
+                        _stricmp(value, "yes") == 0 || _stricmp(value, "on") == 0);
+
+    s_state.store(quiet ? Disabled : Enabled, std::memory_order_release);
+
+    return !quiet;
 }

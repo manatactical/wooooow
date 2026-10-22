@@ -19,6 +19,7 @@
 #include "Engine/Source/ConsoleBase/IConsole.h"
 #include "Engine/Source/ConsoleBase/Types.h"
 #include "Engine/Source/Event/Event.h"
+#include "Engine/Source/Event/PerfLog.h"
 #include "Engine/Source/Frame/CSimpleRender.h"
 #include "Engine/Source/FrameScript/FrameScript.h"
 #include "Engine/Source/FrameXML/FrameXML.h"
@@ -1494,7 +1495,7 @@ static void OpenArchives() {
 
     // Resolve the custom.MPQ files by hand: if the panel does not appear, the log says whether the name
     // never resolves, resolves to a different archive, or resolves here - three different fixes.
-    {
+    if (DiagnosticLogsEnabled()) {
         static const char* probes[] = {
             "Interface\\FrameXML\\VideoOptionsPanels.xml",
             "Interface\\FrameXML\\VideoOptionsPanels.lua",

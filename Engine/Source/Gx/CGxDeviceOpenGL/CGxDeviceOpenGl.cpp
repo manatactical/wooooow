@@ -4371,7 +4371,8 @@ void CGxDeviceOpenGl::ITexMarkAsUpdated(CGxTex* texId, uint32_t tmu) {
             for (uint32_t mip = baseMip; mip != mipCount; mip++, levelCount++) {
                 texId->m_userFunc(GxTex_Latch, mipWidth, mipHeight, face, mip, texId->m_userArg, texelStrideInBytes, texels);
 
-                if (!texId->m_flags.m_renderTarget) {
+                // A latch for a level the file does not carry hands back no bits; there is nothing to upload.
+                if (!texId->m_flags.m_renderTarget && texels) {
                     this->ITexDownload(texId, mipWidth, mipHeight, face, mip, baseMip, texelStrideInBytes, texels);
                 }
 

@@ -199,8 +199,6 @@ Recorded so they are not repeated.
 |---|---|
 | `ModernAssetsTest animdb2 <db2> 1 1 1 2 [ids]` | decode AnimationData and print every field per row |
 | `ModernAssetsTest m2 <file.m2>` | repack a modern model and report the conversion |
-| `analysis/m2seq.cpp` | standalone M2 sequence dumper (**offsets currently wrong - see section 1**) |
-| `analysis/*.py` | the analysis scripts that produced 4 (`roles.py` is the current one) |
 
 The reliable way to harvest what a mount really carries is the temporary dump in
 `CM2Shared::Initialize` (`Logs\m2-sequences.csv`): it writes every parsed sequence, as the **engine**

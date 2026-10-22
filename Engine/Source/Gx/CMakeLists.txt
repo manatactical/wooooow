@@ -4,6 +4,9 @@ if (NOT WIN32)
     list(FILTER PRIVATE_SOURCES EXCLUDE REGEX "/CGxDevice(D3d|D3d9Ex|OpenGL)/")
 endif ()
 
+# shortcut: the D3d11 backend is an unfinished port and does not compile; keep it out until it does.
+list(FILTER PRIVATE_SOURCES EXCLUDE REGEX "/CGxDeviceD3d11/")
+
 add_library(Gx STATIC
     ${PRIVATE_SOURCES}
 )

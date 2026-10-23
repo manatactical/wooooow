@@ -71,11 +71,13 @@ WaterClass ClassifyUncached(const Liquid::CInstance* instance) {
         return WaterClass::None;
     }
 
-    // Only the water material is shaded. Magma, slime and the rest keep the client's own shader: they are not
-    // water, and the water model would turn them into a wrong lake rather than a better lava.
+    // Only the water materials are shaded: still water (1) and the client's procedural water (3). Magma, slime and the
+    // rest keep the client's own shader: they are not water, and the water model would turn them into a wrong lake
+    // rather than a better lava. ClassifyLiquid makes the same cut; rejecting material 3 here as well left every
+    // procedural-water liquid unshaded, which is a stretch of water that simply disappears from the modern pass.
     const uint32_t materialId = static_cast<uint32_t>(record->m_materialID);
 
-    if (materialId != kLiquidMaterialWater) {
+    if (materialId != kLiquidMaterialWater && materialId != kLiquidMaterialProcWater) {
         return WaterClass::None;
     }
 

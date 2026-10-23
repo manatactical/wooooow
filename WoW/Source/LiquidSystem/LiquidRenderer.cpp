@@ -106,7 +106,11 @@ int32_t Liquid::CRenderer::CompareTransparent(const void* a, const void* b) {
 // OFFSET: 0x008A20C0
 void Liquid::CRenderer::Draw(Liquid::CInstance* instance) {
     if (!instance->m_queued) {
-        this->m_instances[instance->m_settings->m_transparent != 0].New(instance);
+        // Not in the original binary. The modern water pass runs only in the transparent flush, so water whose material
+        // is opaque would be drawn by the client's own shader in the opaque flush and never shaded. Shaded water is
+        // always queued with the transparent draws.
+        const bool shaded = GlobalWaterRenderer().Active() && ModernWater::TagLiquidInstance(instance);
+        this->m_instances[shaded || instance->m_settings->m_transparent != 0].New(instance);
         instance->m_queued = 1;
     }
 }

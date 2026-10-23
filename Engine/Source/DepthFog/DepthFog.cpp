@@ -147,12 +147,17 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
     if (abs(c15.z - 6) < 0.5) { float g = frac(depth * 32); return float4(g, g, g, 1); }
     if (abs(c15.z - 7) < 0.5) { return float4(depth, depth, depth, 1); }
 
-    if (depth >= c2.z) { return float4(0, 0, 0, 0); }
+    // The sky is left to the sky. Between the world's own slice of the depth range and the sky's lies the horizon's: the
+    // low-detail terrain drawn past the far clip. It has no distance worth decoding (it is beyond the fade by definition),
+    // so it is the fog wall itself, fully fogged, and the mountains there dissolve into the sky instead of standing
+    // against it.
+    if (depth >= 0.99903) { return float4(0, 0, 0, 0); }
+    bool horizon = depth >= c2.z;
 
     // The view ray through this pixel, unit length along the view axis, and the distance to the surface along it.
     float2 ndc = float2(((uv.x - c0.z) / c1.x - 0.5) * 2, (0.5 - (uv.y - c0.w) / c1.y) * 2);
     float3 ray = float3(ndc.x * c1.z, ndc.y * c1.w, c8.w);
-    float dist = ViewZ(depth) * length(ray);
+    float dist = horizon ? 1.0e6 : ViewZ(depth) * length(ray);
     float3 dir = normalize(float3(dot(ray, c3.xyz), dot(ray, c4.xyz), dot(ray, c5.xyz)));
 
     // Height fog: density falls off exponentially with altitude, integrated along the ray. With x the fall in the

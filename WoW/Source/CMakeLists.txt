@@ -36,7 +36,7 @@ target_link_libraries(Wow
         BLPFile
         AntiAlias
         AmbientOcclusion
-        SunShafts
+        SunGlow
         DepthFog
         Base
         BlizzardCore

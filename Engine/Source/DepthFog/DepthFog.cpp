@@ -215,7 +215,7 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
 }
 )HLSL";
 
-// The decode terms for the stored depth. shortcut: duplicated from the sun shaft pass, which duplicated it from the
+// The decode terms for the stored depth. shortcut: duplicated from the sun glow pass, which duplicated it from the
 // ambient occlusion pass, which duplicated it from water_renderer.cpp's MapWorldDepth. This is the fourth consumer, so
 // the shared header the first copy promised is long overdue. See there for why the viewport's z range is folded in as
 // it is.
@@ -235,7 +235,7 @@ DepthMapping MapWorldDepth(const float* m, float viewportMinZ, float viewportMax
     return { minZ + extent * m[10], extent * m[14], std::max(deepest, kSkyMinDepth) };
 }
 
-// Compiles the shader above. The same pattern as the sun shaft pass: optimised, because a failed compile leaves the
+// Compiles the shader above. The same pattern as the sun glow pass: optimised, because a failed compile leaves the
 // shader null and the whole module silently draws nothing, and no CGxDevice::Log on the failure path, which is exactly
 // when the process can least afford a varargs logger.
 CGxShader* CompilePixelShader(const char* body) {
@@ -321,7 +321,7 @@ void RefreshGxTexture(FFX::Tex& tex, CGxTex*& gxTexture) {
     gxTexture = tex.m_texture ? TextureGetGxTex(tex.m_texture, 1, nullptr) : nullptr;
 }
 
-// A render target of exactly the given size, bilinear. Copied from the sun shaft pass;
+// A render target of exactly the given size, bilinear. Copied from the sun glow pass;
 // FFX::CreateTex is not used because it rounds up to a power of two, and the shaders address the targets in the
 // frame's own uv.
 bool CreateFrameTex(FFX::Tex& tex, const C2iVector& size) {

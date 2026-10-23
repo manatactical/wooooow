@@ -1,5 +1,5 @@
-// Not in the original 3.3.5a binary. Sun shafts over the finished world frame; see SunShafts.h for the pipeline.
-#include "Engine/Source/SunShafts/SunShafts.h"
+// Not in the original 3.3.5a binary. A glow around the sun over the finished world frame; see SunGlow.h.
+#include "Engine/Source/SunGlow/SunGlow.h"
 
 #include <algorithm>
 #include <cmath>
@@ -31,168 +31,90 @@
 
 namespace {
 
-// The default of the sunShaftsStrength cvar: how much light a fully lit shaft adds, as a fraction of white.
+// The default of the sunGlowStrength cvar.
 constexpr float kStrength = 0.5f;
 
-// What the strength cvar's 1.0 means in light added to the frame: the cvar is a 0..1 slider whose top end is the most
-// the effect should ever do. Tuned by eye: 6.0 was far too strong, and a fifth of that is the ceiling.
-constexpr float kGain = 1.2f;
+// What the strength cvar's 1.0 means in light added to the frame at the glow's centre. The cvar is a 0..1 slider whose
+// top end is the most the effect should ever do.
+constexpr float kGain = 1.6f;
 
-// The march runs at half the frame's size in each direction and is brought back to full size by the composite's
-// bilinear filter -- shafts are a smooth field, so there is nothing for a depth-aware upsample to protect.
-constexpr int32_t kResolutionDivisor = 2;
+// The glow is a tight core and a wide halo, each falling off exponentially with distance from the sun in frame heights.
+// Their weights are in the shader; these rates are the knobs worth turning.
+constexpr float kCoreRate = 14.0f;
+constexpr float kHaloRate = 3.2f;
 
-// The longest walk toward the sun, in frame heights. A pixel on the far side of the screen from the sun would
-// otherwise average a very long, thinly sampled ray; capping it keeps the shafts crisp and the taps dense.
-constexpr float kMaxRayHeights = 0.9f;
+// The share of the glow that bleeds over solid things (a tree edge or a roofline against the sun) rather than sky.
+constexpr float kSolidShare = 0.3f;
 
-// How quickly the shafts fade with distance from the sun's screen position, per frame height: exp(-d * this).
-constexpr float kFalloffPerHeight = 0.6f;
+// The sun's direction as a cosine against the view direction: no glow at the first, all of it at the second. The glow
+// belongs to the sun's disc, so it goes with the sun out of the view rather than hanging at the screen's edge.
+constexpr float kFacingFadeStart = 0.05f;
+constexpr float kFacingFadeEnd = 0.35f;
 
-// Air in front of a surface. A pixel at distance z scatters 1 - exp(-z / kAirYards) of what a pixel in the far
-// distance does, so shafts do not paint the wall beside the camera but do fill a valley.
-constexpr float kAirYards = 60.0f;
-
-// Sky is already bright and sits in front of the sun's own glow; this is the share of the shaft term it receives, so it
-// brightens toward the sun without clipping.
-constexpr float kSkyShare = 0.5f;
-
-// The shape of the final ramp: above 1, a faintly lit pixel stays almost clean and a fully lit one stands out, which is
-// what separates a shaft from a general haze.
-constexpr float kCurvePower = 1.0f;
-
-// How far past the facing cone the shafts reach, as the cosine of the angle between the view direction and the sun:
-// fully faded at the first, fully present at the second. The sun can be well off screen and still throw shafts into view.
-constexpr float kFacingFadeStart = 0.15f;
-constexpr float kFacingFadeEnd = 0.75f;
-
-// The world's depth mapping; see MapWorldDepth. These are the ambient occlusion pass's constants, for the same
-// projection.
+// The stored depth of a pixel with no geometry; see MapWorldDepth.
 constexpr float kMinViewportDepthExtent = 0.01f;
 constexpr float kDeepestWorldDepthInFullRangeViewport = 0.9999995f;
 constexpr float kWorldDepthMargin = 2.0e-6f;
 constexpr float kSkyMinDepth = 0.99903f;
-// What a pixel with no geometry decodes to. Far past any fade, so a sky pixel has all the air there is.
-constexpr float kMaxViewDepth = 2000.0f;
 
-constexpr int32_t kConstantRows = 6;
+// The quad is drawn through a helper target at half the frame's size; FFX::SetupGx's ortho projection stretches it over
+// the whole frame.
+constexpr int32_t kResolutionDivisor = 2;
 
-// Registers shared by all three shaders. These replace the engine's pixel shader outright, so the whole constant
-// range is free.
-//
+constexpr int32_t kConstantRows = 5;
+
 // c0 = { 1/width, 1/height, view origin x, view origin y }       (frame size; origin normalised to the frame)
-// c1 = { view width, view height, sun u, sun v }                 (sizes normalised to the frame; sun in frame uv)
-// c2 = { atInfinity, perInverseViewDepth, deepest depth, max view depth }
-// c3 = { 1/shaft width, 1/shaft height, max ray length in frame heights, 1/air yards }
-// c4 = { sky share, falloff per frame height, frame aspect, curve power }
-// c5 = { tint r, tint g, tint b, intensity }                      (intensity.w < 0: debug view, grey and opaque)
-const char* const kCommonHLSL = R"HLSL(
+// c1 = { view width, view height, sun u, sun v }                  (sizes normalised to the frame; sun in frame uv)
+// c2 = { 0, 0, deepest depth, 0 }                                 (a stored depth at or past this is sky)
+// c3 = { view aspect, intensity, core rate, halo rate }
+// c4 = { tint r, tint g, tint b, solid share }
+const char* const kGlowHLSL = R"HLSL(
 float4 c0 : register(c0);
 float4 c1 : register(c1);
 float4 c2 : register(c2);
 float4 c3 : register(c3);
 float4 c4 : register(c4);
-float4 c5 : register(c5);
 
-// Stored depth back to yards in front of the eye. The denominator is negative for real geometry (the client's
-// projection stores depth = m22 + m32 / z with m32 < 0), which is why there is no clamp on it.
-float ViewZ(float depth)
-{
-    return depth >= c2.z ? c2.w : min(c2.y / (depth - c2.x), c2.w);
-}
-)HLSL";
-
-// The march. 48 taps from the pixel toward the sun, each lit when it lands on sky.
-const char* const kMarchHLSL = R"HLSL(
 sampler2D sDepth : register(s0);
+
+bool IsSky(float2 uv)
+{
+    return tex2Dlod(sDepth, float4(uv, 0, 0)).r >= c2.z;
+}
 
 float4 main(float2 uv : TEXCOORD0) : COLOR0
 {
-    // Outside the world's rectangle the frame is not the world.
     float2 viewMin = c0.zw;
     float2 viewMax = c0.zw + c1.xy;
     if (uv.x < viewMin.x || uv.y < viewMin.y || uv.x > viewMax.x || uv.y > viewMax.y) { return float4(0, 0, 0, 1); }
 
-    // A shaft texel covers a 2x2 block of frame pixels; its own depth is always read from the lower right one (the
-    // quarter-pixel nudge keeps the floor off the exact boundary the texel centre sits on).
-    float2 pixel = floor(uv / c0.xy + 0.25);
-    float2 uvC = (pixel + 0.5) * c0.xy;
-    float depth = tex2Dlod(sDepth, float4(uvC, 0, 0)).r;
-    bool sky = depth >= c2.z;
+    // Distance from the sun in frame heights, so the glow is round whatever the aspect ratio.
+    float2 toPixel = (uv - c1.zw) / c1.xy * float2(c3.x, 1);
+    float dist = length(toPixel);
 
-    // The walk toward the sun, shortened to the cap. Distances are measured in frame heights so the cap and the
-    // falloff do not depend on the aspect ratio.
-    float2 toSun = c1.zw - uv;
-    float heights = length(toSun * float2(c4.z, 1));
-    toSun *= min(1, c3.z / max(heights, 1e-4));
-
-    // Each texel starts its walk a ninth of a step further along than its neighbour, over a 3x3 tile. The box blur
-    // covers each of the nine exactly once, so the banding of a fixed number of taps averages out.
-    float2 texel = floor(uv / c3.xy);
-    float2 tile = texel - 3 * floor(texel / 3);
-    float jitter = frac((tile.x + 3 * tile.y) * (4.0 / 9.0));
-
-    float lit = 0;
-    float total = 0;
-
-    [loop] for (int i = 0; i < 48; ++i)
-    {
-        float t = (i + jitter) * (1.0 / 48.0);
-        float2 p = uv + toSun * t;
-
-        // Past the edge of the world's rectangle nothing is known, so it counts as neither lit nor blocked: the walk
-        // simply ends there, and the share of it that was lit falls as it gets cut short.
-        bool inside = p.x >= viewMin.x && p.y >= viewMin.y && p.x <= viewMax.x && p.y <= viewMax.y;
-        float d = tex2Dlod(sDepth, float4(p, 0, 0)).r;
-
-        // The nearer part of the walk says more about what lights this pixel.
-        float w = (1 - t) * (1 - t);
-        lit += (inside && d >= c2.z) ? w : 0;
-        total += w;
-    }
-
-    float air = sky ? c4.x : 1 - exp(-ViewZ(depth) * c3.w);
-    float shaft = lit / total * exp(-heights * c4.y) * air;
-    return float4(shaft, shaft, shaft, 1);
-}
-)HLSL";
-
-// One 3x3 box in shaft texels.
-const char* const kBlurHLSL = R"HLSL(
-sampler2D sShaft : register(s0);
-
-float4 main(float2 uv : TEXCOORD0) : COLOR0
-{
-    float sum = 0;
-
+    // How much of the sun's own disc is uncovered: nine taps over a small disc around it. A tap off the picture can
+    // not be looked at, so it counts as open.
+    float open = 0;
     [unroll] for (int y = -1; y <= 1; ++y)
     {
         [unroll] for (int x = -1; x <= 1; ++x)
         {
-            sum += tex2Dlod(sShaft, float4(uv + float2(x, y) * c3.xy, 0, 0)).r;
+            float2 tap = c1.zw + float2(x * 0.02 / c3.x * c1.x, y * 0.02 * c1.y);
+            bool inside = tap.x >= viewMin.x && tap.y >= viewMin.y && tap.x <= viewMax.x && tap.y <= viewMax.y;
+            open += (!inside || IsSky(tap)) ? 1 : 0;
         }
     }
+    open *= 1.0 / 9.0;
 
-    float shaft = sum * (1.0 / 9.0);
-    return float4(shaft, shaft, shaft, 1);
-}
-)HLSL";
+    float core = exp(-dist * c3.z);
+    float halo = exp(-dist * c3.w);
+    float glow = 0.65 * core + 0.35 * halo;
 
-// Brings the half-size term back to the frame's size (the target is bilinear) and tints it. Added to the frame, or --
-// for the debug view -- replacing it.
-const char* const kCompositeHLSL = R"HLSL(
-sampler2D sShaft : register(s0);
+    // Warm halo, white-hot core.
+    float3 colour = lerp(c4.rgb, float3(1, 1, 1), core * core);
 
-float4 main(float2 uv : TEXCOORD0) : COLOR0
-{
-    float shaft = pow(saturate(tex2Dlod(sShaft, float4(uv, 0, 0)).r), c4.w);
-
-    [branch] if (c5.w < 0)
-    {
-        return float4(shaft, shaft, shaft, 1);
-    }
-
-    return float4(c5.rgb * (shaft * c5.w), 1);
+    float share = IsSky(uv) ? 1 : c4.w;
+    return float4(colour * (glow * share * open * c3.y), 1);
 }
 )HLSL";
 
@@ -215,11 +137,6 @@ DepthMapping MapWorldDepth(const float* m, float viewportMinZ, float viewportMax
     return { minZ + extent * m[10], extent * m[14], std::max(deepest, kSkyMinDepth) };
 }
 
-float SmoothStep(float edge0, float edge1, float x) {
-    const float t = std::min(std::max((x - edge0) / (edge1 - edge0), 0.0f), 1.0f);
-    return t * t * (3.0f - 2.0f * t);
-}
-
 // Compiles one of the shaders above. The same pattern as the ambient occlusion pass: optimised, because a failed
 // compile leaves the shader null and the whole module silently draws nothing, and no CGxDevice::Log on the failure
 // path, which is exactly when the process can least afford a varargs logger.
@@ -232,14 +149,14 @@ CGxShader* CompilePixelShader(const char* prefix, const char* body) {
 
     ID3DBlob* code = nullptr;
     ID3DBlob* error = nullptr;
-    HRESULT result = D3DCompile(source, length, "SunShafts", nullptr, nullptr, "main", "ps_3_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &error);
+    HRESULT result = D3DCompile(source, length, "SunGlow", nullptr, nullptr, "main", "ps_3_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &error);
     delete[] source;
 
     if (FAILED(result)) {
-        FILE* file = DiagnosticLogsEnabled() ? fopen("Logs\\sunshafts.log", "a") : nullptr;
+        FILE* file = DiagnosticLogsEnabled() ? fopen("Logs\\sunglow.log", "a") : nullptr;
 
         if (file) {
-            fputs("SunShafts: a pixel shader failed to compile\n", file);
+            fputs("SunGlow: a pixel shader failed to compile\n", file);
 
             if (error) {
                 fwrite(error->GetBufferPointer(), 1, error->GetBufferSize(), file);
@@ -311,7 +228,7 @@ bool CreateFrameTex(FFX::Tex& tex, const C2iVector& size) {
         }
 
         CGxTexFlags flags(GxTex_Linear, 0, 0, 0, 0, 1, 1, 0, 0, 0);
-        tex.m_texture = TextureCreate(GxTex_NonPow2, size.x, size.y, 0, format, format, flags, nullptr, GxTexNullUserFunc, "SunShafts::CreateFrameTex", 0);
+        tex.m_texture = TextureCreate(GxTex_NonPow2, size.x, size.y, 0, format, format, flags, nullptr, GxTexNullUserFunc, "SunGlow::CreateFrameTex", 0);
 
         if (!tex.m_texture) {
             return false;
@@ -346,7 +263,7 @@ void DrawFullscreenQuad(const FFX::Tex& target) {
     g_theGxDevicePtr->Draw(&FFX::s_quadBatch, 1);
 }
 
-// Why the pass drew nothing this frame, written to Logs\sunshafts.log about once every two seconds while diagnostics
+// Why the pass drew nothing this frame, written to Logs\sunglow.log about once every two seconds while diagnostics
 // are on (WOWLOG_QUIET=0). A pass that quietly stands down is indistinguishable from one that is broken, so each exit
 // says which it was and what the numbers were.
 void Note(const char* reason, float a = 0.0f, float b = 0.0f, float c = 0.0f, float d = 0.0f) {
@@ -358,7 +275,7 @@ void Note(const char* reason, float a = 0.0f, float b = 0.0f, float c = 0.0f, fl
     }
 
     s_lastMs = now;
-    FILE* file = fopen("Logs\\sunshafts.log", "a");
+    FILE* file = fopen("Logs\\sunglow.log", "a");
 
     if (file) {
         fprintf(file, "%s  %.4f %.4f %.4f %.4f\n", reason, a, b, c, d);
@@ -370,60 +287,58 @@ void Note(const char* reason, float a = 0.0f, float b = 0.0f, float c = 0.0f, fl
 // turned a broken shader into a large frame-rate loss on top of the missing effect. Cleared by a device restore.
 bool s_compileFailed;
 
+float SmoothStep(float edge0, float edge1, float x) {
+    const float t = std::min(std::max((x - edge0) / (edge1 - edge0), 0.0f), 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
 }  // namespace
 
-CVar* CSunShafts::s_cvarShafts;
-CVar* CSunShafts::s_cvarStrength;
-CGxShader* CSunShafts::s_marchPS;
-CGxShader* CSunShafts::s_blurPS;
-CGxShader* CSunShafts::s_compositePS;
-FFX::Tex CSunShafts::s_shaftTex;
-FFX::Tex CSunShafts::s_shaftBlurTex;
-CGxTex* CSunShafts::s_shaft;
-CGxTex* CSunShafts::s_shaftBlur;
+CVar* CSunGlow::s_cvarGlow;
+CVar* CSunGlow::s_cvarStrength;
+CGxShader* CSunGlow::s_glowPS;
+FFX::Tex CSunGlow::s_quadTex;
+CGxTex* CSunGlow::s_quad;
 
 // Not in the original binary. Called when a world frame is created, which happens again after a UI reload, so
 // the callback registration is guarded: the device's list is append-only and OnDeviceRestored is not safe to run
 // twice.
-void CSunShafts::Init() {
+void CSunGlow::Init() {
     static bool s_registered;
 
     // Registered by CWorldParam::Initialize so the options panel can read its default at the login screen. This
     // call is the safety net, and Register reuses an existing var.
-    s_cvarShafts = CVar::Register("sunShafts", "sun shafts: 0 off, 1 on, 2 show the shaft term", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_cvarStrength = CVar::Register("sunShaftsStrength", "sun shaft strength: 0 none, 1 full", 1, "0.5", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvarGlow = CVar::Register("sunGlow", "sun glow: 0 off, 1 on", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvarStrength = CVar::Register("sunGlowStrength", "sun glow strength: 0 none, 1 full", 1, "0.5", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
     if (s_registered) {
         return;
     }
 
     s_registered = true;
-    g_theGxDevicePtr->AddDeviceRestoredCallback(CSunShafts::OnDeviceRestored);
+    g_theGxDevicePtr->AddDeviceRestoredCallback(CSunGlow::OnDeviceRestored);
 }
 
-bool CSunShafts::Enabled() {
-    return s_cvarShafts && s_cvarShafts->m_intValue > 0 && g_theGxDevicePtr && g_theGxDevicePtr->m_context;
+bool CSunGlow::Enabled() {
+    return s_cvarGlow && s_cvarGlow->m_intValue > 0 && g_theGxDevicePtr && g_theGxDevicePtr->m_context;
 }
 
-// Not in the original binary. A device reset frees the shaders; the shaft targets are default-pool render targets the
-// device re-created itself, so only the cached pointers are stale. ShaderDestroy re-nulls what it is given.
-void CSunShafts::OnDeviceRestored() {
-    if (s_marchPS) { g_theGxDevicePtr->ShaderDestroy(s_marchPS); }
-    if (s_blurPS) { g_theGxDevicePtr->ShaderDestroy(s_blurPS); }
-    if (s_compositePS) { g_theGxDevicePtr->ShaderDestroy(s_compositePS); }
+// Not in the original binary. A device reset frees the shader; the quad's target is a default-pool render target the
+// device re-created itself, so only the cached pointer is stale. ShaderDestroy re-nulls what it is given.
+void CSunGlow::OnDeviceRestored() {
+    if (s_glowPS) { g_theGxDevicePtr->ShaderDestroy(s_glowPS); }
 
     s_compileFailed = false;
-    RefreshGxTexture(s_shaftTex, s_shaft);
-    RefreshGxTexture(s_shaftBlurTex, s_shaftBlur);
+    RefreshGxTexture(s_quadTex, s_quad);
 }
 
-bool CSunShafts::EnsureResources() {
+bool CSunGlow::EnsureResources() {
     if (!Enabled()) {
         return false;
     }
 
     if (g_theGxDevicePtr->DeviceApi() != GxApi_D3d9 && g_theGxDevicePtr->DeviceApi() != GxApi_D3d9Ex) {
-        // The shaders are D3D9 bytecode, and the depth sharing is a D3D9 concept.
+        // The shader is D3D9 bytecode, and the depth sharing is a D3D9 concept.
         return false;
     }
 
@@ -436,11 +351,9 @@ bool CSunShafts::EnsureResources() {
         return false;
     }
 
-    if (!s_marchPS) { s_marchPS = CompilePixelShader(kCommonHLSL, kMarchHLSL); }
-    if (!s_blurPS) { s_blurPS = CompilePixelShader(kCommonHLSL, kBlurHLSL); }
-    if (!s_compositePS) { s_compositePS = CompilePixelShader(kCommonHLSL, kCompositeHLSL); }
+    if (!s_glowPS) { s_glowPS = CompilePixelShader("", kGlowHLSL); }
 
-    if (!s_marchPS || !s_blurPS || !s_compositePS) {
+    if (!s_glowPS) {
         s_compileFailed = true;
         return false;
     }
@@ -449,21 +362,17 @@ bool CSunShafts::EnsureResources() {
 }
 
 // Not in the original binary. The world -> interface boundary; see the header for the order and why.
-void CSunShafts::Apply(const SunShaftsLight& sun) {
-    // The cheap exits first: most frames at night, indoors or facing away from the sun end here, before a shader is
-    // compiled or a target created.
+void CSunGlow::Apply(const SunGlowLight& sun) {
+    // The cheap exits first: most frames at night or indoors end here, before a shader is compiled or a target created.
     if (!Enabled()) {
         return;
     }
 
     float strength = s_cvarStrength ? s_cvarStrength->m_floatValue : kStrength;
     strength = std::min(std::max(strength, 0.0f), 1.0f);
-    const int32_t mode = s_cvarShafts->m_intValue;
+    const float visibility = std::min(std::max(sun.visibility, 0.0f), 1.0f);
 
-    // The debug view shows the term whatever the sky is doing, so the pass can be told apart from "nothing to see".
-    const float visibility = mode > 1 ? 1.0f : std::min(std::max(sun.visibility, 0.0f), 1.0f);
-
-    if (visibility * strength < 0.004f && mode <= 1) {
+    if (visibility * strength < 0.004f) {
         Note("no sun: visibility * strength too low", sun.visibility, strength);
         return;
     }
@@ -534,16 +443,16 @@ void CSunShafts::Apply(const SunShaftsLight& sun) {
     const float clipY = vx * p[1] + vy * p[5] + vz * p[9];
     const float clipW = vx * p[3] + vy * p[7] + vz * p[11];
 
-    // Behind the camera, or so far to the side that the projection is meaningless: no shafts.
+    // Behind the camera: there is no sun to glow.
     if (!(clipW > 1e-4f)) {
         Note("sun behind camera", clipW, vx, vy, vz);
         return;
     }
 
-    const float facing = SmoothStep(kFacingFadeStart, kFacingFadeEnd, std::fabs(vz) / length);
+    const float facing = SmoothStep(kFacingFadeStart, kFacingFadeEnd, vz / length);
     const float intensity = strength * kGain * visibility * facing;
 
-    if (intensity < 0.004f && mode <= 1) {
+    if (intensity < 0.004f) {
         Note("sun out of view cone", facing, vz / length, visibility);
         return;
     }
@@ -562,18 +471,15 @@ void CSunShafts::Apply(const SunShaftsLight& sun) {
 
     Note("drawing", intensity, sunU, sunV, visibility);
 
-    // The term lives at a fraction of the frame's size. Rounded up, so an odd frame still has a texel for its last
-    // column; the shaders address it in the frame's own uv, so the exact size only has to be consistent.
-    const C2iVector shaftSize = { (size.x + kResolutionDivisor - 1) / kResolutionDivisor, (size.y + kResolutionDivisor - 1) / kResolutionDivisor };
+    const C2iVector quadSize = { (size.x + kResolutionDivisor - 1) / kResolutionDivisor, (size.y + kResolutionDivisor - 1) / kResolutionDivisor };
 
-    if (!CreateFrameTex(s_shaftTex, shaftSize) || !CreateFrameTex(s_shaftBlurTex, shaftSize)) {
+    if (!CreateFrameTex(s_quadTex, quadSize)) {
         return;
     }
 
-    RefreshGxTexture(s_shaftTex, s_shaft);
-    RefreshGxTexture(s_shaftBlurTex, s_shaftBlur);
+    RefreshGxTexture(s_quadTex, s_quad);
 
-    if (!s_shaft || !s_shaftBlur) {
+    if (!s_quad) {
         return;
     }
 
@@ -588,54 +494,37 @@ void CSunShafts::Apply(const SunShaftsLight& sun) {
         channel = peak > 1e-4f ? channel / peak : 1.0f;
     }
 
+    const float aspect = (viewWidth * size.x) / (viewHeight * size.y);
+
     const float constants[kConstantRows * 4] = {
         1.0f / size.x, 1.0f / size.y, minX, minY,
         viewWidth, viewHeight, sunU, sunV,
-        mapping.atInfinity, mapping.perInverseViewDepth, mapping.deepest, kMaxViewDepth,
-        1.0f / shaftSize.x, 1.0f / shaftSize.y, kMaxRayHeights, 1.0f / kAirYards,
-        kSkyShare, kFalloffPerHeight, static_cast<float>(size.x) / static_cast<float>(size.y), kCurvePower,
-        tint[0], tint[1], tint[2], mode > 1 ? -1.0f : intensity,
+        0.0f, 0.0f, mapping.deepest, 0.0f,
+        aspect, intensity, kCoreRate, kHaloRate,
+        tint[0], tint[1], tint[2], kSolidShare,
     };
 
-    // The engine's own full-screen setup: pixel-space ortho projection, identity view and world, the shaft target as
-    // the colour target, and the render-state push that covers everything set from here on.
-    FFX::SetupGx(&s_shaftTex);
+    // The engine's own full-screen setup: pixel-space ortho projection, identity view and world, and the render-state
+    // push that covers everything set from here on.
+    FFX::SetupGx(&s_quadTex);
     GxXformSetViewport(0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f);
 
     // The quad is transformed by the fixed-function pipeline, so a vertex shader left over from the world's last
     // batch must not transform it first.
     GxRsSet(GxRs_VertexShader, nullptr);
-    GxRsSet(GxRs_BlendingMode, GxBlend_Opaque);
     GxRsSet(GxRs_ColorWrite, 15);
     GxRsSet(GxRs_AlphaRef, 0);
 
     GxShaderConstantsSet(GxSh_Pixel, 0, constants, kConstantRows);
 
-    // March.
-    GxRsSet(GxRs_PixelShader, s_marchPS);
-    GxRsSet(GxRs_Texture0, depth);
-    DrawFullscreenQuad(s_shaftTex);
-
-    // Blur, and again back into the first target. Two 3x3 boxes are a 5x5 tent, which takes the grain of the starting
-    // offsets and leaves the shafts' soft edges.
-    GxRenderTargetSet(GxBuffers_Color, s_shaftBlur, 0);
-    GxRsSet(GxRs_PixelShader, s_blurPS);
-    GxRsSet(GxRs_Texture0, s_shaft);
-    DrawFullscreenQuad(s_shaftBlurTex);
-
-    GxRenderTargetSet(GxBuffers_Color, s_shaft, 0);
-    GxRsSet(GxRs_Texture0, s_shaftBlur);
-    DrawFullscreenQuad(s_shaftTex);
-
-    // Composite onto the frame: added, or -- for the debug view -- replacing it. Back to the default back buffer,
-    // clipped to the 3D rectangle the world drew into. The quad is the shaft target's size, which the ortho
-    // projection from SetupGx stretches over the whole frame.
+    // Added onto the frame itself: back to the default back buffer, clipped to the 3D rectangle the world drew into.
+    // The quad is the helper target's size, which the ortho projection from SetupGx stretches over the whole frame.
     GxRenderTargetSet(GxBuffers_Color, nullptr, 0);
     GxXformSetViewport(minX, maxX, minY, maxY, 0.0f, 1.0f);
-    GxRsSet(GxRs_PixelShader, s_compositePS);
-    GxRsSet(GxRs_BlendingMode, mode > 1 ? GxBlend_Opaque : GxBlend_Add);
-    GxRsSet(GxRs_Texture0, s_shaft);
-    DrawFullscreenQuad(s_shaftBlurTex);
+    GxRsSet(GxRs_PixelShader, s_glowPS);
+    GxRsSet(GxRs_BlendingMode, GxBlend_Add);
+    GxRsSet(GxRs_Texture0, depth);
+    DrawFullscreenQuad(s_quadTex);
 
     GxRsSet(GxRs_Texture0, nullptr);
     FFX::SetupReset();

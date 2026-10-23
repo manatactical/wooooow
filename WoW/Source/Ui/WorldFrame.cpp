@@ -30,7 +30,7 @@
 #include "Engine/Source/AntiAlias/AntiAlias.h"
 #include "Engine/Source/ModernWater/ModernWater.h"
 #include "Engine/Source/DepthFog/DepthFog.h"
-#include "Engine/Source/SunShafts/SunShafts.h"
+#include "Engine/Source/SunGlow/SunGlow.h"
 #include "Engine/Source/UnitOutline/UnitOutline.h"
 #include "Engine/Source/Tempest/C4Vector.h"
 #include "Engine/Source/Tempest/CAaBox.h"
@@ -1277,7 +1277,7 @@ CGWorldFrame::CGWorldFrame(CSimpleFrame* parent) : CSimpleFrame(parent) {
     // Registers the antiAlias cvar and the device-restored callback. Idempotent for the same reason.
     CAntiAlias::Init();
     CAmbientOcclusion::Init();
-    CSunShafts::Init();
+    CSunGlow::Init();
     CDepthFog::Init();
     // Registers the lootBeam cvar. Idempotent for the same reason.
     LootBeam::Init();
@@ -1684,14 +1684,14 @@ void CGWorldFrame::UpdateObject(CGObject_C* object, uint32_t flags) {
     }
 }
 
-// Not in the original binary. What CSunShafts needs to know about the sun, read from the day/night state: where it
+// Not in the original binary. What CSunGlow needs to know about the sun, read from the day/night state: where it
 // is, what colour its light is, and how much of it there is to see. The visibility is the same chain the sun's glare
 // fades by (the time of day's alpha curve, cloud cover over the sun, the camera being underwater) with the glare's own
-// occlusion test left out, because a sun hidden behind a canopy is exactly when its shafts are worth drawing: the depth
-// the shafts are marched through already says what blocks it. An override skybox does not count against it: the glare
+// occlusion test left out, because a sun hidden behind a canopy is exactly when its glow is worth drawing: the depth
+// the glow is tested against already says what blocks it. An override skybox does not count against it: the glare
 // hides itself behind one (it has its own sun painted in), but the sun's direction and light are still the day's.
-static SunShaftsLight GatherSunShaftsLight() {
-    SunShaftsLight light = {};
+static SunGlowLight GatherSunGlowLight() {
+    SunGlowLight light = {};
     DayNight::DNInfo* info = DayNight::GetInfo();
     DayNight::DNGlare& sun = DayNight::g_sunGlare;
 
@@ -1702,12 +1702,12 @@ static SunShaftsLight GatherSunShaftsLight() {
     light.visibility = 0.0f;
 
     // No sky is drawn indoors, and a sun that is not up (the glare's alpha curve is zero through the night) makes
-    // no shafts.
+    // no glow.
     if (!info->m_showSky) {
         static uint32_t s_lastSkyLogMs;
         if (DiagnosticLogsEnabled() && OsGetAsyncTimeMs() - s_lastSkyLogMs > 2000) {
             s_lastSkyLogMs = OsGetAsyncTimeMs();
-            if (FILE* file = fopen("Logs\\sunshafts.log", "a")) {
+            if (FILE* file = fopen("Logs\\sunglow.log", "a")) {
                 fputs("sun: m_showSky is 0\n", file);
                 fclose(file);
             }
@@ -1733,7 +1733,7 @@ static SunShaftsLight GatherSunShaftsLight() {
         return light;
     }
 
-    // Elevation of the sun, from -1 (straight down) to 1. The shafts hold through sunset, which is when they are best,
+    // Elevation of the sun, from -1 (straight down) to 1. The glow holds through sunset, which is when they are best,
     // and are gone once the sun is a little below the horizon.
     const float elevation = light.toSun.z / length;
     const float rise = fminf(fmaxf((elevation + 0.03f) / 0.08f, 0.0f), 1.0f);
@@ -1746,7 +1746,7 @@ static SunShaftsLight GatherSunShaftsLight() {
     static uint32_t s_lastLogMs;
     if (DiagnosticLogsEnabled() && OsGetAsyncTimeMs() - s_lastLogMs > 2000) {
         s_lastLogMs = OsGetAsyncTimeMs();
-        if (FILE* file = fopen("Logs\\sunshafts.log", "a")) {
+        if (FILE* file = fopen("Logs\\sunglow.log", "a")) {
             fprintf(file, "sun: day=%.3f dayAlpha=%.3f skybox=%.3f cloud=%.3f liquid=%.3f elev=%.3f rise=%.3f vis=%.3f\n", info->m_dayProgression, dayAlpha, skyboxWeight, cloudFade, liquidFade, elevation, rise, light.visibility);
             fclose(file);
         }
@@ -1755,10 +1755,10 @@ static SunShaftsLight GatherSunShaftsLight() {
 }
 
 // Not in the original binary. What CDepthFog needs to know about the air: the sky's colour gradient from the horizon up
-// (the six sky bands of the current light, fog colour first), the sun as the shafts see it, and how much fog there
+// (the six sky bands of the current light, fog colour first), the sun as the glow sees it, and how much fog there
 // should be. None indoors (the interior fog is the engine's own business) and
 // none underwater (the liquid pass has its own).
-static DepthFogAtmosphere GatherDepthFogAtmosphere(const SunShaftsLight& sun) {
+static DepthFogAtmosphere GatherDepthFogAtmosphere(const SunGlowLight& sun) {
     DepthFogAtmosphere air = {};
     DayNight::DNInfo* info = DayNight::GetInfo();
     const DayNight::CurrentLight& bands = info->m_bands;
@@ -1951,13 +1951,13 @@ void CGWorldFrame::OnWorldRender() {
     PerfLogStage("ssao");
     CAmbientOcclusion::Apply();
 
-    // Sun shafts are light, so they go on after the ambient occlusion rather than under it, and before the outline for
+    // The sun glow is light, so they go on after the ambient occlusion rather than under it, and before the outline for
     // the same reason the occlusion does.
-    const SunShaftsLight sunLight = GatherSunShaftsLight();
+    const SunGlowLight sunLight = GatherSunGlowLight();
     PerfLogStage("depthfog");
     CDepthFog::Apply(GatherDepthFogAtmosphere(sunLight));
-    PerfLogStage("sunshafts");
-    CSunShafts::Apply(sunLight);
+    PerfLogStage("sunglow");
+    CSunGlow::Apply(sunLight);
 
     PerfLogStage("outline");
     CUnitOutline::Composite();

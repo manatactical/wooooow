@@ -567,12 +567,12 @@ SSAO_STRENGTH = "AO Strength";
 OPTION_TOOLTIP_SSAO_STRENGTH = "How dark the occluded areas get. Zero is no darkening at all.";
 SSAO_DISTANCE = "AO Distance";
 OPTION_TOOLTIP_SSAO_DISTANCE = "How far from the camera ambient occlusion reaches, in yards. It fades out and stops at this distance. Lower values cost less and avoid the noise it makes on far-away scenery.";
-SUN_SHAFTS = "Sun Shafts";
-OPTION_TOOLTIP_SUN_SHAFTS = "Beams of light that fall through gaps in trees, buildings and mountains when you look toward the sun. They are built from the frame's own depth buffer, so they are not applied while multisampling is enabled.";
+SUN_GLOW = "Sun Glow";
+OPTION_TOOLTIP_SUN_GLOW = "A soft glow around the sun when you look at it, dimmed when trees, buildings or mountains cover it. It uses the frame's own depth buffer, so it is not applied while multisampling is enabled.";
 DEPTH_FOG = "Depth Fog";
 OPTION_TOOLTIP_DEPTH_FOG = "Distance and height haze that hides the edge of the view distance and lets far ridges fade into the sky. It is built from the frame's own depth buffer, so it is not applied while multisampling is enabled.";
-SUN_SHAFTS_STRENGTH = "Shaft Strength";
-OPTION_TOOLTIP_SUN_SHAFTS_STRENGTH = "How bright the sun shafts are. Zero is no shafts at all.";
+SUN_GLOW_STRENGTH = "Glow Strength";
+OPTION_TOOLTIP_SUN_GLOW_STRENGTH = "How bright the glow around the sun is. Zero is no glow at all.";
 OPTION_TOOLTIP_LOOT_BEAM = "Raises a beam of light over every corpse that can still be looted, tinted by the quality of the rarest item in its loot. Purely a marker: it sends nothing to the server.";
 SHADOWS_LABEL = "Shadows";
 SHADOWS_SUBTEXT = "Shadow quality sets the method and how often shadows update, and shadow resolution how sharp the edges are. Hardware cursor draws the cursor through the GPU; Fix Lag adds a per-frame GPU sync that can reduce cursor lag at a frame rate cost.";
@@ -606,8 +606,8 @@ AdvancedPanelOptions = {
 	ssaoSpread = { text = "SSAO_SPREAD", minValue = 0.06, maxValue = 0.33, valueStep = 0.01, tooltip = OPTION_TOOLTIP_SSAO_SPREAD },
 	ssaoDistance = { text = "SSAO_DISTANCE", minValue = 15, maxValue = 200, valueStep = 5, tooltip = OPTION_TOOLTIP_SSAO_DISTANCE },
 	ssaoStrength = { text = "SSAO_STRENGTH", minValue = 0, maxValue = 1, valueStep = 0.05, tooltip = OPTION_TOOLTIP_SSAO_STRENGTH },
-	sunShafts = { text = "SUN_SHAFTS", tooltip = OPTION_TOOLTIP_SUN_SHAFTS },
-	sunShaftsStrength = { text = "SUN_SHAFTS_STRENGTH", minValue = 0, maxValue = 1, valueStep = 0.05, tooltip = OPTION_TOOLTIP_SUN_SHAFTS_STRENGTH },
+	sunGlow = { text = "SUN_GLOW", tooltip = OPTION_TOOLTIP_SUN_GLOW },
+	sunGlowStrength = { text = "SUN_GLOW_STRENGTH", minValue = 0, maxValue = 1, valueStep = 0.05, tooltip = OPTION_TOOLTIP_SUN_GLOW_STRENGTH },
 	depthFog = { text = "DEPTH_FOG", tooltip = OPTION_TOOLTIP_DEPTH_FOG },
 };
 

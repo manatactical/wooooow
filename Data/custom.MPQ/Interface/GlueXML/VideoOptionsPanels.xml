@@ -1066,7 +1066,7 @@
 					<OnValueChanged function="VideoOptionsAdvancedPanelSlider_OnValueChanged"/>
 				</Scripts>
 			</Slider>
-			<CheckButton name="$parentSunShafts" inherits="VideoOptionsSmallCheckButtonTemplate">
+			<CheckButton name="$parentSunGlow" inherits="VideoOptionsSmallCheckButtonTemplate">
 				<Anchors>
 					<Anchor point="TOPLEFT" relativeTo="$parentSsaoDistance" relativePoint="BOTTOMLEFT">
 						<Offset x="-4" y="-12"/>
@@ -1075,22 +1075,22 @@
 				<Scripts>
 					<OnLoad>
 						self.type = CONTROLTYPE_CHECKBOX;
-						self.cvar = "sunShafts";
+						self.cvar = "sunGlow";
 						BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
 					</OnLoad>
 				</Scripts>
 			</CheckButton>
-			<Slider name="$parentSunShaftsStrength" inherits="OptionsSliderTemplate">
+			<Slider name="$parentSunGlowStrength" inherits="OptionsSliderTemplate">
 				<Size x="200" y="17"/>
 				<Anchors>
-					<Anchor point="TOPLEFT" relativeTo="$parentSunShafts" relativePoint="BOTTOMLEFT">
+					<Anchor point="TOPLEFT" relativeTo="$parentSunGlow" relativePoint="BOTTOMLEFT">
 						<Offset x="4" y="-24"/>
 					</Anchor>
 				</Anchors>
 				<Scripts>
 					<OnLoad>
 						self.type = CONTROLTYPE_SLIDER;
-						self.cvar = "sunShaftsStrength";
+						self.cvar = "sunGlowStrength";
 						self.SetDisplayValue = self.SetValue;
 						self.SetValue = function (self, value)
 							self:SetDisplayValue(value);
@@ -1104,7 +1104,7 @@
 			</Slider>
 			<CheckButton name="$parentDepthFog" inherits="VideoOptionsSmallCheckButtonTemplate">
 				<Anchors>
-					<Anchor point="TOPLEFT" relativeTo="$parentSunShaftsStrength" relativePoint="BOTTOMLEFT">
+					<Anchor point="TOPLEFT" relativeTo="$parentSunGlowStrength" relativePoint="BOTTOMLEFT">
 						<Offset x="-4" y="-12"/>
 					</Anchor>
 				</Anchors>

@@ -55,9 +55,9 @@ CVar* CWorldParam::cvar_ssao;
 CVar* CWorldParam::cvar_ssaoSpread;
 CVar* CWorldParam::cvar_ssaoStrength;
 CVar* CWorldParam::cvar_ssaoDistance;
-// Not in the original binary. See CSunShafts. 0 off, 1 on, 2 the shaft term itself.
-CVar* CWorldParam::cvar_sunShafts;
-CVar* CWorldParam::cvar_sunShaftsStrength;
+// Not in the original binary. See CSunGlow. 0 off, 1 on.
+CVar* CWorldParam::cvar_sunGlow;
+CVar* CWorldParam::cvar_sunGlowStrength;
 // Not in the original binary. See CDepthFog. 0 off, 1 on, 2 the opacity itself.
 CVar* CWorldParam::cvar_depthFog;
 
@@ -880,10 +880,10 @@ void CWorldParam::Initialize() {
     CWorldParam::cvar_ssaoStrength = CVar::Register("ssaoStrength", "ambient occlusion strength: 0 none, 1 full", 1, "0.5", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     CWorldParam::cvar_ssaoDistance = CVar::Register("ssaoDistance", "ambient occlusion fades out and stops at this distance, in yards", 1, "145", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
-    // Not in the original binary. Sun shafts and how strong they are. Registered here for the same reason as ssao:
-    // the Advanced panel reads their defaults at the login screen. CSunShafts::Init registers them too.
-    CWorldParam::cvar_sunShafts = CVar::Register("sunShafts", "sun shafts: 0 off, 1 on, 2 show the shaft term", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    CWorldParam::cvar_sunShaftsStrength = CVar::Register("sunShaftsStrength", "sun shaft strength: 0 none, 1 full", 1, "0.5", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    // Not in the original binary. The sun glow and how strong it is. Registered here for the same reason as ssao:
+    // the Advanced panel reads their defaults at the login screen. CSunGlow::Init registers them too.
+    CWorldParam::cvar_sunGlow = CVar::Register("sunGlow", "sun glow: 0 off, 1 on", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    CWorldParam::cvar_sunGlowStrength = CVar::Register("sunGlowStrength", "sun glow strength: 0 none, 1 full", 1, "0.5", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     // Not in the original binary. See CDepthFog. Registered here so the Advanced panel can read its default at the login screen.
     CWorldParam::cvar_depthFog = CVar::Register("depthFog", "distance and height fog: 0 off, 1 on, 2 show the fog opacity", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 

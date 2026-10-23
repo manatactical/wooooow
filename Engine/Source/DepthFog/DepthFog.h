@@ -60,9 +60,9 @@ struct DepthFogAtmosphere {
 //
 // Two full-screen quads: the fog is worked out from the shared scene depth into a target of its own, then alpha-blended
 // over the frame. The frame is never read, only the depth, which is why
-// this fits where the ambient occlusion and sun shaft passes do. It runs inside the world render, after everything opaque
+// this fits where the ambient occlusion and sun glow passes do. It runs inside the world render, after everything opaque
 // and the first model pass but before the water, so the water is drawn over the fogged world and takes no fog, and the
-// post passes (shafts, outline, anti-aliasing) all see the fogged frame. Like them it stands down when the frame has no shared scene depth: multisampling on,
+// post passes (glow, outline, anti-aliasing) all see the fogged frame. Like them it stands down when the frame has no shared scene depth: multisampling on,
 // or a device without a non-pow2 INTZ render target.
 //
 // Whatever draws after it (water, weather, the second model pass) is not fogged at all. Whatever draws before it without

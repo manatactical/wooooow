@@ -7,6 +7,7 @@ static const float kSlopeToAdtUv = 0.001;
 static const float kMinFoamFade = 1e-4;
 static const float kMinRayRise = 1e-4;
 static const float kRippleSlopeScale = 3;
+static const float kRippleSmoothTexels = 3;
 static const float kRippleFullDetailTexels = 2;
 static const float kRippleDetailFadeTexels = 2;
 struct WaterPixel
@@ -152,10 +153,13 @@ RippleSample SampleRipples(WaterPixel w)
     ripples.coverage = RippleGain() > 0 ? RippleCoverage(w, uv) : 0;
     [branch] if (ripples.coverage > 0)
     {
-        float step = RippleTexelUv();
+        // The slope is a central difference taken kRippleSmoothTexels away on each side instead of one texel ahead, so
+        // the single-texel crests of the ripple simulation are averaged over a few texels and the normals vary
+        // gently. The difference is divided back to a per-texel slope, so the strength is unchanged.
+        float step = RippleTexelUv() * kRippleSmoothTexels;
         ripples.height = RippleHeight(uv);
-        float dx = RippleHeight(uv + float2(step, 0)) - ripples.height;
-        float dy = RippleHeight(uv + float2(0, step)) - ripples.height;
+        float dx = (RippleHeight(uv + float2(step, 0)) - RippleHeight(uv - float2(step, 0))) / (2 * kRippleSmoothTexels);
+        float dy = (RippleHeight(uv + float2(0, step)) - RippleHeight(uv - float2(0, step))) / (2 * kRippleSmoothTexels);
         float2 gradient = float2(dx, dy) * rsqrt((1 + dx * dx) * (1 + dy * dy));
         ripples.slope = gradient * kRippleSlopeScale * RippleGain() * ripples.coverage;
     }

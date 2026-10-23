@@ -48,6 +48,9 @@ sampler2D sWaveFoamMasks : register(s11);
 sampler2D sRipples : register(s12);
 sampler2D sShoreFoamMask : register(s14);
 sampler2D sDepthFoamMask : register(s15);
+// The frame's colour as it stands now, after the liquid draws. Copied at shading time, so the difference against
+// sSceneColour -- the same frame before the water -- is exactly the pixels the water covered.
+sampler2D sWaterColour : register(s13);
 
 static const int kHighFoamSlot = 0;
 static const int kMidFoamSlot = 1;

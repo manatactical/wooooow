@@ -9,10 +9,10 @@ static const float kMinRayRise = 1e-4;
 static const float kRippleSlopeScale = 3;
 static const float kRippleFullDetailTexels = 2;
 static const float kRippleDetailFadeTexels = 2;
-// The depth change that counts as water having been drawn. A tenth of a yard: large enough that linearised depth
-// rounding never fakes coverage, small enough that no real water surface is a tenth of a yard thick at the tip.
-static const float kWaterCoverageToleranceYards = 0.1;
-static const float kWaterCoveragePerYard = 1 / kWaterCoverageToleranceYards;
+// How many colour steps of change count as water having been drawn. The copies are 8-bit, so a step or two can come
+// from rounding; twelve is well above that and still well below the change a water surface makes.
+static const float kWaterCoverageColourSteps = 12;
+static const float kWaterCoveragePerColourStep = 1 / kWaterCoverageColourSteps;
 
 struct WaterPixel
 {
@@ -90,12 +90,19 @@ WaterPixel ReconstructWaterPixel(float2 pixel)
     w.waterZ = CopiedViewDepth(sWaterDepth, w.uv);
     w.sceneZ = max(w.beforeZ, w.waterZ);
 
-    // Coverage. A pixel is water when the depth in this buffer changed between the copy taken before the liquid pass
-    // and the copy taken after it. Where the water covered the pixel the surface is nearer than the scene behind it,
-    // so the difference is positive; untouched pixels keep their original depth and come out at or below zero.
+    // Coverage. A pixel is water when the frame's colour changed between the copy taken before the liquid pass and
+    // the copy taken after it: the client's own water is the only thing drawn in between, so any visible change is
+    // water. Depth was tried first and never worked here -- the liquid draws reported a depth write of 1 yet the two
+    // depth copies came out identical on every sampled pixel, so every coverage came out zero and no water was shaded.
+    // Colour cannot lie that way: if the water is on screen it changed the frame, and if it did not change the frame
+    // there was nothing to shade anyway.
     //
-    // The tolerance is in view-space yards and absorbs linearised-depth rounding, which is a fraction of a yard.
-    w.coverage = saturate((w.beforeZ - w.waterZ) * kWaterCoveragePerYard);
+    // The threshold is in gamma space and deliberately small; it only rejects the rounding of an 8-bit copy.
+    float3 waterColour = tex2Dlod(sWaterColour, float4(w.uv, 0, 0)).rgb;
+    float3 sceneColour = tex2Dlod(sSceneColour, float4(w.uv, 0, 0)).rgb;
+    w.coverage = saturate(max(abs(waterColour.r - sceneColour.r),
+                              max(abs(waterColour.g - sceneColour.g), abs(waterColour.b - sceneColour.b))) *
+                          kWaterCoveragePerColourStep);
     float3 worldRay = ViewToWorldDirection(ViewRayAtUnitDepth(pixel));
     w.position = CameraPositionWorld() + worldRay * w.waterZ;
     w.toCamera = normalize(-worldRay);

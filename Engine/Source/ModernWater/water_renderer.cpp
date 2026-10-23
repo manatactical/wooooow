@@ -35,6 +35,8 @@ constexpr DWORD kMaxRenderTargets = 4;
 constexpr DWORD kSceneColourStage = 0;
 constexpr DWORD kSceneDepthStage = 1;
 constexpr DWORD kWaterDepthStage = 2;
+// The frame after the liquid draws, compared against kSceneColourStage to find the water pixels.
+constexpr DWORD kWaterColourStage = 13;
 constexpr DWORD kFirstSurfaceStage = 3;
 constexpr DWORD kFirstFoamStateStage = 7;
 constexpr DWORD kWaveFoamMaskStage = 11;
@@ -496,6 +498,7 @@ void WaterRenderer::ReleaseDefaultPool() {
     ReleaseMasks();
     // The scene and water copies are default-pool render targets and do not survive a device reset.
     SafeRelease(m_sceneColour);
+    SafeRelease(m_waterColour);
     SafeRelease(m_sceneDepthBefore);
     SafeRelease(m_waterDepthSurface);
     SafeRelease(m_waterDepth);
@@ -894,11 +897,47 @@ void WaterRenderer::SetPassState(IDirect3DDevice9* device) {
 }
 
 bool WaterRenderer::EnsureCopies(IDirect3DDevice9* device, IDirect3DSurface9* target, UINT width, UINT height) {
+    // Probed once: whether this device can give a depth-stencil texture that also carries stencil bits, and whether
+    // INTZ can be both a depth-stencil texture and a render target. Those two answers decide which of the two ways of
+    // finding the water pixels is available at all, so they are measured rather than assumed.
+    if (!m_loggedDepthFormats) {
+        m_loggedDepthFormats = true;
+
+        auto probe = [device](D3DFORMAT format, DWORD usage, D3DRESOURCETYPE type) {
+            return SUCCEEDED(device->CreateTexture(64, 64, 1, usage, format, D3DPOOL_DEFAULT, nullptr, nullptr))
+                       ? 1
+                       : 0;
+        };
+
+        IDirect3DTexture9* intzDepth = nullptr;
+        IDirect3DTexture9* intzTarget = nullptr;
+        IDirect3DTexture9* d24s8 = nullptr;
+        const bool intzAsDepth = SUCCEEDED(device->CreateTexture(
+            64, 64, 1, D3DUSAGE_DEPTHSTENCIL, static_cast<D3DFORMAT>(MAKEFOURCC('I', 'N', 'T', 'Z')),
+            D3DPOOL_DEFAULT, &intzDepth, nullptr));
+        const bool intzAsTarget = SUCCEEDED(device->CreateTexture(
+            64, 64, 1, D3DUSAGE_RENDERTARGET, static_cast<D3DFORMAT>(MAKEFOURCC('I', 'N', 'T', 'Z')),
+            D3DPOOL_DEFAULT, &intzTarget, nullptr));
+        const bool stencilDepth = SUCCEEDED(device->CreateTexture(64, 64, 1, D3DUSAGE_DEPTHSTENCIL, D3DFMT_D24S8,
+                                                                 D3DPOOL_DEFAULT, &d24s8, nullptr));
+        SafeRelease(intzDepth);
+        SafeRelease(intzTarget);
+        SafeRelease(d24s8);
+
+        VF_LOG_INFO("modern water: depth formats intz-as-depth %d, intz-as-target %d, d24s8-depth %d, "
+                    "rttFormat intz %d d24x8 %d",
+                    intzAsDepth ? 1 : 0, intzAsTarget ? 1 : 0, stencilDepth ? 1 : 0,
+                    g_theGxDevicePtr->Caps().m_rttFormat[GxTex_INTZ] ? 1 : 0,
+                    g_theGxDevicePtr->Caps().m_rttFormat[GxTex_D24X8] ? 1 : 0);
+        (void)probe;
+    }
+
     if (m_sceneColour && m_copyW == width && m_copyH == height) {
         return true;
     }
 
     SafeRelease(m_sceneColour);
+    SafeRelease(m_waterColour);
     SafeRelease(m_sceneDepthBefore);
     SafeRelease(m_waterDepthSurface);
     SafeRelease(m_waterDepth);
@@ -913,6 +952,10 @@ bool WaterRenderer::EnsureCopies(IDirect3DDevice9* device, IDirect3DSurface9* ta
 
     const bool colour = CreateTarget(device, width, height, desc.Format, &m_sceneColour) ||
                         CreateTarget(device, width, height, D3DFMT_A8R8G8B8, &m_sceneColour);
+    // The second colour copy is the frame as it stands after the liquid draws. Comparing it with m_sceneColour is what
+    // finds the water: the stock water changes the frame, so wherever the two copies differ is water.
+    const bool waterColour = CreateTarget(device, width, height, desc.Format, &m_waterColour) ||
+                             CreateTarget(device, width, height, D3DFMT_A8R8G8B8, &m_waterColour);
 
     // Both depth copies are attempted unconditionally: evaluating them with || short-circuits, so a failed R32F
     // target would leave m_waterDepth null while m_packedDepth was already set, and every later bind of it would
@@ -929,8 +972,9 @@ bool WaterRenderer::EnsureCopies(IDirect3DDevice9* device, IDirect3DSurface9* ta
         depth = CreateTarget(device, width, height, D3DFMT_A8R8G8B8, &m_waterDepth) && packed;
     }
 
-    if (!colour || !depth) {
+    if (!colour || !waterColour || !depth) {
         SafeRelease(m_sceneColour);
+        SafeRelease(m_waterColour);
         SafeRelease(m_sceneDepthBefore);
         SafeRelease(m_waterDepth);
         m_copyFailed = true;
@@ -947,10 +991,10 @@ bool WaterRenderer::EnsureCopies(IDirect3DDevice9* device, IDirect3DSurface9* ta
 }
 
 bool WaterRenderer::CopySceneColour(IDirect3DDevice9* device, IDirect3DSurface9* target,
-                                    const D3DVIEWPORT9& viewport) {
+                                    const D3DVIEWPORT9& viewport, IDirect3DTexture9* destination) {
     const RECT world = ViewportRect(viewport);
     IDirect3DSurface9* copy = nullptr;
-    const bool copied = SUCCEEDED(m_sceneColour->GetSurfaceLevel(0, &copy)) &&
+    const bool copied = SUCCEEDED(destination->GetSurfaceLevel(0, &copy)) &&
                         SUCCEEDED(device->StretchRect(target, &world, copy, nullptr, D3DTEXF_POINT));
     SafeRelease(copy);
     return copied;
@@ -1362,9 +1406,84 @@ void WaterRenderer::BindClassTextures(IDirect3DDevice9* device, const WaterPrese
                 D3DTEXF_LINEAR);
 }
 
+void WaterRenderer::LogDepthSamples(IDirect3DDevice9* device) {
+    // The two depth copies are read back on the CPU at a cross of real pixels. The shader turns the difference between
+    // them into coverage, so if they are equal here the water can never be drawn, and if they differ here the fault is
+    // downstream in the shader instead. A full-frame readback was tried first and hangs the client, so this samples a
+    // few points rather than the whole surface.
+    struct Point
+    {
+        const char* name;
+        float u;
+        float v;
+    };
+
+    const Point points[] = {{"centre", 0.5f, 0.5f},
+                            {"low", 0.5f, 0.85f},
+                            {"left", 0.2f, 0.7f},
+                            {"right", 0.8f, 0.7f},
+                            {"horizon", 0.5f, 0.35f}};
+
+    for (const Point& point : points) {
+        const float before = ReadDepthCopy(device, m_sceneDepthBefore, point.u, point.v);
+        const float after = ReadDepthCopy(device, m_waterDepth, point.u, point.v);
+        VF_LOG_INFO("modern water: depth at %s (%u,%u) before %.4f after %.4f delta %.4f", point.name,
+                    static_cast<unsigned>(point.u * m_inputs.viewport.Width),
+                    static_cast<unsigned>(point.v * m_inputs.viewport.Height), before, after, before - after);
+    }
+}
+
+float WaterRenderer::ReadDepthCopy(IDirect3DDevice9* device, IDirect3DTexture9* texture, float u, float v) {
+    if (!texture) {
+        return -1.0f;
+    }
+
+    IDirect3DSurface9* surface = nullptr;
+
+    if (FAILED(texture->GetSurfaceLevel(0, &surface)) || !surface) {
+        return -1.0f;
+    }
+
+    D3DSURFACE_DESC desc = {};
+    surface->GetDesc(&desc);
+    IDirect3DSurface9* staging = nullptr;
+    float value = -1.0f;
+
+    if (SUCCEEDED(device->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format, D3DPOOL_SYSTEMMEM,
+                                                      &staging, nullptr)) &&
+        staging) {
+        if (SUCCEEDED(device->GetRenderTargetData(surface, staging))) {
+            D3DLOCKED_RECT locked = {};
+
+            if (SUCCEEDED(staging->LockRect(&locked, nullptr, D3DLOCK_READONLY))) {
+                const UINT x = static_cast<UINT>(u * (desc.Width - 1));
+                const UINT y = static_cast<UINT>(v * (desc.Height - 1));
+                const uint8_t* row = static_cast<const uint8_t*>(locked.pBits) + y * locked.Pitch;
+
+                if (m_packedDepth) {
+                    const uint32_t texel = *reinterpret_cast<const uint32_t*>(row + x * 4);
+                    const float unit = kWaterMaxViewDepth / kPackedDepthLevels;
+                    value = ((texel >> 16 & 0xFF) * kHighByteWeight + (texel >> 8 & 0xFF) * kMidByteWeight +
+                             (texel & 0xFF)) *
+                            unit;
+                } else {
+                    value = *reinterpret_cast<const float*>(row + x * 4);
+                }
+
+                staging->UnlockRect();
+            }
+        }
+
+        staging->Release();
+    }
+
+    surface->Release();
+    return value;
+}
 void WaterRenderer::ShadeClass(IDirect3DDevice9* device, WaterClass waterClass, double seconds) {
     const D3DVIEWPORT9& viewport = m_inputs.viewport;
     const RECT world = ViewportRect(viewport);
+
     // Nothing here reads or writes depth: the coverage test is a texture comparison in the pixel shader. So no
     // depth-stencil surface is bound and no stencil state is set -- there is nothing to leak into the client's passes.
     device->SetRenderTarget(0, m_saved.colour[0]);
@@ -1391,6 +1510,9 @@ void WaterRenderer::ShadeClass(IDirect3DDevice9* device, WaterClass waterClass, 
     device->SetPixelShader(m_shade[m_shadingVariant]);
     device->SetPixelShaderConstantF(0, &m_common[0][0], kCommonConstants);
     BindPointSampler(device, kSceneColourStage, m_sceneColour, D3DTADDRESS_MIRROR);
+    // s13 is the frame after the liquid drew, copied here so the shader can compare it with s0. Where they differ is
+    // water: depth comparison never worked on this client, colour comparison cannot fail that way.
+    BindPointSampler(device, kWaterColourStage, m_waterColour, D3DTADDRESS_MIRROR);
     // s1 is the scene as it was before the liquid pass -- the terrain or object behind the water, which is what the
     // shader refracts and measures the water column against. s2 is the same buffer after the water drew, so on a
     // water pixel it holds the water's own surface; comparing the two is what finds the water.
@@ -1493,7 +1615,20 @@ void WaterRenderer::ShadeRun(IDirect3DDevice9* device, WaterClass waterClass) {
         CopyDepthTargetLinear(device, m_sceneDepthTexture, m_waterDepth);
     }
 
+    // The frame as it stands right now: the water of this run has already drawn, so wherever this differs from the
+    // before copy those pixels are water. Taken through StretchRect on the colour target, which is exact -- unlike the
+    // depth copies it cannot come back identical when the water really drew.
+    CopySceneColour(device, m_saved.colour[0], m_inputs.viewport, m_waterColour);
+
     ShadeClass(device, waterClass, seconds);
+
+    // Read back both depth copies at a spread of real pixels once. Whether the two differ at all is the single fact
+    // that decides if coverage can ever be non-zero, and it cannot be seen in a screenshot: identical copies look
+    // exactly like water that failed to draw.
+    if (!m_loggedDepthSamples && device) {
+        m_loggedDepthSamples = true;
+        LogDepthSamples(device);
+    }
 
     // This run is resolved, so its pixels become the baseline: the next run's water is measured against a depth that
     // already contains this run's surface, and cannot re-find them.
@@ -1585,7 +1720,7 @@ bool WaterRenderer::Begin(IDirect3DDevice9* device, const void* liquidRenderer, 
     // The frame as it stands -- the sky and every opaque thing, but not the water, which has not drawn yet -- is
     // copied whole. This is the image the shader refracts through, and because the water is not in it the sample is
     // exactly "what is behind this water pixel".
-    const bool colourCopied = CopySceneColour(device, m_saved.colour[0], inputs.viewport);
+    const bool colourCopied = CopySceneColour(device, m_saved.colour[0], inputs.viewport, m_sceneColour);
 
     // The frame's own depth, for the shader's refraction and for coverage: how far each pixel's scene is. The frame's
     // shared depth is INTZ (see CUnitOutline::BeginDepthPass), which is bound across the whole world draw including
@@ -1640,6 +1775,11 @@ bool WaterRenderer::Begin(IDirect3DDevice9* device, const void* liquidRenderer, 
     device->SetDepthStencilSurface(m_waterDepthSurface);
     device->SetViewport(&inputs.viewport);
 
+    // The stencil is not usable for this: the client's depth surface is D24X8 and the sampleable INTZ copy carries no
+    // stencil bits either, so a tag written here would land in a surface that has none. Coverage is found by comparing
+    // depth instead -- see ShadeClass.
+    device->SetRenderState(D3DRS_STENCILENABLE, FALSE);
+
     m_armed = true;
     m_shadedClasses = 0;
     m_shadedClassMask = 0;
@@ -1650,8 +1790,9 @@ bool WaterRenderer::Begin(IDirect3DDevice9* device, const void* liquidRenderer, 
 void WaterRenderer::Tag(IDirect3DDevice9* device, WaterClass waterClass) {
     (void)device;
 
-    // Only a tally now: the class is recorded so the shading pass does not bother with a preset nothing drew. The
-    // pixels themselves are found by the depth difference, not by anything written during the draw.
+    // Only a tally: the class is recorded so the shading pass does not bother with a preset nothing drew. The pixels
+    // themselves are found by the depth difference, not by anything written during the draw -- the client's depth
+    // surface is D24X8 and carries no stencil to tag with.
     const int index = static_cast<int>(waterClass);
 
     if (!m_armed || index <= 0 || index >= kWaterClassCount) {

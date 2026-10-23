@@ -200,7 +200,8 @@ class WaterRenderer {
     void RestoreClientState(IDirect3DDevice9* device);
     void SetPassState(IDirect3DDevice9* device);
 
-    bool CopySceneColour(IDirect3DDevice9* device, IDirect3DSurface9* target, const D3DVIEWPORT9& viewport);
+    bool CopySceneColour(IDirect3DDevice9* device, IDirect3DSurface9* target, const D3DVIEWPORT9& viewport,
+                         IDirect3DTexture9* destination);
     bool CopyFrameDepth(IDirect3DDevice9* device, const D3DVIEWPORT9& viewport);
     void CopyDepthTargetLinear(IDirect3DDevice9* device, IDirect3DTexture9* source, IDirect3DTexture9* copy);
     bool BuildCommonConstants(const D3DSURFACE_DESC& depthDesc);
@@ -223,6 +224,8 @@ class WaterRenderer {
     void BindClassTextures(IDirect3DDevice9* device, const WaterPreset& preset);
     // Shades one class over the whole viewport, masked by the depth-difference coverage the shader computes.
     void ShadeClass(IDirect3DDevice9* device, WaterClass waterClass, double seconds);
+    void LogDepthSamples(IDirect3DDevice9* device);
+    float ReadDepthCopy(IDirect3DDevice9* device, IDirect3DTexture9* texture, float u, float v);
 
     bool m_prepared = false;
     bool m_active = true;
@@ -233,7 +236,9 @@ class WaterRenderer {
     bool m_loggedFirstShade = false;
     bool m_loggedDepthMapping = false;
     bool m_loggedDepthState = false;
+    bool m_loggedDepthSamples = false;
     bool m_loggedEndState = false;
+    bool m_loggedDepthFormats = false;
 
     IDirect3DVertexShader9* m_vs = nullptr;
     IDirect3DVertexDeclaration9* m_decl = nullptr;
@@ -251,6 +256,8 @@ class WaterRenderer {
     bool m_stateCaptured = false;
 
     IDirect3DTexture9* m_sceneColour = nullptr;
+    // The frame after the liquid draws, kept so the shader can compare it with m_sceneColour to find the water pixels.
+    IDirect3DTexture9* m_waterColour = nullptr;
     // The scene depth, borrowed from the frame's shared INTZ depth target (see CUnitOutline::DepthPassTexture).
     // Borrowed, not owned: nothing here releases it, and it is only valid while the depth pass is bound.
     IDirect3DTexture9* m_sceneDepthTexture = nullptr;

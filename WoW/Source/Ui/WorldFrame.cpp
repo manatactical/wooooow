@@ -31,6 +31,7 @@
 #include "Engine/Source/ModernWater/ModernWater.h"
 #include "Engine/Source/DepthFog/DepthFog.h"
 #include "Engine/Source/SunGlow/SunGlow.h"
+#include "Engine/Source/UnderwaterFx/UnderwaterFx.h"
 #include "Engine/Source/UnitOutline/UnitOutline.h"
 #include "Engine/Source/Tempest/C4Vector.h"
 #include "Engine/Source/Tempest/CAaBox.h"
@@ -1279,6 +1280,7 @@ CGWorldFrame::CGWorldFrame(CSimpleFrame* parent) : CSimpleFrame(parent) {
     CAmbientOcclusion::Init();
     CSunGlow::Init();
     CDepthFog::Init();
+    CUnderwaterFx::Init();
     // Registers the lootBeam cvar. Idempotent for the same reason.
     LootBeam::Init();
     // Registers the modern water pass's device-restored callback. Idempotent for the same reason.
@@ -1785,6 +1787,22 @@ static DepthFogAtmosphere GatherDepthFogAtmosphere(const SunGlowLight& sun) {
     return air;
 }
 
+// Not in the original binary. What CUnderwaterFx needs to know about the liquid the camera is in: whether it is below the
+// surface, and the engine's own fog colour and end distance for it (set per frame from the liquid's fog by
+// DayNight's fog update, so a swamp, a lagoon and lava each tint and thicken differently).
+static UnderwaterMedium GatherUnderwaterMedium() {
+    UnderwaterMedium medium = {};
+    DayNight::DNInfo* info = DayNight::GetInfo();
+
+    medium.submerged = World::SceneCamLiquidStatus(&medium.surfaceDepth) != 0;
+    medium.color[0] = info->m_fog.m_color.r * (1.0f / 255.0f);
+    medium.color[1] = info->m_fog.m_color.g * (1.0f / 255.0f);
+    medium.color[2] = info->m_fog.m_color.b * (1.0f / 255.0f);
+    medium.fogEnd = info->m_fog.m_end;
+    medium.depthMaxZ = CWorld::s_unk_ADEEE4;
+    return medium;
+}
+
 // VERIFY: 2ea40d3b manual
 // OFFSET: 0x004F8EA0
 void CGWorldFrame::OnWorldRender() {
@@ -1958,6 +1976,11 @@ void CGWorldFrame::OnWorldRender() {
     CDepthFog::Apply(GatherDepthFogAtmosphere(sunLight));
     PerfLogStage("sunglow");
     CSunGlow::Apply(sunLight);
+
+    // Under the surface the world is softened and fogged; this goes on last of the world passes so it takes the glow
+    // and the occlusion with it, and before the outline so a selection cue stays sharp.
+    PerfLogStage("underwater");
+    CUnderwaterFx::Apply(GatherUnderwaterMedium());
 
     PerfLogStage("outline");
     CUnitOutline::Composite();

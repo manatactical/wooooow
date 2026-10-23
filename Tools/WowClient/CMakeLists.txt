@@ -47,6 +47,7 @@ target_link_libraries(WowClient
         AmbientOcclusion
         SunGlow
         DepthFog
+        UnderwaterFx
         Base
         BlizzardCore
         ComSat

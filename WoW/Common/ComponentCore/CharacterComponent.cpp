@@ -34,6 +34,7 @@
 #include "Engine/Source/Tempest/CImVector.h"
 #include "Engine/Source/Tempest/CRandom.h"
 #include "WoW/Common/ComponentCore/ComponentUtils.h"
+#include "WoW/Common/ComponentCore/EquipPlus.h"
 #include "WoW/Common/TextureCache.h"
 #include "WoW/Source/DB/DBClient/DBClient.h"
 #include "WoW/Source/DB/Rec/CharHairGeosetsRec.h"
@@ -202,6 +203,7 @@ bool CCharacterComponent::Initialize() {
     CCharacterComponent::g_componentTextureLevelVar = CVar::Register("componentTextureLevel", "Number of mip levels used for character component textures", 0x1, "8", &ComponentVarHandler, 0, false, nullptr, false);
     CCharacterComponent::g_componentThreadVar = CVar::Register("componentThread", "Multi thread character component processing", 0x1, "1", &ComponentVarHandler, 0, false, nullptr, false);
     CCharacterComponent::g_componentCompressVar = CVar::Register("componentCompress", "Character component texture compression", 0x1, "1", &ComponentVarHandler, 0, false, nullptr, false);
+    EquipPlus::Init();
 
     uint32_t mipLevels = CCharacterComponent::g_componentTextureLevelVar->m_intValue;
     int32_t useThread = CCharacterComponent::g_componentThreadVar->m_intValue;
@@ -2169,6 +2171,9 @@ GEOCOMPONENTLINKS CCharacterComponent::AddHandItem(CM2Model* model, const ItemDi
 
     CCharacterComponent::AddLink(model, link, s_path, s_path2, itemVisual ? itemVisual : displayRec->m_itemVisual, displayRec);
 
+    // NOT IN BINARY. A CSV row can swap the weapon the client just attached.
+    EquipPlus::ApplyWeapon(model, link, displayRec, invSlot == INVSLOT_OFFHAND);
+
     return link;
 }
 
@@ -3701,6 +3706,9 @@ void CCharacterComponent::RemoveItem(ITEM_SLOT itemSlot) {
 
     this->m_flags |= 0x4;
 
+    // NOT IN BINARY. Takes down what Equip Plus attached for this slot.
+    EquipPlus::Remove(this, itemSlot);
+
     switch (itemSlot) {
         case ITEMSLOT_HEAD: {
             this->m_data.m_geosets[CHARGEOSET_HAIR] = GetConditionalGeoset(&this->m_data.m_preferences);
@@ -3854,7 +3862,12 @@ void CCharacterComponent::AddHelm(int32_t itemVisual) {
     strcpy(s_pathEnd2, s_buffer);
 
     CCharacterComponent::AddLink(this->m_data.m_model, ATTACH_HELM, s_path, s_path2, itemVisual, displayRec);
+    this->HideHelmGeosets(displayRec);
+}
 
+// NOT IN BINARY. The tail of AddHelm, split out so a helm that Equip Plus draws still hides the hair and face geosets it
+// covers.
+void CCharacterComponent::HideHelmGeosets(const ItemDisplayInfoRec* displayRec) {
     HelmetGeosetVisDataRec* visRec = g_helmetGeosetVisDataDB.GetRecord(displayRec->m_helmetGeosetVisID[this->m_data.m_preferences.m_sexID]);
 
     if (!visRec) {
@@ -4198,6 +4211,7 @@ CCharacterComponent::CCharacterComponent() {
     this->m_flags |= 0x7;
     this->m_dirtySections = 0xFFFFFFFF;
     this->m_request = nullptr;
+    this->m_equipPlus = nullptr;
     this->m_baseSkinTexture = nullptr;
     this->m_gxTexFormat = CCharacterComponent::s_gxFormat;
     memset(this->m_itemDisplayID, 0, sizeof(this->m_itemDisplayID));
@@ -4209,6 +4223,8 @@ CCharacterComponent::CCharacterComponent() {
 // VERIFY: 4f3c1a66 manual
 // OFFSET: 0x004EFCA0
 CCharacterComponent::~CCharacterComponent() {
+    EquipPlus::Destroy(this);
+
     if (this->m_request) {
         this->m_request->m_flags &= ~0x1;
         this->m_request = nullptr;
@@ -5418,6 +5434,9 @@ void CCharacterComponent::ReplaceMonsterSkin(CM2Model* model, const CreatureDisp
         }
     }
 
+    // NOT IN BINARY. CSV rows can set more texture types than the three above, and a geoset list.
+    EquipPlus::ApplyCreature(model, displayRec);
+
     ReplaceParticleColor(displayRec->m_particleColorID, model);
 }
 
@@ -5507,6 +5526,9 @@ bool CCharacterComponent::Destroy() {
 // VERIFY: 0acf5d15 manual
 // OFFSET: 0x004F24D0
 bool CCharacterComponent::Init(ComponentData* data, const char* debug) {
+    // The old model, and with it everything attached to it, is about to go.
+    EquipPlus::Reset(this);
+
     if (this->m_data.m_model) {
         this->m_data.m_model->Release();
     }
@@ -5559,7 +5581,10 @@ void CCharacterComponent::AddItem(ITEM_SLOT itemSlot, const ItemDisplayInfoRec* 
 
     switch (itemSlot) {
         case ITEMSLOT_HEAD:
-            if (!this->IsHelmModelCorrect()) {
+            if (EquipPlus::OwnsNativeModel(ITEMSLOT_HEAD, displayRec)) {
+                // NOT IN BINARY. Equip Plus draws this helm (below); the client still hides what the helm covers.
+                this->HideHelmGeosets(displayRec);
+            } else if (!this->IsHelmModelCorrect()) {
                 if (this->m_itemDisplayID[ITEMSLOT_HEAD]) {
                     CCharacterComponent::RemoveLinkpt(this->m_data.m_model, ATTACH_HELM);
                 }
@@ -5570,7 +5595,9 @@ void CCharacterComponent::AddItem(ITEM_SLOT itemSlot, const ItemDisplayInfoRec* 
             break;
 
         case ITEMSLOT_SHOULDER:
-            if (!this->AreShoulderModelsCorrect()) {
+            if (EquipPlus::OwnsNativeModel(ITEMSLOT_SHOULDER, displayRec)) {
+                // NOT IN BINARY. Equip Plus draws these shoulders (below).
+            } else if (!this->AreShoulderModelsCorrect()) {
                 if (this->m_itemDisplayID[ITEMSLOT_SHOULDER]) {
                     CCharacterComponent::RemoveLinkpt(this->m_data.m_model, static_cast<GEOCOMPONENTLINKS>(6));
                     CCharacterComponent::RemoveLinkpt(this->m_data.m_model, static_cast<GEOCOMPONENTLINKS>(5));
@@ -5612,6 +5639,11 @@ void CCharacterComponent::AddItem(ITEM_SLOT itemSlot, const ItemDisplayInfoRec* 
             }
 
             break;
+    }
+
+    // NOT IN BINARY. Models on every armour slot, not only head and shoulders.
+    if (itemSlot <= ITEMSLOT_CAPE) {
+        EquipPlus::Apply(this, itemSlot, displayRec);
     }
 }
 

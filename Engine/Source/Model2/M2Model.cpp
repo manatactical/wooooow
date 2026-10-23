@@ -20,6 +20,7 @@
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/CGxPool.h"
 #include "Engine/Source/Gx/Gx.h"
+#include "Engine/Source/Model2/M2BoneFollow.h"
 #include "Engine/Source/Model2/M2Cache.h"
 #include "Engine/Source/Model2/M2ModelLight.h"
 #include "Engine/Source/Model2/M2Scene.h"
@@ -2518,6 +2519,12 @@ void CM2Model::AnimateST() {
         return;
     }
 
+    // NOT IN BINARY. Runs here, not in AnimateMT, because it starts bone sequences, which is not safe from
+    // the animation worker thread.
+    if (this->m_boneFollow) {
+        M2BoneFollowSyncSequence(this);
+    }
+
     M2Data* data = this->m_shared->m_data;
     CM2Model* parent = this->m_attachParent;
 
@@ -3923,6 +3930,7 @@ CM2Model::CM2Model() {
     this->m_hitTestNext = nullptr;
     this->m_hitTestOwner = nullptr;
     this->m_hitTestGroup = 0;
+    this->m_boneFollow = nullptr;
 
     if (!CM2Model::s_transformVertices[0]) {
         CM2Model::s_transformVertices[0] = CM2Model::TransformVertices_cpp;
@@ -5598,6 +5606,10 @@ void CM2Model::AnimateMT(const C44Matrix* view, const C3Vector& diffuse, const C
         }
     }
 
+    if (this->m_boneFollow) {
+        M2BoneFollowApply(this);
+    }
+
     for (uint32_t i = 0; i < data->m_colors.m_count; i++) {
         M2Color* colorData = &data->m_colors[i];
         M2ModelColor* color = &this->m_colors[i];
@@ -6725,6 +6737,7 @@ CM2Model::~CM2Model() {
         this->m_hitTestNext->m_hitTestPrev = this->m_hitTestPrev;
     }
 
+    M2BoneFollowDestroy(this);
     this->DetachFromScene();
 
     if (this->m_shared) {

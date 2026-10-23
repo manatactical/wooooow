@@ -31,6 +31,7 @@ const uint32_t s_blendModes[3][M2BLEND_COUNT] = { { 0, 1, 2, 10, 3, 4, 5 }, { 2,
 
 // STATIC: 0x00AF5898
 uint32_t CM2Scene::s_optFlags = 0xFFFFFFFF;
+bool (*CM2Scene::s_resolveModelPath)(const char* fileName, char* out, size_t size);
 
 // STATIC: 0x00AF58A0
 static const float s_lightGridScale = 0.05f;
@@ -1528,6 +1529,12 @@ void CM2ModelHeap::Delete(CM2Model* model) {
 CM2Model* CM2Scene::CreateModel(const char* fileName, uint32_t flags) {
     if (!fileName) {
         return nullptr;
+    }
+
+    char resolved[260];
+
+    if (CM2Scene::s_resolveModelPath && CM2Scene::s_resolveModelPath(fileName, resolved, sizeof(resolved))) {
+        fileName = resolved;
     }
 
     CM2Shared* shared = this->m_cache->CreateShared(fileName, flags);

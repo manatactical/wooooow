@@ -48,6 +48,7 @@ class M2ModelLight;
 class M2ModelParticle;
 class M2ModelRibbon;
 class M2ModelTextureTransform;
+struct M2BoneFollow;
 
 typedef void (*M2EventCallback)(CM2Model* model, uint32_t boneId, uint32_t eventId, uint32_t data, const C3Vector* position, uint32_t time, uint64_t param);
 typedef void (*M2SequenceCallback)(CM2Model* model, uint32_t boneId, uint32_t sequenceId, int32_t interrupted, uint32_t time, uint64_t param);
@@ -221,6 +222,10 @@ class CM2Model {
     /* 02E4 */ uint32_t m_hitTestGroup;
     /* 02E8 */ uint32_t m_handle;
     /* 02EC */ uint32_t unused_02EC;
+    // NOT IN BINARY. Equip Plus: makes this model's bones follow (and/or its animation track) the bones of the
+    // model it is attached to, so a retail collection piece moves with the character body. Null for every
+    // other model. Owned by the model; see M2BoneFollow.h.
+    /* 02F0 */ M2BoneFollow* m_boneFollow;
 
     static void (*s_transformVertices[5])(CM2Model*, M2SkinSection*, uint8_t*, int32_t);
     static TSGrowableArray<M2ModelCallback> s_sequenceCallbacks;

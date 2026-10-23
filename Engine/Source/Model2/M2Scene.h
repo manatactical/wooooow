@@ -87,6 +87,10 @@ class CM2Scene {
     /* 0144 */ uint32_t m_passMask;
 
     static uint32_t s_optFlags;
+    // NOT IN BINARY. Lets a module rename a model before it is loaded: given the requested path, it writes the path to
+    // load instead into `out` and returns true, or returns false to leave the request alone. Equip Plus uses it so a
+    // creature display can name a model that is not a file. Called from every CreateModel, so it has to be cheap.
+    static bool (*s_resolveModelPath)(const char* fileName, char* out, size_t size);
 
     static void AnimateThread(void* param);
     static void __stdcall ComputeElementShaders(M2Element* element);

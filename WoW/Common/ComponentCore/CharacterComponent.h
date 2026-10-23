@@ -68,6 +68,7 @@ class CComponentRequest {
 };
 
 class CStatus;
+struct EquipPlusState;
 class CCharacterComponent {
     public:
     static CVar* g_componentCompressVar;
@@ -158,11 +159,14 @@ class CCharacterComponent {
     /* 0458 */ uint32_t m_handItemDisplayID [3];
     /* 0464 */ int32_t m_itemSlotForAttachSlot [50];
     /* 052C */ CComponentRequest* m_request;
+    // NOT IN BINARY. The Equip Plus models attached for this component (see EquipPlus.h).
+    /* 0530 */ EquipPlusState* m_equipPlus;
 
     CCharacterComponent();
     ~CCharacterComponent();
     void AddCape();
     void AddHelm(int32_t itemVisual);
+    void HideHelmGeosets(const ItemDisplayInfoRec* displayRec);
     void AddItem(ITEM_SLOT itemSlot, const ItemDisplayInfoRec* displayRec, int32_t itemVisual);
     void AddItem(ITEM_SLOT itemSlot, int32_t displayID, int32_t itemVisual);
     void AddItemBySlot(INVENTORY_SLOTS invSlot, int32_t displayID, int32_t itemVisual);

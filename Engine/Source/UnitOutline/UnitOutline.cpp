@@ -53,17 +53,17 @@ constexpr float kThreshold = 0.0f;    // clip cutoff; trims faint pixels
 // thick the line is and how wide its feathered outer side is.
 constexpr float kSoftnessScale = 2.0f;
 
-// The foot fade, as fractions of the reference model's height: nothing is stamped below kFootFadeStart, and the
-// full silhouette is back by kFootFadeEnd, roughly the knee of a humanoid.
+// The foot fade, as fractions of the reference model's height, bottom (0) to top (1): the line is absent at the base
+// and back at full strength by kFootFadeEnd. The same fractions serve a character, a mount and a chest alike.
 constexpr float kFootFadeStart = 0.03f;
-constexpr float kFootFadeEnd   = 0.32f;
+constexpr float kFootFadeEnd   = 0.25f;
 
 constexpr int32_t kMaxTargets   = 64;  // selections and quest givers, each up to two models plus gear
 // The fade a selection plays after it goes idle. Source RGB only, so the line dims rather than disappears
 // (see StampSilhouette). The end weight is a light dim, not a drop-off: at 0.45 the settled line was hard to
 // see, which is most of what the player is looking at.
 constexpr uint32_t kFadeMs         = 800;
-constexpr float    kFadeEndOpacity = 0.62f;
+constexpr float    kFadeEndOpacity = 0.4f;
 
 // ---------------------------------------------------------------------------------------------
 // The shaders. Ported from the WXL module's hlsl (its Hlsl.hpp); the port change is that they are
@@ -96,19 +96,23 @@ const char* const kCutoutColorHLSL =
     "  return c0;\n"
     "}\n";
 
-// The foot fade's weight, stamped over a unit's silhouette into its own mask: red is the weight, alpha 1 where the
-// unit is. The weight is 0 at the unit's feet and rises smoothly to 1 at the knee, by screen row. The edge pass
+// The line's alpha weight, stamped over a unit's silhouette into its own mask: red is the weight, alpha 1 where the
+// unit is. It is the settle fade (c0.x) times the foot fade, which is 0 at the unit's feet and rises smoothly to 1
+// at the knee, by screen row (and 1 throughout when c1.w is 0, i.e. the unit has no feet to fade from). The edge pass
 // averages it over the silhouette near a line pixel and scales the line's alpha by it, so the outline fades in up
 // the legs while the silhouette -- and so the line's shape -- stays whole. (Fading the silhouette itself drew a
 // new outline across the legs, where it ended.)
-//   c1 = { row of the fade's start, row span to full strength, 1 / span^2, unused }
+//   c0 = { settle weight, unused, unused, unused }
+//   c1 = { row of the fade's start, row span to full strength, 1 / span^2, foot fade on }
 // t is the pixel's distance from the start along the start-to-end direction, so it does not matter which way the
 // screen rows run.
 const char* const kFootWeightHLSL =
+    "float4 c0 : register(c0);\n"
     "float4 c1 : register(c1);\n"
     "float4 main(float2 uv : TEXCOORD0, float2 vp : VPOS) : COLOR0 {\n"
     "  float t = saturate((vp.y - c1.x) * c1.y * c1.z);\n"
-    "  return float4(t * t * (3.0 - 2.0 * t), 0, 0, 1);\n"
+    "  float foot = c1.w > 0.5 ? t * t * (3.0 - 2.0 * t) : 1.0;\n"
+    "  return float4(foot * c0.x, 0, 0, 1);\n"
     "}\n";
 
 // Single-pass outline on the blurred mask: one soft-edged band hugging the silhouette, drawn with alpha blending.
@@ -535,7 +539,9 @@ bool ComputeFootFade(OutlineTarget& target, float out[4]) {
                 box = collision;
             }
 
-            box.b.z = 0.0f;
+            // The base is the bottom of that box where it dips below the origin (a doodad whose origin is centred),
+            // and the origin otherwise (a character, whose feet are at it).
+            box.b.z = std::min(box.b.z, 0.0f);
             const float height = box.t.z - box.b.z;
             C44Matrix projection;
             GxXformProjection(projection);
@@ -709,7 +715,7 @@ void CUnitOutline::AddDoodad(CM2Model* model, const float rgb[3]) {
     }
 
     const float color[4] = { rgb[0], rgb[1], rgb[2], 1.0f };
-    AddEntry(model, color, false, nullptr);
+    AddEntry(model, color, false, model);
 }
 
 void CUnitOutline::AddEntry(CM2Model* model, const float color[4], bool keepFull, CM2Model* footRef) {
@@ -1204,31 +1210,29 @@ void CUnitOutline::StampMask(const CGxBatch& batch, const float color[4], CGxTex
 // disappeared into that saturate and the fade was invisible. Weighted rgb leaves alpha (opacity) at full and
 // the edge pass recovers the line colour as rgb/alpha, so what eases is the line's brightness.
 void CUnitOutline::StampSilhouette(const CGxBatch& batch, int32_t index) {
+    // The colour goes into the mask as it is. The fade dims the line's alpha instead, through the weight mask below,
+    // so the line keeps its hue and saturation as it settles.
     float color[4];
     memcpy(color, s_targets[index].m_color, sizeof(color));
+    float weight = 1.0f;
 
     if (!s_targets[index].m_keepFull) {
         uint32_t age = OsGetAsyncTimeMs() - s_targets[index].m_birth;
         float t = age >= kFadeMs ? 1.0f : static_cast<float>(age) / static_cast<float>(kFadeMs);
         // Squared, so the line holds full brightness for the first part of the fade and does most of its
         // dimming late, instead of stepping off full strength on the first frame.
-        float weight = 1.0f - (1.0f - kFadeEndOpacity) * (t * t);
-
-        color[0] *= weight;
-        color[1] *= weight;
-        color[2] *= weight;
+        weight = 1.0f - (1.0f - kFadeEndOpacity) * (t * t);
     }
 
     // The whole silhouette, untested, so the edge shape never inherits a wall's rim.
     StampMask(batch, color, s_mask, s_maskCleared, false, nullptr);
 
-    // And the foot fade's weight over the same silhouette, when this unit has feet to fade from.
-    float fade[4];
-
-    if (ComputeFootFade(s_targets[index], fade)) {
-        const float white[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-        StampMask(batch, white, s_fadeMask, s_fadeMaskCleared, false, fade);
-    }
+    // And the line's alpha weight over the same silhouette: the settle fade (red), times the foot fade when this
+    // unit has feet to fade from. Always stamped, so a pixel near two units averages both of their weights.
+    float fade[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    ComputeFootFade(s_targets[index], fade);
+    const float weightColor[4] = { weight, 0.0f, 0.0f, 0.0f };
+    StampMask(batch, weightColor, s_fadeMask, s_fadeMaskCleared, false, fade);
 
     // And the same batches again, tested, into the visibility mask. Skipped when there is no shared depth:
     // the two copies would be identical and the edge pass is told to ignore the visibility mask.

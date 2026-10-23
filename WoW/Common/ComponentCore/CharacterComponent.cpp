@@ -4267,7 +4267,7 @@ void CCharacterComponent::UpdateBaseTexture(EGxTexCommand command, uint32_t widt
 
             break;
 
-        case GxTex_3:
+        case GxTex_Recreate:
             if (!(component->m_data.m_flags & 0x2)) {
                 component->SetTexturesDirty();
                 component->SetDirtySections(0xFFFFFFFF);

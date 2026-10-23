@@ -13,6 +13,7 @@
 #include "Engine/Source/Gx/CGxTex.h"
 #include "Engine/Source/Gx/Gx.h"
 #include "Engine/Source/Storm/H/storm.h"
+#include "Engine/Source/ShaderEffect/Types.h"
 
 static const uint32_t kNullTmu = 0xFFFFFFFF;
 
@@ -62,7 +63,7 @@ struct GlTexEnvOp {
 };
 
 // STATIC: 0x00AD8DF0
-static GlTexEnvOp s_texEnvOps[6] = {
+static GlTexEnvOp s_texEnvOps[GxTexOps_Last] = {
     { GL_REPLACE, 1.0f, 0x8578, GL_TEXTURE, 0x8576, GL_MODULATE },
     { GL_MODULATE, 2.0f, 0x8578, GL_TEXTURE, 0x8576, GL_MODULATE },
     { GL_ADD, 1.0f, 0x8578, GL_TEXTURE, 0x8576, GL_ADD },
@@ -2148,12 +2149,12 @@ LRESULT CALLBACK CGxDeviceOpenGl::WindowProcGl(HWND hwnd, UINT message, WPARAM w
             rect.maxX = LOWORD(lparam);
 
             if (wparam == SIZE_MINIMIZED) {
-                device->DeviceWM(GxWM_Size, reinterpret_cast<uintptr_t>(&rect), 1);
+                device->DeviceWM(GxWM_Size, reinterpret_cast<uintptr_t>(&rect), Gx_SizeMinimized);
             } else {
                 uint32_t resizeType = 0;
 
                 if (wparam == SIZE_MAXHIDE) {
-                    resizeType = 2;
+                    resizeType = Gx_SizeMaxHide;
                 }
 
                 device->DeviceWM(GxWM_Size, reinterpret_cast<uintptr_t>(&rect), resizeType);
@@ -2179,7 +2180,7 @@ LRESULT CALLBACK CGxDeviceOpenGl::WindowProcGl(HWND hwnd, UINT message, WPARAM w
                 rect.minX = 0.0f;
                 rect.maxY = 0.0f;
                 rect.maxX = 0.0f;
-                device->DeviceWM(GxWM_Size, reinterpret_cast<uintptr_t>(&rect), 1);
+                device->DeviceWM(GxWM_Size, reinterpret_cast<uintptr_t>(&rect), Gx_SizeMinimized);
             }
 
             break;
@@ -2311,7 +2312,7 @@ LRESULT CALLBACK CGxDeviceOpenGl::WindowProcGl(HWND hwnd, UINT message, WPARAM w
 int32_t CGxDeviceOpenGl::DeviceWM(EGxWM wm, uintptr_t param1, uintptr_t param2) {
     switch (wm) {
         case GxWM_Size:
-            if (param2 == 1 || param2 == 2) {
+            if (param2 == Gx_SizeMinimized || param2 == Gx_SizeMaxHide) {
                 this->m_windowVisible = 0;
             } else {
                 this->m_windowVisible = 1;
@@ -2938,7 +2939,7 @@ void CGxDeviceOpenGl::IStateSyncEnables() {
 
     int32_t enable = 0;
 
-    if (this->NeedsUpdate(this->m_appMasterEnables, this->m_hwMasterEnables, 0, 0, 8, enable)) {
+    if (this->NeedsUpdate(this->m_appMasterEnables, this->m_hwMasterEnables, 0, 0, GxMasterEnable_PolygonFill, enable)) {
         if (enable) {
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
         } else {
@@ -3835,7 +3836,7 @@ void CGxDeviceOpenGl::IRsSendToHw(EGxRenderState which) {
 
             break;
 
-        case Unk84:
+        case GxRs_BlendFactor:
             if (glExtBlendColor) {
                 glBlendColorEXT(value.m_data.f[0], value.m_data.f[0], value.m_data.f[0], value.m_data.f[0]);
             }
@@ -3923,7 +3924,7 @@ void CGxDeviceOpenGl::ScenePresent() {
 void CGxDeviceOpenGl::IXformSetProjection(const C44Matrix& matrix) {
     C44Matrix projection(matrix.a0, matrix.a1, matrix.a2, matrix.a3, matrix.b0, matrix.b1, matrix.b2, matrix.b3, -matrix.c0, -matrix.c1, -matrix.c2, -matrix.c3, matrix.d0, matrix.d1, matrix.d2, matrix.d3);
 
-    if (static_cast<int32_t>(this->m_appMasterEnables) >= 0 && 1.0f != matrix.d3) {
+    if (!(this->m_appMasterEnables & (1 << GxMasterEnable_NormalProjection)) && 1.0f != matrix.d3) {
         C44Matrix scale(0.2f, 0.0f, 0.0f, 0.0f, 0.0f, 0.2f, 0.0f, 0.0f, 0.0f, 0.0f, 0.2f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
         projection = projection * scale;
     }
@@ -5132,7 +5133,7 @@ void CGxDeviceOpenGl::IBindVertexShader(CGxShader* shader) {
             case 8:
             case 9:
                 glBindProgramNV(GL_VERTEX_PROGRAM_ARB, static_cast<GLuint>(reinterpret_cast<uintptr_t>(shader->m_apiSpecific)));
-                this->DsSet(Ds_Unk83, 1, 0);
+                this->DsSet(Ds_VertexProgramNV, 1, 0);
                 break;
 
             default:
@@ -5147,7 +5148,7 @@ void CGxDeviceOpenGl::IBindVertexShader(CGxShader* shader) {
 
             case 8:
             case 9:
-                this->DsSet(Ds_Unk83, 0, 0);
+                this->DsSet(Ds_VertexProgramNV, 0, 0);
                 break;
 
             default:

@@ -126,8 +126,13 @@ enum EGxTexCommand {
     GxTex_Lock = 0,
     GxTex_Latch = 1,
     GxTex_Unlock = 2,
-    GxTex_3 = 3,
+    GxTex_Recreate = 3,
     GxTexCommands_Last = 4,
+};
+
+enum EGx : int32_t {
+    Gx_SizeMinimized = 1,
+    Gx_SizeMaxHide = 2,
 };
 
 enum EGxWM {
@@ -381,7 +386,7 @@ enum EGxRenderState {
     GxRs_PointScaleMin = 81,
     GxRs_PointScaleMax = 82,
     GxRs_PointSprite = 83,
-    Unk84 = 84,
+    GxRs_BlendFactor = 84,
     GxRs_ColorMaterial = 85,
     GxRenderStates_Last = 86,
 };

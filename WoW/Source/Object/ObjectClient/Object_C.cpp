@@ -49,6 +49,7 @@
 #include "WoW/Source/DB/Rec/SpellVisualEffectNameRec.h"
 #include "WoW/Source/DB/Rec/SpellVisualKitModelAttachRec.h"
 #include "WoW/Source/DB/Rec/SpellRec.h"
+#include "Engine/Source/ShaderEffect/Types.h"
 
 // STATIC: 0x00ADAC98
 CGObject_C::InteractIcon CGObject_C::s_interactIcons[12] = {
@@ -1684,7 +1685,7 @@ void CGObject_C::PlaySpellVisualKit(const PlaySpellVisuaKitData& data) {
             objectPosition = this->GetRawPosition();
             transport.m_guid = this->GetTransportGUID();
 
-            if ((this->m_obj->m_type & 0x8) && (static_cast<CGUnit_C*>(this)->m_movement->m_flags & 0x40000000)) {
+            if ((this->m_obj->m_type & TYPE_UNIT) && (static_cast<CGUnit_C*>(this)->m_movement->m_flags & MOVEMENTFLAG_HOVER)) {
                 objectPosition.z -= static_cast<CGUnit_C*>(this)->m_unit->m_unitFieldHoverheight;
             }
         }
@@ -1817,7 +1818,7 @@ attachments:
                 objectPosition = this->GetRawPosition();
                 transport.m_guid = this->GetTransportGUID();
 
-                if ((this->m_obj->m_type & 0x8) && (static_cast<CGUnit_C*>(this)->m_movement->m_flags & 0x40000000)) {
+                if ((this->m_obj->m_type & TYPE_UNIT) && (static_cast<CGUnit_C*>(this)->m_movement->m_flags & MOVEMENTFLAG_HOVER)) {
                     objectPosition.z -= static_cast<CGUnit_C*>(this)->m_unit->m_unitFieldHoverheight;
                 }
             }
@@ -1986,9 +1987,9 @@ int32_t CGObject_C::SetCircleRenderStates() {
     GxRsSet(GxRs_DepthWrite, 0);
     g_theGxDevicePtr->RsSet(GxRs_Texture0, texture);
     g_theGxDevicePtr->RsSet(GxRs_Texture1, ProjectTex2dGetAddFadeTex());
-    GxRsSet(GxRs_ColorOp0, 0);
-    GxRsSet(GxRs_AlphaOp0, 0);
-    GxRsSet(GxRs_ColorOp1, 0);
-    GxRsSet(GxRs_AlphaOp1, 0);
+    GxRsSet(GxRs_ColorOp0, GxTexOp_Mod);
+    GxRsSet(GxRs_AlphaOp0, GxTexOp_Mod);
+    GxRsSet(GxRs_ColorOp1, GxTexOp_Mod);
+    GxRsSet(GxRs_AlphaOp1, GxTexOp_Mod);
     return 1;
 }

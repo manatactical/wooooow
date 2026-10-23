@@ -251,7 +251,7 @@ class CGxDeviceD3d9Ex : public CGxDevice {
     /* 3C34 */ TSExplicitList<CGxTex, offsetof(CGxTex, m_link)> m_texDestroyList;
     /* 3C40 */ uint32_t m_texCacheUsed;
     /* 3C44 */ uint32_t m_texCacheSize;
-    /* 3C48 */ uint32_t m_deviceStates [182];
+    /* 3C48 */ uint32_t m_deviceStates [DeviceStates_Last];
     /* 3F20 */ bool m_texEnabled [8];
 
     virtual void ITexMarkAsUpdated(CGxTex* texId);

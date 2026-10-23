@@ -42,3 +42,13 @@ Build is noisy: MSVC emits C4309/C4369 enum-truncation warnings from `Engine/Sou
 Win32 build needs NASM on PATH and does not work on this machine. x64 only unless asked otherwise.
 
 See README.md for full options (`WOWDECOMP_DISABLE_SIGNATURE_CHECKS`, `WOWCLIENT_CRASH_LOG`) and layout.
+
+## UI files (Lua/XML)
+
+**After editing anything under `Data/custom.MPQ/Interface/`, always run `Tools/deploy-ui.ps1`.** The client loads the
+copies in `bin/Win/Data/custom.MPQ/` (gitignored), not the tracked originals, so an edit that is not deployed does
+not show up in game. Building the client does not do this. The client must be closed while it runs.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File Tools/deploy-ui.ps1
+```

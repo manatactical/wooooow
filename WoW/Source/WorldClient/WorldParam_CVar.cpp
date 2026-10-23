@@ -58,6 +58,8 @@ CVar* CWorldParam::cvar_ssaoDistance;
 // Not in the original binary. See CSunShafts. 0 off, 1 on, 2 the shaft term itself.
 CVar* CWorldParam::cvar_sunShafts;
 CVar* CWorldParam::cvar_sunShaftsStrength;
+// Not in the original binary. See CDepthFog. 0 off, 1 on, 2 the opacity itself.
+CVar* CWorldParam::cvar_depthFog;
 
 // STATIC: 0x00CD857C
 CVar* CWorldParam::cvar_texLodBias;
@@ -882,6 +884,8 @@ void CWorldParam::Initialize() {
     // the Advanced panel reads their defaults at the login screen. CSunShafts::Init registers them too.
     CWorldParam::cvar_sunShafts = CVar::Register("sunShafts", "sun shafts: 0 off, 1 on, 2 show the shaft term", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     CWorldParam::cvar_sunShaftsStrength = CVar::Register("sunShaftsStrength", "sun shaft strength: 0 none, 1 full", 1, "0.5", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    // Not in the original binary. See CDepthFog. Registered here so the Advanced panel can read its default at the login screen.
+    CWorldParam::cvar_depthFog = CVar::Register("depthFog", "distance and height fog: 0 off, 1 on, 2 show the fog opacity", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
 
     // Not in the original binary. The grass and wind cvars the Physics tab reads. Registered here for the

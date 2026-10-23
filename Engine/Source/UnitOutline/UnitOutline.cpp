@@ -4,6 +4,7 @@
 // pipeline; this file is the implementation, and says where the port had to differ from the original.
 #include "Engine/Source/UnitOutline/UnitOutline.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -124,9 +125,26 @@ const char* const kEdgeHLSL =
     "sampler2D m : register(s0);\n"
     "sampler2D occ : register(s1);\n"
     "sampler2D vis : register(s2);\n"
+    "sampler2D cov : register(s3);\n"
     "float4 px : register(c0);\n"
     "float4 par : register(c1);\n"
     "float4 mode : register(c2);\n"
+    "float4 tile : register(c3);\n"
+    "// Every tap is an explicit-lod fetch, so the early-out below may leave the rest of the shader in a branch.\n"
+    "#define tex2D(s, u) tex2Dlod(s, float4((u), 0, 0))\n"
+    "// How much silhouette lies in the 3x3 tiles around this pixel's tile (see kCoverageHLSL). The reach of the\n"
+    "// whole pass from a silhouette pixel is the blur's 8 px plus the outer ring's 14, under the 32 px tile, so a\n"
+    "// pixel whose neighbourhood is empty cannot be part of the line.\n"
+    "float Coverage(float2 uv) {\n"
+    "  float2 t = floor(uv / tile.xy / 32.0);\n"
+    "  float s = 0;\n"
+    "  [unroll] for (int j = -1; j <= 1; ++j) {\n"
+    "    [unroll] for (int i = -1; i <= 1; ++i) {\n"
+    "      s += tex2Dlod(cov, float4((t + float2(i, j) + 0.5) * tile.zw, 0, 0)).r;\n"
+    "    }\n"
+    "  }\n"
+    "  return s;\n"
+    "}\n"
     "#define CORE_TAP 1.7\n"
     "#define RING_GAIN 0.75\n"
     "#define CORE_GAIN 11.0\n"
@@ -153,6 +171,12 @@ const char* const kEdgeHLSL =
     "  return sqrt(gx * gx + gy * gy);\n"
     "}\n"
     "float4 main(float2 uv : TEXCOORD0) : COLOR0 {\n"
+    "  // Most of the frame is nowhere near a silhouette: leave it untouched, which is what the shader would have\n"
+    "  // done to it anyway (no alpha in the line pass, no band in the solid pass).\n"
+    "  [branch] if (Coverage(uv) < 0.001) {\n"
+    "    clip(-1);\n"
+    "    return float4(0, 0, 0, 0);\n"
+    "  }\n"
     "  float2 o = px.xy * px.z * CORE_TAP;\n"
     "  float center = tex2D(m, uv).a;\n"
     "  // Outside the body only: the gradient is symmetric, so without this it would also light the\n"
@@ -206,8 +230,25 @@ const char* const kEdgeHLSL =
 //   c0 = {offset.x, offset.y, unused, unused}
 const char* const kBlurHLSL =
     "sampler2D src : register(s0);\n"
+    "sampler2D cov : register(s1);\n"
     "float4 dir : register(c0);\n"
+    "float4 tile : register(c3);\n"
+    "#define tex2D(s, u) tex2Dlod(s, float4((u), 0, 0))\n"
+    "float Coverage(float2 uv) {\n"
+    "  float2 t = floor(uv / tile.xy / 32.0);\n"
+    "  float s = 0;\n"
+    "  [unroll] for (int j = -1; j <= 1; ++j) {\n"
+    "    [unroll] for (int i = -1; i <= 1; ++i) {\n"
+    "      s += tex2Dlod(cov, float4((t + float2(i, j) + 0.5) * tile.zw, 0, 0)).r;\n"
+    "    }\n"
+    "  }\n"
+    "  return s;\n"
+    "}\n"
     "float4 main(float2 uv : TEXCOORD0) : COLOR0 {\n"
+    "  // An empty neighbourhood blurs to nothing; the target is still written, so no stale frame is left in it.\n"
+    "  [branch] if (Coverage(uv) < 0.001) {\n"
+    "    return float4(0, 0, 0, 0);\n"
+    "  }\n"
     "  float4 s = tex2D(src, uv) * 0.2270270270;\n"
     "  s += (tex2D(src, uv + dir.xy) + tex2D(src, uv - dir.xy)) * 0.1945945946;\n"
     "  s += (tex2D(src, uv + dir.xy * 2.0) + tex2D(src, uv - dir.xy * 2.0)) * 0.1216216216;\n"
@@ -216,11 +257,32 @@ const char* const kBlurHLSL =
     "  return s;\n"
     "}\n";
 
+// Which 32 pixel tiles of the mask hold any silhouette at all. The blur and edge passes read this and skip the
+// tiles with nothing in or beside them, which is nearly all of a frame: both are many-tap shaders drawn over the
+// whole screen for a line that is a few hundred pixels across. One texel per tile, the largest alpha in it; each
+// tap is a bilinear fetch of a 2x2 block, so the sixteen by sixteen of them cover the tile's 32 by 32 exactly.
+//   c3 = {mask texel x, mask texel y, coverage texel x, coverage texel y}
+const char* const kCoverageHLSL =
+    "sampler2D m : register(s0);\n"
+    "float4 tile : register(c3);\n"
+    "float4 main(float2 uv : TEXCOORD0) : COLOR0 {\n"
+    "  float2 t = floor(uv / tile.zw);\n"
+    "  float2 centre = (t * 32.0 + 16.0) * tile.xy;\n"
+    "  float best = 0;\n"
+    "  [loop] for (int j = 0; j < 16; ++j) {\n"
+    "    [loop] for (int i = 0; i < 16; ++i) {\n"
+    "      best = max(best, tex2Dlod(m, float4(centre + (float2(i, j) * 2.0 - 15.0) * tile.xy, 0, 0)).a);\n"
+    "    }\n"
+    "  }\n"
+    "  return float4(best, best, best, best);\n"
+    "}\n";
+
 // ---------------------------------------------------------------------------------------------
 // Module state
 // ---------------------------------------------------------------------------------------------
 CVar* s_cvarUnitOutline;
 CGxShader* s_colorPS;
+CGxShader* s_coveragePS;
 CGxShader* s_cutoutPS;
 CGxShader* s_edgePS;
 CGxShader* s_blurPS;
@@ -233,6 +295,8 @@ FFX::Tex s_maskTex;
 FFX::Tex s_playerMaskTex;
 FFX::Tex s_visMaskTex;
 FFX::Tex s_blurTex;
+FFX::Tex s_coverageTex;
+CGxTex* s_coverage;
 CGxTex* s_mask;
 CGxTex* s_playerMask;
 CGxTex* s_visMask;
@@ -439,6 +503,29 @@ void DrawFullscreenQuad(const FFX::Tex& target) {
     g_theGxDevicePtr->Draw(&FFX::s_quadBatch, 1);
 }
 
+// The constants the coverage lookups share; see kCoverageHLSL.
+void SetTileConstants() {
+    const float tile[4] = { s_maskTex.m_texelSize.x, s_maskTex.m_texelSize.y, s_coverageTex.m_texelSize.x, s_coverageTex.m_texelSize.y };
+    GxShaderConstantsSet(GxSh_Pixel, 3, tile, 1);
+}
+
+// Reduces the finished silhouette mask to the tile coverage the blur and edge passes skip by. Its own setup and
+// reset: the target is a thirty-second the size, so the pixel-space projection has to be built for it.
+void BuildCoverage() {
+    FFX::SetupGx(&s_coverageTex);
+    GxXformSetViewport(0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f);
+
+    GxRsSet(GxRs_PixelShader, s_coveragePS);
+    GxRsSet(GxRs_BlendingMode, GxBlend_Opaque);
+    GxRsSet(GxRs_AlphaRef, 0);
+    GxRsSet(GxRs_Texture0, s_mask);
+    SetTileConstants();
+    DrawFullscreenQuad(s_coverageTex);
+
+    GxRsSet(GxRs_Texture0, nullptr);
+    FFX::SetupReset();
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------------------------
@@ -477,6 +564,7 @@ bool CUnitOutline::Enabled() {
 // the first composite would otherwise dereference null. ShaderDestroy re-nulls the pointer it is given, so
 // the call still has to happen for the ones that are not null.
 void CUnitOutline::OnDeviceRestored() {
+    if (s_coveragePS) { g_theGxDevicePtr->ShaderDestroy(s_coveragePS); }
     if (s_colorPS)  { g_theGxDevicePtr->ShaderDestroy(s_colorPS); }
     if (s_cutoutPS) { g_theGxDevicePtr->ShaderDestroy(s_cutoutPS); }
     if (s_edgePS)   { g_theGxDevicePtr->ShaderDestroy(s_edgePS); }
@@ -486,6 +574,7 @@ void CUnitOutline::OnDeviceRestored() {
     RefreshGxTexture(s_playerMaskTex, s_playerMask);
     RefreshGxTexture(s_visMaskTex, s_visMask);
     RefreshGxTexture(s_blurTex, s_blur);
+    RefreshGxTexture(s_coverageTex, s_coverage);
 
     // The depth texture is default-pool with its render-target bit set, so the device re-created it too and
     // only the cached pointer is stale.
@@ -691,13 +780,14 @@ bool CUnitOutline::EnsureResources() {
     }
 
     if (!s_colorPS) {
+        s_coveragePS = CompilePixelShader(kCoverageHLSL);
         s_colorPS = CompilePixelShader(kColorHLSL);
         s_cutoutPS = CompilePixelShader(kCutoutColorHLSL);
         s_edgePS = CompilePixelShader(kEdgeHLSL);
         s_blurPS = CompilePixelShader(kBlurHLSL);
     }
 
-    if (!s_colorPS || !s_cutoutPS || !s_edgePS || !s_blurPS) {
+    if (!s_colorPS || !s_cutoutPS || !s_edgePS || !s_blurPS || !s_coveragePS) {
         return false;
     }
 
@@ -711,16 +801,19 @@ bool CUnitOutline::EnsureResources() {
     // Back-buffer sized so the composite samples them 1:1 and the shaders' pixel distances hold. Built by
     // hand rather than FFX::CreateTex because they must not be rounded to a power of two: the scene's depth
     // surface is exactly this size and has to pair with them. A no-op unless the size actually changed.
-    if (!CreateFrameTex(s_maskTex, size, false) || !CreateFrameTex(s_playerMaskTex, size, false) || !CreateFrameTex(s_visMaskTex, size, false) || !CreateFrameTex(s_blurTex, size, false)) {
+    const C2iVector coverageSize = { std::max((size.x + 31) / 32, 8), std::max((size.y + 31) / 32, 8) };
+
+    if (!CreateFrameTex(s_maskTex, size, false) || !CreateFrameTex(s_playerMaskTex, size, false) || !CreateFrameTex(s_visMaskTex, size, false) || !CreateFrameTex(s_blurTex, size, false) || !CreateFrameTex(s_coverageTex, coverageSize, false)) {
         return false;
     }
 
+    RefreshGxTexture(s_coverageTex, s_coverage);
     RefreshGxTexture(s_maskTex, s_mask);
     RefreshGxTexture(s_playerMaskTex, s_playerMask);
     RefreshGxTexture(s_visMaskTex, s_visMask);
     RefreshGxTexture(s_blurTex, s_blur);
 
-    return s_mask && s_playerMask && s_visMask && s_blur;
+    return s_mask && s_playerMask && s_visMask && s_blur && s_coverage;
 }
 
 // Not in the original binary. Whether the scene's depth can be shared with the masks at all.
@@ -1109,6 +1202,8 @@ void CUnitOutline::BlurPass() {
     // previous frame's silhouette, which the second axis then blurs back into the mask beside the current
     // pose.
     GxRsSet(GxRs_AlphaRef, 0);
+    GxRsSet(GxRs_Texture1, s_coverage);
+    SetTileConstants();
 
     // The scratch is cleared before the ping-pong, so neither axis depends on it having been written in
     // full.
@@ -1151,6 +1246,8 @@ void CUnitOutline::EdgePass() {
     // binds a real texture, and par.w says whether its answer is used. Without a stamped visibility mask the
     // full silhouette is bound, whose answer is never read.
     GxRsSet(GxRs_Texture2, s_visMaskCleared ? s_visMask : s_mask);
+    GxRsSet(GxRs_Texture3, s_coverage);
+    SetTileConstants();
 
     GxShaderConstantsSet(GxSh_Pixel, 0, c0, 1);
     GxShaderConstantsSet(GxSh_Pixel, 1, c1, 1);
@@ -1253,6 +1350,8 @@ void CUnitOutline::Composite() {
 
     // The engine's own full-screen setup: pixel-space ortho projection, identity view and world, the mask
     // as the colour target, and the render-state push that covers everything set from here on.
+    BuildCoverage();
+
     FFX::SetupGx(&s_maskTex);
 
     // The world was drawing through a sub-viewport (OnWorldRender narrows it to the 3D rect, and FFX::Start
@@ -1269,6 +1368,7 @@ void CUnitOutline::Composite() {
     GxRsSet(GxRs_Texture0, nullptr);
     GxRsSet(GxRs_Texture1, nullptr);
     GxRsSet(GxRs_Texture2, nullptr);
+    GxRsSet(GxRs_Texture3, nullptr);
 
     FFX::SetupReset();
 

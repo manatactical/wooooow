@@ -70,6 +70,7 @@ class CWorldParam {
     // Not in the original binary. Sun shafts; registered here for the same reason as the ambient occlusion cvars.
     static CVar* cvar_sunShafts;
     static CVar* cvar_sunShaftsStrength;
+    static CVar* cvar_depthFog;
     static bool ShadowTextureSizeCallback(CVar* var, const char* oldValue, const char* value, void* arg);
     static bool ShadowModeCallback(CVar* var, const char* oldValue, const char* value, void* arg);
     static bool CascadedShadowsCallback(CVar* var, const char* oldValue, const char* value, void* arg);

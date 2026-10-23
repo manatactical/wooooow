@@ -1102,6 +1102,20 @@
 					<OnValueChanged function="VideoOptionsAdvancedPanelSlider_OnValueChanged"/>
 				</Scripts>
 			</Slider>
+			<CheckButton name="$parentDepthFog" inherits="VideoOptionsSmallCheckButtonTemplate">
+				<Anchors>
+					<Anchor point="TOPLEFT" relativeTo="$parentSunShaftsStrength" relativePoint="BOTTOMLEFT">
+						<Offset x="-4" y="-12"/>
+					</Anchor>
+				</Anchors>
+				<Scripts>
+					<OnLoad>
+						self.type = CONTROLTYPE_CHECKBOX;
+						self.cvar = "depthFog";
+						BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
+					</OnLoad>
+				</Scripts>
+			</CheckButton>
 		</Frames>
 	</Frame>
 	<!-- Physics Panel -->

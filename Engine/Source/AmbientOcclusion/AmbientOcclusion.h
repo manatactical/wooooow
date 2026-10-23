@@ -77,6 +77,7 @@ class CAmbientOcclusion {
     static CVar* s_cvarSpread;
     static CVar* s_cvarStrength;
     static CVar* s_cvarDistance;
+    static CGxShader* s_zPS;
     static CGxShader* s_aoPS;
     static CGxShader* s_blurPS;
     static CGxShader* s_compositePS;
@@ -85,6 +86,8 @@ class CAmbientOcclusion {
     static CGxTex* s_exclude;
     static bool s_excludeStamped;
     static bool s_stamping;
+    static FFX::Tex s_zTex;
+    static CGxTex* s_z;
     static FFX::Tex s_aoTex;
     static FFX::Tex s_aoBlurTex;
     static CGxTex* s_ao;

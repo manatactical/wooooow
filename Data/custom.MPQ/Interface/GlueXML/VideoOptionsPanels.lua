@@ -563,6 +563,8 @@ SSAO_DISTANCE = "AO Distance";
 OPTION_TOOLTIP_SSAO_DISTANCE = "How far from the camera ambient occlusion reaches, in yards. It fades out and stops at this distance. Lower values cost less and avoid the noise it makes on far-away scenery.";
 SUN_SHAFTS = "Sun Shafts";
 OPTION_TOOLTIP_SUN_SHAFTS = "Beams of light that fall through gaps in trees, buildings and mountains when you look toward the sun. They are built from the frame's own depth buffer, so they are not applied while multisampling is enabled.";
+DEPTH_FOG = "Depth Fog";
+OPTION_TOOLTIP_DEPTH_FOG = "Distance and height haze that hides the edge of the view distance and lets far ridges fade into the sky. It is built from the frame's own depth buffer, so it is not applied while multisampling is enabled.";
 SUN_SHAFTS_STRENGTH = "Shaft Strength";
 OPTION_TOOLTIP_SUN_SHAFTS_STRENGTH = "How bright the sun shafts are. Zero is no shafts at all.";
 OPTION_TOOLTIP_LOOT_BEAM = "Raises a beam of light over every corpse that can still be looted, tinted by the quality of the rarest item in its loot. Purely a marker: it sends nothing to the server.";
@@ -600,6 +602,7 @@ AdvancedPanelOptions = {
 	ssaoStrength = { text = "SSAO_STRENGTH", minValue = 0, maxValue = 1, valueStep = 0.05, tooltip = OPTION_TOOLTIP_SSAO_STRENGTH },
 	sunShafts = { text = "SUN_SHAFTS", tooltip = OPTION_TOOLTIP_SUN_SHAFTS },
 	sunShaftsStrength = { text = "SUN_SHAFTS_STRENGTH", minValue = 0, maxValue = 1, valueStep = 0.05, tooltip = OPTION_TOOLTIP_SUN_SHAFTS_STRENGTH },
+	depthFog = { text = "DEPTH_FOG", tooltip = OPTION_TOOLTIP_DEPTH_FOG },
 };
 
 local function VideoOptionsShadowsPanel_Level (value, maxValue)

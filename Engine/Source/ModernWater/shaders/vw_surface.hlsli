@@ -260,5 +260,8 @@ float4 FoamAlbedo(WaterPixel w, WaveState waves)
     [branch] if (depthWeight > 0)
         foam += depthWeight * FoamLayer(sDepthFoamMask, kDepthFoamSlot, adtUv * cDepthFadeFoam.y + cDepthFoamScroll.xy,
                                         dx * cDepthFadeFoam.y, dy * cDepthFadeFoam.y);
-    return saturate(foam);
+    // Every layer adds its tint multiplied by its weight, so the summed colour is the tint scaled down by how faint the
+    // foam is (a lake's shore foam has weight 0.35, which turns its 0.86 grey tint into a dark 0.3). The tints in the
+    // water data are all near white, so the foam's colour is white and only the lighting and the coverage vary.
+    return float4(1, 1, 1, saturate(foam.a));
 }

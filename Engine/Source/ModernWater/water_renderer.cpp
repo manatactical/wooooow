@@ -62,6 +62,8 @@ constexpr float kMidByteWeight = 256.0f;
 constexpr float kDisplayGamma = 2.2f;
 constexpr float kSunVisibilityHalfWidth = 0.1f;
 constexpr float kWaterF0 = 0.02f;
+// Multiplies how often every foam mask repeats across the water; below 1 the foam patterns are larger and repeat less.
+constexpr float kFoamTilingScale = 1.0f;
 constexpr int kSchlickExponent = 5;
 constexpr float kMinClarity = 0.01f;
 constexpr float kShoreDistancePerDepth = 4.0f;
@@ -1388,13 +1390,14 @@ void WaterRenderer::FillClassConstants(ShadingConstants& constants, const WaterP
     constants.scatteringBottom = towardZone(preset.scatteringBottom, farWater, preset.scatteringBottom[3]);
 
     const float foam = std::max(m_tuning.foam, 0.0f);
-    constants.depthFadeFoam = {std::max(preset.depthFadeFoam[0], 0.0f) * foam, preset.depthFadeFoam[1],
-                               preset.depthFadeFoam[2], 0.0f};
-    constants.shoreFoam = {std::max(preset.shoreFoam[0], 0.0f) * foam, preset.shoreFoam[1], preset.shoreFoam[2],
-                           kShoreDistancePerDepth};
+    constants.depthFadeFoam = {std::max(preset.depthFadeFoam[0], 0.0f) * foam,
+                               preset.depthFadeFoam[1] * kFoamTilingScale, preset.depthFadeFoam[2], 0.0f};
+    constants.shoreFoam = {std::max(preset.shoreFoam[0], 0.0f) * foam, preset.shoreFoam[1] * kFoamTilingScale,
+                           preset.shoreFoam[2], kShoreDistancePerDepth};
     constants.waveFoam = {std::max(preset.waveFoam[0], 0.0f) * foam, 0.0f, 0.0f, 0.0f};
-    constants.waveFoamScaling = {preset.waveFoamScaling[0], preset.waveFoamScaling[1],
-                                 preset.waveFoamScaling[2], 0.0f};
+    constants.waveFoamScaling = {preset.waveFoamScaling[0] * kFoamTilingScale,
+                                 preset.waveFoamScaling[1] * kFoamTilingScale,
+                                 preset.waveFoamScaling[2] * kFoamTilingScale, 0.0f};
     constants.surfaceResponse = {preset.roughness[0], preset.roughness[1],
                                  preset.roughness[2] * m_tuning.reflections, m_tuning.specular};
 

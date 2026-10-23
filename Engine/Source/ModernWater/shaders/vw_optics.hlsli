@@ -40,6 +40,30 @@ float EnvironmentBrdf(float roughness, float NoV)
     return SurfaceF0() * ab.x + ab.y;
 }
 
+// What is under the water is softened more the deeper it lies: the blur radius grows with the path through the water,
+// from nothing at the shoreline to kUnderwaterBlurMaxPixels. Taps are on two rings around the centre.
+static const float kUnderwaterBlurPixelsPerYard = 2;
+static const float kUnderwaterBlurMaxPixels = 10;
+
+float3 BlurredSceneColour(float2 uv, float pathDepth)
+{
+    float radius = min(pathDepth * kUnderwaterBlurPixelsPerYard, kUnderwaterBlurMaxPixels);
+    float3 centre = tex2Dlod(sSceneColour, float4(uv, 0, 0)).rgb;
+    [branch] if (radius < 0.5)
+        return centre;
+    float2 texel = radius / ViewportSize();
+    static const float2 kTaps[8] = {float2(1, 0), float2(-1, 0), float2(0, 1), float2(0, -1),
+                                    float2(0.7071, 0.7071), float2(-0.7071, 0.7071), float2(0.7071, -0.7071),
+                                    float2(-0.7071, -0.7071)};
+    float3 sum = centre * 2;
+    [unroll] for (int i = 0; i < 8; ++i)
+    {
+        sum += tex2Dlod(sSceneColour, float4(uv + kTaps[i] * texel, 0, 0)).rgb;
+        sum += tex2Dlod(sSceneColour, float4(uv + kTaps[i] * texel * 0.5, 0, 0)).rgb;
+    }
+    return sum / 18;
+}
+
 Refraction RefractScene(WaterPixel w, float2 slope)
 {
     float2 refractedUv = w.uv + slope * kRefractionUvPerSlopeYard * min(kMaxRefractionDepth, w.sceneZ - w.waterZ);
@@ -48,9 +72,9 @@ Refraction RefractScene(WaterPixel w, float2 slope)
     float2 colourUv = unrefracted ? w.uv : refractedUv;
     float colourZ = unrefracted ? w.sceneZ : refractedZ;
     Refraction r;
-    r.copied = tex2Dlod(sSceneColour, float4(colourUv, 0, 0)).rgb;
-    r.scene = GammaToLinear(WithoutStockFog(r.copied, colourZ));
     r.pathDepth = max(0, max(refractedZ, w.sceneZ) - w.waterZ);
+    r.copied = BlurredSceneColour(colourUv, r.pathDepth);
+    r.scene = GammaToLinear(WithoutStockFog(r.copied, colourZ));
     return r;
 }
 

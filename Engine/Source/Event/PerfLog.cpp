@@ -582,9 +582,12 @@ bool DiagnosticLogsEnabled() {
 
     const char* value = getenv("WOWLOG_QUIET");
 
-    const bool quiet = value &&
-                       (_stricmp(value, "1") == 0 || _stricmp(value, "true") == 0 ||
-                        _stricmp(value, "yes") == 0 || _stricmp(value, "on") == 0);
+    // Quiet by default: the diagnostic dumps cost frame time, so they run only when asked for with WOWLOG_QUIET=0
+    // (also false/no/off). Unset or anything else leaves them silenced.
+    const bool loud = value &&
+                      (_stricmp(value, "0") == 0 || _stricmp(value, "false") == 0 ||
+                       _stricmp(value, "no") == 0 || _stricmp(value, "off") == 0);
+    const bool quiet = !loud;
 
     s_state.store(quiet ? Disabled : Enabled, std::memory_order_release);
 

@@ -8,6 +8,7 @@ static const float kDebugNormal = 1;
 static const float kDebugFoamCoverage = 2;
 static const float kDebugTransmittance = 3;
 static const float kDebugReflection = 4;
+static const float kMinSceneVisibility = 0.05;
 static const float kDebugLiquidClass = 5;
 static const float kDebugRippleHeightGain = 4;
 static const float kDebugRippleWindowShade = 0.25;
@@ -60,7 +61,9 @@ float4 main(float2 pixelIndex : VPOS) : COLOR0
     Refraction refraction = RefractScene(w, waves.moments.xy);
     float3 transmittance = Transmittance(refraction.pathDepth);
     float3 inscatter = InScattering(V, NoV, CrestTilt(waves.moments), waves.foam.y, transmittance);
-    float3 water = transmittance * refraction.scene + inscatter;
+    // The fog is at most 90% opaque: however deep the water, a tenth of what is under it still shows through.
+    float3 sceneVisibility = lerp(kMinSceneVisibility, 1, transmittance);
+    float3 water = sceneVisibility * refraction.scene + inscatter;
     float3 foam = FoamLight(N, waves.foam.x) * foamAlbedo.rgb + inscatter;
     float3 colour = lerp(water, foam, foamAlbedo.a);
 

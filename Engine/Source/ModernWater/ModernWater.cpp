@@ -122,7 +122,7 @@ WaterTimeInputs WaterSettings() {
     settings.foam = 1.0f;
     settings.reflections = 0.75f;
     settings.specular = 1.0f;
-    settings.clarity = 0.7f;
+    settings.clarity = 0.2f;
     settings.zoneColors = 0.7f;
     settings.ripples = 0.5f;
     return settings;

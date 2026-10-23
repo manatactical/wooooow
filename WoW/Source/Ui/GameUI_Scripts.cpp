@@ -1838,7 +1838,7 @@ static int32_t Script_GetCVarMax(lua_State* L) {
 
         lua_pushnumber(L, mode - 1);
     } else if (!SStrCmpI(name, "farclip", STORM_MAX_STR)) {
-        lua_pushnumber(L, 1277.0);
+        lua_pushnumber(L, 3000.0);
     } else {
         lua_pushnil(L);
     }

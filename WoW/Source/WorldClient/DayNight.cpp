@@ -8,6 +8,7 @@
 #include "Engine/Source/Base/CDataAllocator.h"
 #include "Engine/Source/ConsoleBase/ConsoleCommand.h"
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
+#include "Engine/Source/UnitOutline/UnitOutline.h"
 #include "Engine/Source/ConsoleBase/IConsole.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/CGxTexFlags.h"
@@ -2277,6 +2278,28 @@ void DayNight::UpdateFog() {
         } else {
             DayNight::s_lightFlags &= ~1;
         }
+    }
+
+    // NOT IN BINARY behaviour change: with the depth fog pass drawing, the engine's own distance fog outdoors is pushed
+    // out of reach (a linear fog starting a million yards away is no fog) so the two do not stack. Interiors and
+    // underwater keep theirs, as does a frame the pass cannot draw on (no shared depth). The fog colour stays: the sky
+    // clear and the light bands read it.
+    static CVar* s_depthFogVar;
+    static CVar* s_nativeFogVar;
+
+    if (!s_depthFogVar) {
+        s_depthFogVar = CVar::Lookup("depthFog");
+    }
+
+    if (!s_nativeFogVar) {
+        s_nativeFogVar = CVar::Lookup("nativeFog");
+    }
+
+    if (s_depthFogVar && s_depthFogVar->m_intValue == 1 && s_nativeFogVar && s_nativeFogVar->m_intValue == 0 && CUnitOutline::HasFrameDepth() && !liquidStatus && !(inside && found)) {
+        info.m_fog.m_start = 1.0e6f;
+        info.m_fog.m_end = 1.0e6f + 1.0f;
+        info.m_fogInterior.m_start = 1.0e6f;
+        info.m_fogInterior.m_end = 1.0e6f + 1.0f;
     }
 }
 

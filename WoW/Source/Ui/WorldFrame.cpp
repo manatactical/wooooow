@@ -29,6 +29,7 @@
 #include "Engine/Source/AmbientOcclusion/AmbientOcclusion.h"
 #include "Engine/Source/AntiAlias/AntiAlias.h"
 #include "Engine/Source/ModernWater/ModernWater.h"
+#include "Engine/Source/DepthFog/DepthFog.h"
 #include "Engine/Source/SunShafts/SunShafts.h"
 #include "Engine/Source/UnitOutline/UnitOutline.h"
 #include "Engine/Source/Tempest/C4Vector.h"
@@ -1277,6 +1278,7 @@ CGWorldFrame::CGWorldFrame(CSimpleFrame* parent) : CSimpleFrame(parent) {
     CAntiAlias::Init();
     CAmbientOcclusion::Init();
     CSunShafts::Init();
+    CDepthFog::Init();
     // Registers the lootBeam cvar. Idempotent for the same reason.
     LootBeam::Init();
     // Registers the modern water pass's device-restored callback. Idempotent for the same reason.
@@ -1752,6 +1754,37 @@ static SunShaftsLight GatherSunShaftsLight() {
     return light;
 }
 
+// Not in the original binary. What CDepthFog needs to know about the air: the sky's colour gradient from the horizon up
+// (the six sky bands of the current light, fog colour first), the sun as the shafts see it, and how much fog there
+// should be. None indoors (the interior fog is the engine's own business) and
+// none underwater (the liquid pass has its own).
+static DepthFogAtmosphere GatherDepthFogAtmosphere(const SunShaftsLight& sun) {
+    DepthFogAtmosphere air = {};
+    DayNight::DNInfo* info = DayNight::GetInfo();
+    const DayNight::CurrentLight& bands = info->m_bands;
+
+    // m_skyColors runs zenith (0) to the fog colour (5); the gradient wants the opposite order. The horizon is the
+    // fog colour the engine's own fog fades to, which is what the sky dome meets the land with.
+    for (int32_t i = 0; i < 6; i++) {
+        const CImVector& colour = bands.m_skyColors[5 - i];
+        air.sky[i][0] = colour.r * (1.0f / 255.0f);
+        air.sky[i][1] = colour.g * (1.0f / 255.0f);
+        air.sky[i][2] = colour.b * (1.0f / 255.0f);
+    }
+
+    air.toSun = sun.toSun;
+    air.sunColor[0] = sun.color[0];
+    air.sunColor[1] = sun.color[1];
+    air.sunColor[2] = sun.color[2];
+    air.sunVisibility = sun.visibility;
+    air.cameraZ = info->m_cameraPos.z;
+    air.farClip = info->m_farClip;
+    air.depthMaxZ = CWorld::s_unk_ADEEE4;
+
+    air.amount = info->m_showSky && !World::SceneCamLiquidStatus(nullptr) ? 1.0f : 0.0f;
+    return air;
+}
+
 // VERIFY: 2ea40d3b manual
 // OFFSET: 0x004F8EA0
 void CGWorldFrame::OnWorldRender() {
@@ -1875,6 +1908,7 @@ void CGWorldFrame::OnWorldRender() {
         scene->Draw(M2PASS_2);
     } else {
         scene->Draw(M2PASS_2);
+
         CWorldScene::RenderLiquidPass();
         CWorldScene::RenderWeather();
         CWorldScene::RenderBarriers(this->m_elapsedSec);
@@ -1919,8 +1953,11 @@ void CGWorldFrame::OnWorldRender() {
 
     // Sun shafts are light, so they go on after the ambient occlusion rather than under it, and before the outline for
     // the same reason the occlusion does.
+    const SunShaftsLight sunLight = GatherSunShaftsLight();
+    PerfLogStage("depthfog");
+    CDepthFog::Apply(GatherDepthFogAtmosphere(sunLight));
     PerfLogStage("sunshafts");
-    CSunShafts::Apply(GatherSunShaftsLight());
+    CSunShafts::Apply(sunLight);
 
     PerfLogStage("outline");
     CUnitOutline::Composite();

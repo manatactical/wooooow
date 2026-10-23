@@ -46,6 +46,7 @@ target_link_libraries(WowClient
         AntiAlias
         AmbientOcclusion
         SunShafts
+        DepthFog
         Base
         BlizzardCore
         ComSat

@@ -1820,8 +1820,12 @@ void WaterRenderer::End(IDirect3DDevice9* device) {
     // is nothing left to shade here.
     m_armed = false;
 
-    // Put the shared depth back as it was before the water wrote into it, for everything the client draws after the pass.
-    RestoreSceneDepth(device);
+    // NOT IN BINARY behaviour change: the shared depth is no longer put back as it was before the water wrote into it. On
+    // water pixels it keeps the water's surface, which is what the depth fog needs to fog the surface at its own distance
+    // (with the sea bed's depth there, the fog was worked out for the ground under the water, and read as fog beneath it).
+    // The restore existed for the client's splash and wake rings, which this pass already suppresses, and for the models
+    // cut by the liquid plane, whose parts drawn after the pass are above the surface and so still pass its depth test.
+    // RestoreSceneDepth(device);
 
     // Everything the client had before Begin is handed back: the frame's colour targets, its depth surface and every
     // render state the shading pass touched.

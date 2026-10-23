@@ -737,7 +737,8 @@ bool CUnitOutline::OcclusionSupported() {
     // other way.
     CVar* ssao = CVar::Lookup("ssao");
     CVar* sunShafts = CVar::Lookup("sunShafts");
-    bool depthWanted = ((ssao && ssao->m_intValue > 0) || (sunShafts && sunShafts->m_intValue > 0)) && g_theGxDevicePtr && g_theGxDevicePtr->m_context;
+    CVar* depthFog = CVar::Lookup("depthFog");
+    bool depthWanted = ((ssao && ssao->m_intValue > 0) || (sunShafts && sunShafts->m_intValue > 0) || (depthFog && depthFog->m_intValue > 0)) && g_theGxDevicePtr && g_theGxDevicePtr->m_context;
 
     if (!Enabled() && !depthWanted) {
         return false;

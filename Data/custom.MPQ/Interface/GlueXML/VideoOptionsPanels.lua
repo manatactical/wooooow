@@ -1,7 +1,7 @@
 -- if you change something here you probably want to change the frame version too
 
 local OPTIONS_FARCLIP_MIN = 177;
-local OPTIONS_FARCLIP_MAX = 1277;
+local OPTIONS_FARCLIP_MAX = 3000;
 
 local VIDEO_OPTIONS_CUSTOM_QUALITY = 6;
 

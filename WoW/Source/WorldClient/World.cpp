@@ -1332,15 +1332,10 @@ void World::SetDetailDoodadDist(float dist) {
 // VERIFY: 5f5281b3 auto
 // OFFSET: 0x00780770
 float World::ValidateFarClip(float farClip, int32_t mapID) {
-    float maxFarClip = 4750.0f / 3.0f;
-
-    if (mapID < 530 || mapID == 575 || mapID == 543) {
-        if (!CWorldParam::cvar_farClipOverride || CWorldParam::cvar_farClipOverride->m_intValue < 1) {
-            maxFarClip = 2375.0f / 3.0f;
-        }
-    } else if (OsGetPhysicalMemory() <= 0x40000000) {
-        maxFarClip = 2375.0f / 3.0f;
-    }
+    // NOT IN BINARY behaviour change: the original ceiling was 4750/3 yards on the newer maps, and half that on the old
+    // ones or on a machine with 1GB of memory or less. Raised to match the options slider; the depth fog fades the world
+    // into the sky by the end of it, so the cull distance is not seen.
+    const float maxFarClip = 3000.0f;
 
     if (farClip < 550.0f / 3.0f) {
         return 550.0f / 3.0f;

@@ -26,6 +26,9 @@
 #include "Engine/Source/Services/Texture.h"
 #include "Engine/Source/Event/PerfLog.h"
 #include "Engine/Source/Tempest/C2Vector.h"
+#include "Engine/Source/Tempest/C44Matrix.h"
+#include "Engine/Source/Tempest/C4Vector.h"
+#include "Engine/Source/Tempest/CAaBox.h"
 #include "Engine/Source/Tempest/C2iVector.h"
 #include "Engine/Source/Tempest/C3Vector.h"
 #include "Engine/Source/Tempest/CImVector.h"
@@ -49,6 +52,11 @@ constexpr float kThreshold = 0.0f;    // clip cutoff; trims faint pixels
 // one screen pixel. The edge pass places a solid band from the blurred coverage, so this is what sets how
 // thick the line is and how wide its feathered outer side is.
 constexpr float kSoftnessScale = 2.0f;
+
+// The foot fade, as fractions of the reference model's height: nothing is stamped below kFootFadeStart, and the
+// full silhouette is back by kFootFadeEnd, roughly the knee of a humanoid.
+constexpr float kFootFadeStart = 0.03f;
+constexpr float kFootFadeEnd   = 0.32f;
 
 constexpr int32_t kMaxTargets   = 64;  // selections and quest givers, each up to two models plus gear
 // The fade a selection plays after it goes idle. Source RGB only, so the line dims rather than disappears
@@ -88,6 +96,21 @@ const char* const kCutoutColorHLSL =
     "  return c0;\n"
     "}\n";
 
+// The foot fade's weight, stamped over a unit's silhouette into its own mask: red is the weight, alpha 1 where the
+// unit is. The weight is 0 at the unit's feet and rises smoothly to 1 at the knee, by screen row. The edge pass
+// averages it over the silhouette near a line pixel and scales the line's alpha by it, so the outline fades in up
+// the legs while the silhouette -- and so the line's shape -- stays whole. (Fading the silhouette itself drew a
+// new outline across the legs, where it ended.)
+//   c1 = { row of the fade's start, row span to full strength, 1 / span^2, unused }
+// t is the pixel's distance from the start along the start-to-end direction, so it does not matter which way the
+// screen rows run.
+const char* const kFootWeightHLSL =
+    "float4 c1 : register(c1);\n"
+    "float4 main(float2 uv : TEXCOORD0, float2 vp : VPOS) : COLOR0 {\n"
+    "  float t = saturate((vp.y - c1.x) * c1.y * c1.z);\n"
+    "  return float4(t * t * (3.0 - 2.0 * t), 0, 0, 1);\n"
+    "}\n";
+
 // Single-pass outline on the blurred mask: one soft-edged band hugging the silhouette, drawn with alpha blending.
 //   c0 = {texel.x, texel.y, unused, unused}   (texel is 1/mask texture size)
 //   c1 = {opacity, threshold, player-mask-on, vis-mask-on} (scale on the alpha, clip cutoff, 1 when the player
@@ -111,8 +134,10 @@ const char* const kEdgeHLSL =
     "sampler2D occ : register(s1);\n"
     "sampler2D vis : register(s2);\n"
     "sampler2D cov : register(s3);\n"
+    "sampler2D fm : register(s4);\n"
     "float4 px : register(c0);\n"
     "float4 par : register(c1);\n"
+    "float4 mode : register(c2);\n"
     "float4 tile : register(c3);\n"
     "// Every tap is an explicit-lod fetch, so the early-out below may leave the rest of the shader in a branch.\n"
     "#define tex2D(s, u) tex2Dlod(s, float4((u), 0, 0))\n"
@@ -156,7 +181,15 @@ const char* const kEdgeHLSL =
     "    visMask = saturate(Ring(vis, uv, o).a * 0.75);\n"
     "  }\n"
     "  float om = tex2D(occ, uv).a * par.z;\n"
-    "  float alpha = band * visMask * par.x * (1.0 - om);\n"
+    "  // The foot fade: the mean weight of the unit's silhouette within reach of this pixel (see kFootWeightHLSL).\n"
+    "  // A pixel with no silhouette near it is out in the faint tail, where the weight hardly matters, so it\n"
+    "  // is left at 1.\n"
+    "  float foot = 1.0;\n"
+    "  if (mode.x > 0.5) {\n"
+    "    float4 f = tex2D(fm, uv) + Ring(fm, uv, o) + Ring(fm, uv, o * 2.7);\n"
+    "    foot = f.a > 0.05 ? saturate(f.r / f.a) : 1.0;\n"
+    "  }\n"
+    "  float alpha = band * visMask * par.x * (1.0 - om) * foot;\n"
     "  clip(alpha - par.y);\n"
     "  // The colour is the mean over a ring, which reaches onto the body, so it stays well defined out in the feather.\n"
     "  float4 a = Ring(m, uv, o);\n"
@@ -227,6 +260,7 @@ const char* const kCoverageHLSL =
 CVar* s_cvarUnitOutline;
 CGxShader* s_colorPS;
 CGxShader* s_coveragePS;
+CGxShader* s_footWeightPS;
 CGxShader* s_cutoutPS;
 CGxShader* s_edgePS;
 CGxShader* s_blurPS;
@@ -238,12 +272,14 @@ CGxShader* s_blurPS;
 FFX::Tex s_maskTex;
 FFX::Tex s_playerMaskTex;
 FFX::Tex s_visMaskTex;
+FFX::Tex s_fadeMaskTex;
 FFX::Tex s_blurTex;
 FFX::Tex s_coverageTex;
 CGxTex* s_coverage;
 CGxTex* s_mask;
 CGxTex* s_playerMask;
 CGxTex* s_visMask;
+CGxTex* s_fadeMask;
 CGxTex* s_blur;
 
 // The frame's depth, held so the stamps can test against the scene. Null on a device that cannot provide
@@ -266,6 +302,7 @@ CGxTex* s_savedDepth;
 bool s_maskCleared;
 bool s_playerMaskCleared;
 bool s_visMaskCleared;
+bool s_fadeMaskCleared;
 
 struct OutlineTarget {
     CM2Model* m_model;
@@ -274,6 +311,12 @@ struct OutlineTarget {
     // stays at full weight instead of settling into the weaker line a hovered or targeted unit does.
     bool m_keepFull;
     uint32_t m_birth;
+    // The model whose feet the fade is measured from, or null for no fade. A mount's rider and a unit's gear are
+    // separate models whose own origins are not the ground, so they share the body's (or the mount's).
+    CM2Model* m_footRef;
+    // 0 = not worked out this frame, 1 = m_fade holds the stamp's constants, 2 = tried and unavailable.
+    int32_t m_fadeState;
+    float m_fade[4];
 };
 
 OutlineTarget s_targets[kMaxTargets];
@@ -470,6 +513,73 @@ void BuildCoverage() {
     FFX::SetupReset();
 }
 
+// Works out the foot fade's stamp constants for a target, once per frame: the mask rows of two points straight above
+// the reference model's origin, where the fade starts and where it is complete. The model's matrix maps its local
+// space into the same view space the scene is drawn in, so the device's projection takes the point from there to
+// the mask (the stamp runs with a 0..1 viewport, so NDC spans the whole mask). Returns false -- no fade -- if
+// anything is off: no reference model, a point at or behind the eye, or a span too small to mean anything.
+bool ComputeFootFade(OutlineTarget& target, float out[4]) {
+    if (target.m_fadeState == 0) {
+        target.m_fadeState = 2;
+        CM2Model* ref = target.m_footRef;
+
+        if (ref && ref->m_shared && s_maskTex.m_size.y > 0) {
+            // The feet are the model's origin and the height is the collision box's, not the header bounds': those
+            // take in every animation and attachment, and run well past the unit (a human male's is -1.2 to 4.4
+            // yards), which put the fade's start underground and its end at the wrong height. The header box is
+            // the fallback for a model without a usable collision box.
+            CAaBox box = ref->GetBoundingBox();
+            const CAaBox& collision = ref->m_shared->m_data->m_collisionBounds.m_extent;
+
+            if (collision.t.z - collision.b.z > 0.1f) {
+                box = collision;
+            }
+
+            box.b.z = 0.0f;
+            const float height = box.t.z - box.b.z;
+            C44Matrix projection;
+            GxXformProjection(projection);
+            float rows[2];
+            bool ok = height > 0.01f;
+
+            for (int32_t i = 0; i < 2 && ok; i++) {
+                const float z = box.b.z + height * (i ? kFootFadeEnd : kFootFadeStart);
+                const C3Vector view = C3Vector(0.0f, 0.0f, z) * ref->m_matrixF4;
+                C4Vector point;
+                point.x = view.x;
+                point.y = view.y;
+                point.z = view.z;
+                point.w = 1.0f;
+                const C4Vector clip = point * projection;
+
+                if (!(clip.w > 0.01f)) {
+                    ok = false;
+                    break;
+                }
+
+                rows[i] = (1.0f - clip.y / clip.w) * 0.5f * static_cast<float>(s_maskTex.m_size.y);
+            }
+
+            const float span = ok ? rows[1] - rows[0] : 0.0f;
+
+            if (ok && span * span > 4.0f) {
+                target.m_fade[0] = rows[0];
+                target.m_fade[1] = span;
+                target.m_fade[2] = 1.0f / (span * span);
+                target.m_fade[3] = 1.0f;
+                target.m_fadeState = 1;
+            }
+        }
+    }
+
+    if (target.m_fadeState != 1) {
+        return false;
+    }
+
+    memcpy(out, target.m_fade, sizeof(target.m_fade));
+    return true;
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------------------------
@@ -509,6 +619,7 @@ bool CUnitOutline::Enabled() {
 // the call still has to happen for the ones that are not null.
 void CUnitOutline::OnDeviceRestored() {
     if (s_coveragePS) { g_theGxDevicePtr->ShaderDestroy(s_coveragePS); }
+    if (s_footWeightPS) { g_theGxDevicePtr->ShaderDestroy(s_footWeightPS); }
     if (s_colorPS)  { g_theGxDevicePtr->ShaderDestroy(s_colorPS); }
     if (s_cutoutPS) { g_theGxDevicePtr->ShaderDestroy(s_cutoutPS); }
     if (s_edgePS)   { g_theGxDevicePtr->ShaderDestroy(s_edgePS); }
@@ -517,6 +628,7 @@ void CUnitOutline::OnDeviceRestored() {
     RefreshGxTexture(s_maskTex, s_mask);
     RefreshGxTexture(s_playerMaskTex, s_playerMask);
     RefreshGxTexture(s_visMaskTex, s_visMask);
+    RefreshGxTexture(s_fadeMaskTex, s_fadeMask);
     RefreshGxTexture(s_blurTex, s_blur);
     RefreshGxTexture(s_coverageTex, s_coverage);
 
@@ -581,13 +693,13 @@ void CUnitOutline::AddOccluder(CM2Model* model) {
 // weapon glow -- shares the unit's chain, and walking it put every one of those in the silhouette along
 // with the body. A mounted unit is two models rather than a chain, so the game records both from the
 // gather side.
-void CUnitOutline::AddTarget(CM2Model* model, const float rgb[3], bool keepFull) {
+void CUnitOutline::AddTarget(CM2Model* model, const float rgb[3], bool keepFull, CM2Model* footRef) {
     if (!model || s_count >= kMaxTargets) {
         return;
     }
 
     const float color[4] = { rgb[0], rgb[1], rgb[2], 1.0f };
-    AddEntry(model, color, keepFull);
+    AddEntry(model, color, keepFull, footRef);
 }
 
 // Not in the original binary.
@@ -597,10 +709,10 @@ void CUnitOutline::AddDoodad(CM2Model* model, const float rgb[3]) {
     }
 
     const float color[4] = { rgb[0], rgb[1], rgb[2], 1.0f };
-    AddEntry(model, color, false);
+    AddEntry(model, color, false, nullptr);
 }
 
-void CUnitOutline::AddEntry(CM2Model* model, const float color[4], bool keepFull) {
+void CUnitOutline::AddEntry(CM2Model* model, const float color[4], bool keepFull, CM2Model* footRef) {
     if (!model || s_count >= kMaxTargets) {
         return;
     }
@@ -626,6 +738,8 @@ void CUnitOutline::AddEntry(CM2Model* model, const float color[4], bool keepFull
 
     target.m_model = model;
     target.m_keepFull = keepFull;
+    target.m_footRef = footRef;
+    target.m_fadeState = 0;
     target.m_birth = OsGetAsyncTimeMs();
     memcpy(target.m_color, color, sizeof(target.m_color));
 
@@ -725,13 +839,14 @@ bool CUnitOutline::EnsureResources() {
 
     if (!s_colorPS) {
         s_coveragePS = CompilePixelShader(kCoverageHLSL);
+        s_footWeightPS = CompilePixelShader(kFootWeightHLSL);
         s_colorPS = CompilePixelShader(kColorHLSL);
         s_cutoutPS = CompilePixelShader(kCutoutColorHLSL);
         s_edgePS = CompilePixelShader(kEdgeHLSL);
         s_blurPS = CompilePixelShader(kBlurHLSL);
     }
 
-    if (!s_colorPS || !s_cutoutPS || !s_edgePS || !s_blurPS || !s_coveragePS) {
+    if (!s_colorPS || !s_cutoutPS || !s_edgePS || !s_blurPS || !s_coveragePS || !s_footWeightPS) {
         return false;
     }
 
@@ -747,7 +862,7 @@ bool CUnitOutline::EnsureResources() {
     // surface is exactly this size and has to pair with them. A no-op unless the size actually changed.
     const C2iVector coverageSize = { std::max((size.x + 31) / 32, 8), std::max((size.y + 31) / 32, 8) };
 
-    if (!CreateFrameTex(s_maskTex, size, false) || !CreateFrameTex(s_playerMaskTex, size, false) || !CreateFrameTex(s_visMaskTex, size, false) || !CreateFrameTex(s_blurTex, size, false) || !CreateFrameTex(s_coverageTex, coverageSize, false)) {
+    if (!CreateFrameTex(s_maskTex, size, false) || !CreateFrameTex(s_playerMaskTex, size, false) || !CreateFrameTex(s_visMaskTex, size, false) || !CreateFrameTex(s_fadeMaskTex, size, false) || !CreateFrameTex(s_blurTex, size, false) || !CreateFrameTex(s_coverageTex, coverageSize, false)) {
         return false;
     }
 
@@ -755,9 +870,10 @@ bool CUnitOutline::EnsureResources() {
     RefreshGxTexture(s_maskTex, s_mask);
     RefreshGxTexture(s_playerMaskTex, s_playerMask);
     RefreshGxTexture(s_visMaskTex, s_visMask);
+    RefreshGxTexture(s_fadeMaskTex, s_fadeMask);
     RefreshGxTexture(s_blurTex, s_blur);
 
-    return s_mask && s_playerMask && s_visMask && s_blur && s_coverage;
+    return s_mask && s_playerMask && s_visMask && s_fadeMask && s_blur && s_coverage;
 }
 
 // Not in the original binary. Whether the scene's depth can be shared with the masks at all.
@@ -984,7 +1100,7 @@ bool CUnitOutline::HasFrameDepth() {
 // is fixed for the span of a draw, so the batch is re-drawn with the module's shader rather than tinted in
 // place; the model's vertex data and its index range are untouched and the caller draws the batch for real
 // immediately afterwards, which is why the vertex stream and the pixel constants are left alone.
-void CUnitOutline::StampMask(const CGxBatch& batch, const float color[4], CGxTex* target, bool& cleared, bool depthTest) {
+void CUnitOutline::StampMask(const CGxBatch& batch, const float color[4], CGxTex* target, bool& cleared, bool depthTest, const float* fade) {
     if (!target) {
         return;
     }
@@ -1063,10 +1179,12 @@ void CUnitOutline::StampMask(const CGxBatch& batch, const float color[4], CGxTex
     // carries them in the same way. The texture at stage 0 is likewise left alone: the cutout shader
     // samples the model's own diffuse from it, and the plain fill ignores it.
     GxRsSet(GxRs_ColorWrite, 15);
-    GxRsSet(GxRs_PixelShader, cutout ? s_cutoutPS : s_colorPS);
+    GxRsSet(GxRs_PixelShader, fade ? s_footWeightPS : (cutout ? s_cutoutPS : s_colorPS));
     GxShaderConstantsSet(GxSh_Pixel, 0, color, 1);
 
-    if (cutout) {
+    if (fade) {
+        GxShaderConstantsSet(GxSh_Pixel, 1, fade, 1);
+    } else if (cutout) {
         float cutoff[4] = { static_cast<float>(alphaRef) * (1.0f / 255.0f), 0.0f, 0.0f, 0.0f };
         GxShaderConstantsSet(GxSh_Pixel, 1, cutoff, 1);
     }
@@ -1102,19 +1220,27 @@ void CUnitOutline::StampSilhouette(const CGxBatch& batch, int32_t index) {
     }
 
     // The whole silhouette, untested, so the edge shape never inherits a wall's rim.
-    StampMask(batch, color, s_mask, s_maskCleared, false);
+    StampMask(batch, color, s_mask, s_maskCleared, false, nullptr);
+
+    // And the foot fade's weight over the same silhouette, when this unit has feet to fade from.
+    float fade[4];
+
+    if (ComputeFootFade(s_targets[index], fade)) {
+        const float white[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+        StampMask(batch, white, s_fadeMask, s_fadeMaskCleared, false, fade);
+    }
 
     // And the same batches again, tested, into the visibility mask. Skipped when there is no shared depth:
     // the two copies would be identical and the edge pass is told to ignore the visibility mask.
     if (s_depthBound) {
         const float white[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-        StampMask(batch, white, s_visMask, s_visMaskCleared, true);
+        StampMask(batch, white, s_visMask, s_visMaskCleared, true, nullptr);
     }
 }
 
 void CUnitOutline::StampOccluder(const CGxBatch& batch) {
     const float white[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-    StampMask(batch, white, s_playerMask, s_playerMaskCleared, false);
+    StampMask(batch, white, s_playerMask, s_playerMaskCleared, false, nullptr);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1171,6 +1297,7 @@ void CUnitOutline::BlurPass() {
 void CUnitOutline::EdgePass() {
     float c0[4] = { s_maskTex.m_texelSize.x, s_maskTex.m_texelSize.y, 0.0f, 0.0f };
     float c1[4] = { kOpacity, kThreshold, s_playerMaskCleared ? 1.0f : 0.0f, s_visMaskCleared ? 1.0f : 0.0f };
+    float c2[4] = { s_fadeMaskCleared ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f };
 
     GxRsSet(GxRs_PixelShader, s_edgePS);
     // GxBlend_Alpha is SRCALPHA / INVSRCALPHA: result = col * alpha + background * (1 - alpha).
@@ -1190,10 +1317,13 @@ void CUnitOutline::EdgePass() {
     // full silhouette is bound, whose answer is never read.
     GxRsSet(GxRs_Texture2, s_visMaskCleared ? s_visMask : s_mask);
     GxRsSet(GxRs_Texture3, s_coverage);
+    // Always a real texture, for the same reason as stage 2: the weight is only read when c2.x says it was stamped.
+    GxRsSet(GxRs_Texture4, s_fadeMaskCleared ? s_fadeMask : s_mask);
     SetTileConstants();
 
     GxShaderConstantsSet(GxSh_Pixel, 0, c0, 1);
     GxShaderConstantsSet(GxSh_Pixel, 1, c1, 1);
+    GxShaderConstantsSet(GxSh_Pixel, 2, c2, 1);
 
     DrawFullscreenQuad(s_maskTex);
 }
@@ -1302,6 +1432,7 @@ void CUnitOutline::Composite() {
     GxRsSet(GxRs_Texture1, nullptr);
     GxRsSet(GxRs_Texture2, nullptr);
     GxRsSet(GxRs_Texture3, nullptr);
+    GxRsSet(GxRs_Texture4, nullptr);
 
     FFX::SetupReset();
 
@@ -1316,4 +1447,5 @@ void CUnitOutline::Composite() {
     s_maskCleared = false;
     s_playerMaskCleared = false;
     s_visMaskCleared = false;
+    s_fadeMaskCleared = false;
 }

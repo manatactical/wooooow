@@ -105,10 +105,10 @@ bool IsGearModel(CM2Model* model) {
     return path && SStrStrI(path, "ObjectComponents") != nullptr;
 }
 
-void AddGearModels(CM2Model* body, const float rgb[3], bool keepFull) {
+void AddGearModels(CM2Model* body, const float rgb[3], bool keepFull, CM2Model* footRef) {
     for (CM2Model* child = body ? body->m_attachList : nullptr; child; child = child->m_attachNext) {
         if (IsGearModel(child)) {
-            CUnitOutline::AddTarget(child, rgb, keepFull);
+            CUnitOutline::AddTarget(child, rgb, keepFull, footRef);
         }
     }
 }
@@ -122,13 +122,17 @@ void AddUnitModels(CGUnit_C* unit, const float rgb[3], bool keepFull) {
         return;
     }
 
+    // The ground is under the mount when there is one, and under the body otherwise; the rider and the gear
+    // fade from the same feet rather than from their own origins.
+    CM2Model* footRef = unit->m_mountModel ? unit->m_mountModel : unit->m_worldModel;
+
     if (unit->m_mountModel) {
-        CUnitOutline::AddTarget(unit->m_mountModel, rgb, keepFull);
+        CUnitOutline::AddTarget(unit->m_mountModel, rgb, keepFull, footRef);
     }
 
     if (unit->m_worldModel) {
-        CUnitOutline::AddTarget(unit->m_worldModel, rgb, keepFull);
-        AddGearModels(unit->m_worldModel, rgb, keepFull);
+        CUnitOutline::AddTarget(unit->m_worldModel, rgb, keepFull, footRef);
+        AddGearModels(unit->m_worldModel, rgb, keepFull, footRef);
     }
 }
 

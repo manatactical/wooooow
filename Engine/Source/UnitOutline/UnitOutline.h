@@ -56,7 +56,9 @@ class CUnitOutline {
     // an effect hung off a unit must not be outlined with it. A mounted unit is two models, and its gear is
     // more, recorded separately by the caller (which filters out the effects). Occlusion is not decided
     // here: the stamp depth tests against the scene, so a wall clips the line where it covers the unit.
-    static void AddTarget(CM2Model* model, const float rgb[3], bool keepFull);
+    // footRef is the model the foot fade is measured from (the unit's body, or its mount): the outline thins out
+    // to nothing at its feet so it does not paint the ground. Null for no fade.
+    static void AddTarget(CM2Model* model, const float rgb[3], bool keepFull, CM2Model* footRef = nullptr);
 
     // Not in the original binary. A world object the cursor is over: no reaction colour and no mount
     // chain, so it is recorded on its own.
@@ -121,12 +123,12 @@ class CUnitOutline {
     // failed-bind recovery so both take the same path.
     static void RestoreSavedDepth();
 
-    static void AddEntry(CM2Model* model, const float color[4], bool keepFull);
+    static void AddEntry(CM2Model* model, const float color[4], bool keepFull, CM2Model* footRef);
     static int32_t FindTarget(CM2Model* model);
 
     static void StampSilhouette(const CGxBatch& batch, int32_t index);
     static void StampOccluder(const CGxBatch& batch);
-    static void StampMask(const CGxBatch& batch, const float color[4], CGxTex* target, bool& cleared, bool depthTest);
+    static void StampMask(const CGxBatch& batch, const float color[4], CGxTex* target, bool& cleared, bool depthTest, const float* fade);
 
     static void BlurPass();
     static void EdgePass();

@@ -92,8 +92,28 @@ float3 ViewPos(float2 uv, float z)
 }
 )HLSL";
 
+// Writes a stamped batch into the exclusion mask. The cutoff is the batch's own alpha reference, so the mask
+// follows the real blade shape rather than the whole quad. c0.x = cutoff.
+const char* const kExcludeHLSL = R"HLSL(
+sampler2D s0 : register(s0);
+float4 c0 : register(c0);
+
+float4 main(float2 uv : TEXCOORD0) : COLOR0
+{
+    clip(tex2D(s0, uv).a - c0.x);
+    return float4(1, 1, 1, 1);
+}
+)HLSL";
+
 const char* const kAoHLSL = R"HLSL(
 sampler2D sDepth : register(s0);
+sampler2D sExclude : register(s1);
+
+// c5.y is 1 when a mask was stamped this frame. Without it the mask holds an old frame, so it is ignored.
+float Excluded(float2 uv)
+{
+    return c5.y > 0.5 ? tex2D(sExclude, uv).r : 0;
+}
 
 float3 PosAt(float2 uv)
 {
@@ -106,6 +126,9 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
 
     // Sky, and anything past the far plane, has no geometry to occlude against.
     if (depth >= c2.z) { return float4(1, 1, 1, 1); }
+
+    // Marked as not to be occluded (the grass): left exactly as the world drew it.
+    if (Excluded(uv) > 0.5) { return float4(1, 1, 1, 1); }
 
     float z = ViewZ(depth);
     float3 p = ViewPos(uv, z);
@@ -154,7 +177,8 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
         // nearer than the kernel reaches, which is what removes the halo a silhouette would cast on the wall behind.
         float diff = tap.z - sceneZ;
         float range = smoothstep(0, 1, c3.x / max(abs(z - sceneZ), 1e-4));
-        occlusion += (inside && diff > c3.z) ? range : 0;
+        // A tap that lands on an excluded surface does not occlude: blades are not geometry that shades anything.
+        occlusion += (inside && diff > c3.z && Excluded(tapUv) < 0.5) ? range : 0;
     }
 
     float ao = 1 - c3.y * saturate(occlusion / 12.0);
@@ -357,6 +381,10 @@ CVar* CAmbientOcclusion::s_cvarStrength;
 CGxShader* CAmbientOcclusion::s_aoPS;
 CGxShader* CAmbientOcclusion::s_blurPS;
 CGxShader* CAmbientOcclusion::s_compositePS;
+CGxShader* CAmbientOcclusion::s_excludePS;
+FFX::Tex CAmbientOcclusion::s_excludeTex;
+CGxTex* CAmbientOcclusion::s_exclude;
+bool CAmbientOcclusion::s_excludeStamped;
 FFX::Tex CAmbientOcclusion::s_aoTex;
 FFX::Tex CAmbientOcclusion::s_aoBlurTex;
 CGxTex* CAmbientOcclusion::s_ao;
@@ -402,7 +430,10 @@ void CAmbientOcclusion::OnDeviceRestored() {
     if (s_aoPS) { g_theGxDevicePtr->ShaderDestroy(s_aoPS); }
     if (s_blurPS) { g_theGxDevicePtr->ShaderDestroy(s_blurPS); }
     if (s_compositePS) { g_theGxDevicePtr->ShaderDestroy(s_compositePS); }
+    if (s_excludePS) { g_theGxDevicePtr->ShaderDestroy(s_excludePS); }
 
+    RefreshGxTexture(s_excludeTex, s_exclude);
+    s_excludeStamped = false;
     RefreshGxTexture(s_aoTex, s_ao);
     RefreshGxTexture(s_aoBlurTex, s_aoBlur);
 }
@@ -425,12 +456,76 @@ bool CAmbientOcclusion::EnsureResources() {
     if (!s_aoPS) { s_aoPS = CompilePixelShader(kCommonHLSL, kAoHLSL); }
     if (!s_blurPS) { s_blurPS = CompilePixelShader(kCommonHLSL, kBlurHLSL); }
     if (!s_compositePS) { s_compositePS = CompilePixelShader("", kCompositeHLSL); }
+    if (!s_excludePS) { s_excludePS = CompilePixelShader("", kExcludeHLSL); }
 
-    return s_aoPS && s_blurPS && s_compositePS;
+    return s_aoPS && s_blurPS && s_compositePS && s_excludePS;
+}
+
+// Not in the original binary. See the declaration; modelled on CUnitOutline::StampMask.
+void CAmbientOcclusion::StampExcluded(const CGxBatch& batch) {
+    if (!Active() || !EnsureResources()) {
+        return;
+    }
+
+    // The mask is in the default back buffer's pixel space, like the depth it is tested against.
+    CGxTex* oldTarget = nullptr;
+    g_theGxDevicePtr->DeviceGetRenderTarget(GxBuffers_Color, oldTarget);
+
+    if (oldTarget) {
+        return;
+    }
+
+    const CRect& window = g_theGxDevicePtr->DeviceCurWindow();
+    C2iVector size = { static_cast<int32_t>(window.maxX), static_cast<int32_t>(window.maxY) };
+
+    if (!CreateFrameTex(s_excludeTex, size)) {
+        return;
+    }
+
+    RefreshGxTexture(s_excludeTex, s_exclude);
+
+    if (!s_exclude) {
+        return;
+    }
+
+    const int32_t alphaRef = g_theGxDevicePtr->m_appRenderStates[GxRs_AlphaRef].m_value.m_data.i[0];
+    const float cutoff[4] = { static_cast<float>(alphaRef) * (1.0f / 255.0f), 0.0f, 0.0f, 0.0f };
+
+    // Render targets live outside RsPush/RsPop, so the caller's target is put back by hand below. The world's
+    // viewport is left alone: the mask is drawn through the same projection and viewport as the frame, so its
+    // pixels land where the frame's do.
+    g_theGxDevicePtr->RsPush();
+
+    GxRenderTargetSet(GxBuffers_Color, s_exclude, 0);
+
+    if (!s_excludeStamped) {
+        g_theGxDevicePtr->SceneClear(GxBufferBit_Color, CImVector(0, 0, 0, 0));
+        s_excludeStamped = true;
+    }
+
+    // One flat value per pixel, so no blending. The depth test stays as the caller has it, and nothing is written
+    // to the depth: the caller's real draw follows and is what puts the blades in it.
+    GxRsSet(GxRs_BlendingMode, GxBlend_Opaque);
+    GxRsSet(GxRs_Lighting, 0);
+    GxRsSet(GxRs_Fog, 0);
+    GxRsSet(GxRs_DepthWrite, 0);
+    GxRsSet(GxRs_ColorWrite, 15);
+    GxRsSet(GxRs_PixelShader, s_excludePS);
+    GxShaderConstantsSet(GxSh_Pixel, 0, cutoff, 1);
+
+    g_theGxDevicePtr->Draw(const_cast<CGxBatch*>(&batch), 1);
+
+    g_theGxDevicePtr->RsPop();
+    GxRenderTargetSet(GxBuffers_Color, oldTarget, 0);
 }
 
 // Not in the original binary. The world -> interface boundary; see the header for the order and why.
 void CAmbientOcclusion::Apply() {
+    // Whether the mask was written this frame is consumed here, whatever the pass then decides: a stale mask from
+    // a frame that stood down must not be read by the next one.
+    const bool excludeStamped = s_excludeStamped;
+    s_excludeStamped = false;
+
     if (!EnsureResources()) {
         return;
     }
@@ -501,7 +596,7 @@ void CAmbientOcclusion::Apply() {
         mapping.atInfinity, mapping.perInverseViewDepth, mapping.deepest, kMaxViewDepth,
         kRadius * spread, strength, kBias * spread, maxX - minX,
         kFadeStart, kFadeEnd, maxY - minY, kBlurRadius,
-        kBlurDepthSigma, 0.0f, 0.0f, 0.0f,
+        kBlurDepthSigma, excludeStamped && s_exclude ? 1.0f : 0.0f, 0.0f, 0.0f,
     };
 
     // The engine's own full-screen setup: pixel-space ortho projection, identity view and world, the AO target as
@@ -521,6 +616,8 @@ void CAmbientOcclusion::Apply() {
     // Occupancy.
     GxRsSet(GxRs_PixelShader, s_aoPS);
     GxRsSet(GxRs_Texture0, depth);
+    // Stage 1 is always a real texture, even when nothing was stamped: the shader's flag says whether to read it.
+    GxRsSet(GxRs_Texture1, excludeStamped && s_exclude ? s_exclude : depth);
     DrawFullscreenQuad(s_aoTex);
 
     // Blur.

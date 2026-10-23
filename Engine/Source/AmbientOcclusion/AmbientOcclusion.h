@@ -7,6 +7,7 @@
 #include "Engine/Source/FFX/FFX.h"
 #include "Engine/Source/Tempest/C2iVector.h"
 
+class CGxBatch;
 class CGxShader;
 class CGxTex;
 struct CVar;
@@ -51,6 +52,12 @@ class CAmbientOcclusion {
     // while it draws, and keeps itself out of the depth.
     static bool Active();
 
+    // Not in the original binary. Records one batch of geometry as "not to be occluded": it is re-drawn flat into
+    // a frame-sized mask, depth-tested against the shared scene depth, and the occupancy pass then leaves those
+    // pixels alone and does not let them occlude their neighbours. Called right before the caller's own draw of
+    // the batch, with its vertex stream, shader and texture already set. A no-op while the pass is not running.
+    static void StampExcluded(const CGxBatch& batch);
+
     private:
     static bool EnsureResources();
     static void OnDeviceRestored();
@@ -61,6 +68,10 @@ class CAmbientOcclusion {
     static CGxShader* s_aoPS;
     static CGxShader* s_blurPS;
     static CGxShader* s_compositePS;
+    static CGxShader* s_excludePS;
+    static FFX::Tex s_excludeTex;
+    static CGxTex* s_exclude;
+    static bool s_excludeStamped;
     static FFX::Tex s_aoTex;
     static FFX::Tex s_aoBlurTex;
     static CGxTex* s_ao;

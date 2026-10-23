@@ -695,10 +695,7 @@ int32_t CDetailDoodad::InitializeRenderState() {
     GxRsSet(GxRs_Culling, 0);
     GxRsSet(GxRs_BlendingMode, 2);
     GxRsSet(GxRs_AlphaRef, CWorld::detailDoodadAlphaRef);
-    // Not in the original binary. While the ambient occlusion pass is reading the frame's depth, the grass stays
-    // out of it: a field of blades would otherwise shade itself and the ground under it into noise. The blades
-    // still depth-test against the world, so they are hidden by what is in front of them as before.
-    GxRsSet(GxRs_DepthWrite, CAmbientOcclusion::Active() ? 0 : 1);
+    GxRsSet(GxRs_DepthWrite, 1);
 
     if (CDetailDoodad::s_bUseShaders) {
         uint32_t shadow = CShadowCache::GetShadowValue();
@@ -887,6 +884,13 @@ void CDetailDoodadInstBatch::Draw() {
         drawBatch.m_count = count;
         drawBatch.m_minIndex = 0;
         drawBatch.m_maxIndex = this->m_vertexCount - 1;
+
+        // Not in the original binary. Marks these blades for the ambient occlusion pass, which leaves grass
+        // alone. Done before the real draw, for the same reason the unit outline's stamps are: the depth test then
+        // sees the scene as the blades themselves do. The blades still write depth exactly as they always did,
+        // so they sort and blend as before.
+        CAmbientOcclusion::StampExcluded(drawBatch);
+
         g_theGxDevicePtr->Draw(&drawBatch, 1);
     }
 }

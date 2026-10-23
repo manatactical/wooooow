@@ -54,6 +54,7 @@ CVar* CWorldParam::cvar_fxaaQuality;
 CVar* CWorldParam::cvar_ssao;
 CVar* CWorldParam::cvar_ssaoSpread;
 CVar* CWorldParam::cvar_ssaoStrength;
+CVar* CWorldParam::cvar_ssaoDistance;
 
 // STATIC: 0x00CD857C
 CVar* CWorldParam::cvar_texLodBias;
@@ -872,6 +873,7 @@ void CWorldParam::Initialize() {
     // look) and how dark it goes. Registered here so the Advanced panel can read their defaults at the login screen.
     CWorldParam::cvar_ssaoSpread = CVar::Register("ssaoSpread", "ambient occlusion spread, as a multiple of the default reach", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     CWorldParam::cvar_ssaoStrength = CVar::Register("ssaoStrength", "ambient occlusion strength: 0 none, 1 full", 1, "0.85", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    CWorldParam::cvar_ssaoDistance = CVar::Register("ssaoDistance", "ambient occlusion fades out and stops at this distance, in yards", 1, "60", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
     // Not in the original binary. The grass and wind cvars the Physics tab reads. Registered here for the
     // same reason as unitOutline and antiAlias: the panel asks for their defaults while the login screen is

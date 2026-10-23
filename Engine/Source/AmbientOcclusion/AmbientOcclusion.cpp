@@ -33,7 +33,7 @@ namespace {
 
 // Tuned for the client's world scale, which is yards: a player is about 2 yards tall, a door about 3. This is the
 // reach at the default ssaoSpread; the kernel then adapts it per pixel (see kMinReachPixels).
-constexpr float kRadius = 1.0f;
+constexpr float kRadius = 0.65f;
 
 // How dark a fully occluded pixel goes: the occlusion fraction is scaled by this before it is taken from 1. The
 // default of the ssaoStrength cvar; ssaoSpread scales kRadius.
@@ -42,9 +42,11 @@ constexpr float kStrength = 0.85f;
 // Depth offset, in yards, that stops a surface from occluding itself. Scaled with the per-pixel reach.
 constexpr float kBias = 0.03f;
 
-// Fade the term out with distance so the far clip does not get a uniform grey wash.
-constexpr float kFadeStart = 90.0f;
-constexpr float kFadeEnd = 260.0f;
+// The term is faded out with distance and stops entirely at the ssaoDistance cvar (default kDistance, in yards):
+// far geometry is a few pixels per object, where AO is noise rather than shading, and skipping it saves the work
+// too. The fade begins at kFadeStartFraction of that distance.
+constexpr float kDistance = 60.0f;
+constexpr float kFadeStartFraction = 0.4f;
 
 // The automatic spread. The kernel's reach is chosen per pixel so that, on screen, it always covers between these
 // two sizes:
@@ -63,11 +65,30 @@ constexpr int32_t kResolutionDivisor = 2;
 
 // A tight corner only has about half of its hemisphere covered, so the raw occlusion fraction barely reaches 0.5 and
 // the term would never get dark. This scales it back up before the strength is applied.
-constexpr float kOcclusionGain = 2.2f;
+constexpr float kOcclusionGain = 2.1f;
+
+// The shape of the ramp. The occlusion fraction goes through a power before the strength is applied: above 1 the
+// curve is convex, so a surface that is only lightly shadowed stays nearly clean and the darkening climbs faster
+// the closer the occluder is, which is how contact shadows read. Each tap also counts for more the closer it is to
+// the surface (see kNearTapWeight), and a tap's own on/off test is a short ramp rather than a step -- the step is
+// what made the term noisy, because a tap flips from 0 to 1 on a pixel's worth of depth.
+constexpr float kCurvePower = 1.5f;
+
+// Two scales. A single kernel size cannot suit everything: sized for a crate it misses the wide creases of a building
+// (under an eave, where a wall meets the ground), and sized for a building it smothers small props. So the last
+// kCoarseTaps of the kernel reach kCoarseScale times as far, at kCoarseWeight of the weight of a fine tap. Small
+// objects are dominated by the fine taps and stay tight; a large structure picks up a broad, gentle gradient
+// from the coarse ones.
+constexpr int32_t kCoarseTaps = 5;
+constexpr float kCoarseScale = 3.5f;
+constexpr float kCoarseWeight = 1.9f;
+constexpr float kSoftness = 0.35f;
+constexpr float kNearTapWeight = 0.7f;
+constexpr float kFarTapWeight = 0.3f;
 
 // Blur tap spacing in AO texels, and how far apart two depths may be, as a fraction of the centre's own distance,
 // before the tap stops contributing. Also the upsample's depth tolerance.
-constexpr float kBlurRadius = 1.5f;
+constexpr float kBlurRadius = 1.0f;
 constexpr float kBlurDepthSigma = 0.04f;
 
 // The world's depth mapping; see MapWorldDepth. These are the water pass's constants, for the same projection.
@@ -78,7 +99,7 @@ constexpr float kSkyMinDepth = 0.99903f;
 // What a pixel with no geometry decodes to. Far past the fade, so it can never occlude or be occluded.
 constexpr float kMaxViewDepth = 2000.0f;
 
-constexpr int32_t kConstantRows = 7;
+constexpr int32_t kConstantRows = 9;
 
 // Registers shared by the occupancy, blur and composite shaders. These replace the engine's pixel shader
 // outright, so the whole constant range is free.
@@ -90,6 +111,8 @@ constexpr int32_t kConstantRows = 7;
 // c4 = { fade start, fade end, viewport height, blur radius in AO texels }
 // c5 = { depth sigma, exclusion mask stamped, 1/AO width, 1/AO height }
 // c6 = { min reach px, max reach px, max reach growth, occlusion gain }
+// c7 = { curve power, tap softness, near tap weight, far tap weight }
+// c8 = { coarse reach scale, coarse tap weight, first coarse tap, unused }
 const char* const kCommonHLSL = R"HLSL(
 float4 c0 : register(c0);
 float4 c1 : register(c1);
@@ -98,6 +121,8 @@ float4 c3 : register(c3);
 float4 c4 : register(c4);
 float4 c5 : register(c5);
 float4 c6 : register(c6);
+float4 c7 : register(c7);
+float4 c8 : register(c8);
 
 // Stored depth back to yards in front of the eye. The denominator is negative for real geometry (the client's
 // projection stores depth = m22 + m32 / z with m32 < 0), which is why there is no clamp on it.
@@ -189,6 +214,10 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
     if (Excluded(uvC) > 0.5) { return float4(1, 1, 1, 1); }
 
     float z = ViewZ(depth);
+
+    // Past the fade distance the term is exactly 1, so there is nothing to compute.
+    if (z >= c4.y) { return float4(1, 1, 1, 1); }
+
     float3 p = ViewPos(uvC, z);
 
     // Normal from the nearer side on each axis, so a silhouette does not tilt the normal of the pixel beside it.
@@ -215,20 +244,31 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
     reach = min(reach, c3.x * c6.z);
     float bias = c3.z * reach / c3.x;
 
-    // Interleaved gradient noise rotates the kernel per pixel; without it, the taps read as rings.
-    float spin = frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715)))) * 6.2831853;
+    // Each AO texel rotates the kernel by an angle taken from a 3x3 tile of nine evenly spaced angles; without a
+    // rotation the taps read as rings. The blur is a 3x3 box over the same texels, so every blur window holds each of
+    // the nine rotations exactly once. That is what stops it flickering: a random or hashed rotation leaves residual
+    // grain that changes as the scene slides under the fixed screen pattern, while a complete tile averages out the
+    // same way wherever the window sits.
+    float2 texel = floor(uv / c5.zw);
+    float2 tile = texel - 3 * floor(texel / 3);
+    float slot = tile.x + 3 * tile.y;
+    float spin = frac(slot * (4.0 / 9.0)) * 6.2831853;
 
     float spinSin, spinCos;
     sincos(spin, spinSin, spinCos);
 
     float occlusion = 0;
+    float weightSum = 0;
 
     [unroll] for (int i = 0; i < 10; ++i)
     {
         float4 k = kKernel[i];
         float2 disk = float2(k.x * spinCos - k.y * spinSin, k.x * spinSin + k.y * spinCos);
         float3 dir = tangent * disk.x + bitangent * disk.y + n * k.z;
-        float3 tap = p + dir * (reach * k.w);
+        // The last few taps reach further, for the wide creases of large structures.
+        bool coarse = i >= c8.z;
+        float tapReach = coarse ? reach * c8.x : reach;
+        float3 tap = p + dir * (tapReach * k.w);
 
         float2 ndc = float2(tap.x / tap.z * c1.x + c1.z, tap.y / tap.z * c1.y + c1.w);
         float2 tapUv = float2(c0.z + (ndc.x * 0.5 + 0.5) * c3.w, c0.w + (0.5 - ndc.y * 0.5) * c4.z);
@@ -242,11 +282,20 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
         // nearer than the kernel reaches, which is what removes the halo a silhouette would cast on the wall behind.
         // A tap that lands on an excluded surface does not occlude: blades are not geometry that shades anything.
         float diff = tap.z - sceneZ;
-        float range = smoothstep(0, 1, reach / max(abs(z - sceneZ), 1e-4));
-        occlusion += (inside && diff > bias && Excluded(tapUv) < 0.5) ? range : 0;
+        float range = smoothstep(0, 1, tapReach / max(abs(z - sceneZ), 1e-4));
+
+        // How far in front of the tap the neighbour is, as a ramp: the whole step from clear to occluded takes
+        // kSoftness of the tap's own distance from the surface, so a tap does not flip on a pixel's worth of depth.
+        float blocked = saturate((diff - bias) / (c7.y * tapReach * k.w));
+
+        // A tap near the surface says more about a contact than one at the rim of the kernel.
+        float tapWeight = lerp(c7.z, c7.w, k.w) * (coarse ? c8.y : 1);
+
+        occlusion += (inside && Excluded(tapUv) < 0.5) ? blocked * range * tapWeight : 0;
+        weightSum += tapWeight;
     }
 
-    float ao = 1 - c3.y * saturate(occlusion * c6.w / 10.0);
+    float ao = 1 - c3.y * pow(saturate(occlusion * c6.w / weightSum), c7.x);
     ao = lerp(ao, 1, saturate((z - c4.x) / (c4.y - c4.x)));
     return float4(ao, ao, ao, 1);
 }
@@ -256,9 +305,10 @@ const char* const kBlurHLSL = R"HLSL(
 sampler2D sAo : register(s0);
 sampler2D sDepth : register(s1);
 
+// The other eight texels of the 3x3 box around this one, exactly one texel apart (kBlurRadius 1).
 static const float2 kOffsets[8] = {
     float2( 1,  0), float2(-1,  0), float2( 0,  1), float2( 0, -1),
-    float2( 1.4,  1.4), float2(-1.4,  1.4), float2( 1.4, -1.4), float2(-1.4, -1.4)
+    float2( 1,  1), float2(-1,  1), float2( 1, -1), float2(-1, -1)
 };
 
 float4 main(float2 uv : TEXCOORD0) : COLOR0
@@ -482,6 +532,7 @@ bool s_compileFailed;
 CVar* CAmbientOcclusion::s_cvarSsao;
 CVar* CAmbientOcclusion::s_cvarSpread;
 CVar* CAmbientOcclusion::s_cvarStrength;
+CVar* CAmbientOcclusion::s_cvarDistance;
 CGxShader* CAmbientOcclusion::s_aoPS;
 CGxShader* CAmbientOcclusion::s_blurPS;
 CGxShader* CAmbientOcclusion::s_compositePS;
@@ -511,6 +562,9 @@ void CAmbientOcclusion::Init() {
                                   1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvarStrength = CVar::Register("ssaoStrength", "ambient occlusion strength: 0 none, 1 full",
                                     1, "0.85", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+
+    s_cvarDistance = CVar::Register("ssaoDistance", "ambient occlusion fades out and stops at this distance, in yards",
+                                    1, "60", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
     if (s_registered) {
         return;
@@ -728,14 +782,19 @@ void CAmbientOcclusion::Apply() {
     spread = std::min(std::max(spread, 0.1f), 4.0f);
     strength = std::min(std::max(strength, 0.0f), 1.0f);
 
+    float distance = s_cvarDistance ? s_cvarDistance->m_floatValue : kDistance;
+    distance = std::min(std::max(distance, 10.0f), 500.0f);
+
     const float constants[kConstantRows * 4] = {
         1.0f / size.x, 1.0f / size.y, minX, minY,
         m[0], m[5], m[8], m[9],
         mapping.atInfinity, mapping.perInverseViewDepth, mapping.deepest, kMaxViewDepth,
         kRadius * spread, strength, kBias * spread, maxX - minX,
-        kFadeStart, kFadeEnd, maxY - minY, kBlurRadius,
+        distance * kFadeStartFraction, distance, maxY - minY, kBlurRadius,
         kBlurDepthSigma, useExclude ? 1.0f : 0.0f, 1.0f / aoSize.x, 1.0f / aoSize.y,
         kMinReachPixels, kMaxReachPixels, kMaxReachGrowth, kOcclusionGain,
+        kCurvePower, kSoftness, kNearTapWeight, kFarTapWeight,
+        kCoarseScale, kCoarseWeight, static_cast<float>(10 - kCoarseTaps), 0.0f,
     };
 
     // The engine's own full-screen setup: pixel-space ortho projection, identity view and world, the AO target as
@@ -767,6 +826,12 @@ void CAmbientOcclusion::Apply() {
     GxRsSet(GxRs_Texture1, depth);
     DrawFullscreenQuad(s_aoBlurTex);
 
+    // Blur again, back into the first target. Two 3x3 passes are a 5x5 tent, which takes most of what grain the
+    // first leaves, for the price of one more cheap pass at a quarter of the frame's pixels.
+    GxRenderTargetSet(GxBuffers_Color, s_ao, 0);
+    GxRsSet(GxRs_Texture0, s_aoBlur);
+    DrawFullscreenQuad(s_aoTex);
+
     // Composite onto the frame: upsample, then multiply by the term -- or, for the debug view, replace the frame
     // with it. Back to the default back buffer, clipped to the 3D rectangle the world drew into. The quad is the
     // AO target's size, which the ortho projection from SetupGx stretches over the whole frame.
@@ -774,7 +839,7 @@ void CAmbientOcclusion::Apply() {
     GxXformSetViewport(minX, maxX, minY, maxY, 0.0f, 1.0f);
     GxRsSet(GxRs_PixelShader, s_compositePS);
     GxRsSet(GxRs_BlendingMode, mode > 1 ? GxBlend_Opaque : GxBlend_Mod);
-    GxRsSet(GxRs_Texture0, s_aoBlur);
+    GxRsSet(GxRs_Texture0, s_ao);
     GxRsSet(GxRs_Texture1, depth);
     GxRsSet(GxRs_Texture2, mask);
     DrawFullscreenQuad(s_aoBlurTex);

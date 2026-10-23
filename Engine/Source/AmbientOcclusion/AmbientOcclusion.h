@@ -71,6 +71,7 @@ class CAmbientOcclusion {
     static CVar* s_cvarSsao;
     static CVar* s_cvarSpread;
     static CVar* s_cvarStrength;
+    static CVar* s_cvarDistance;
     static CGxShader* s_aoPS;
     static CGxShader* s_blurPS;
     static CGxShader* s_compositePS;

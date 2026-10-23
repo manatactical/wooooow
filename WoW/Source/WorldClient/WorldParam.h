@@ -66,6 +66,7 @@ class CWorldParam {
     static CVar* cvar_ssao;
     static CVar* cvar_ssaoSpread;
     static CVar* cvar_ssaoStrength;
+    static CVar* cvar_ssaoDistance;
     static bool ShadowTextureSizeCallback(CVar* var, const char* oldValue, const char* value, void* arg);
     static bool ShadowModeCallback(CVar* var, const char* oldValue, const char* value, void* arg);
     static bool CascadedShadowsCallback(CVar* var, const char* oldValue, const char* value, void* arg);

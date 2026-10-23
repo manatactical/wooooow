@@ -10,6 +10,8 @@
 #include "WoW/Source/DB/Rec/LiquidTypeRec.h"
 #include "WoW/Source/LiquidSystem/Liquid.h"
 
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -43,6 +45,8 @@ struct Classified {
 
 std::vector<Classified> s_classified;
 
+constexpr WaterClass kSingleWaterClass = WaterClass::River;
+
 WaterClass ClassifyUncached(const Liquid::CInstance* instance) {
     if (!instance || !instance->m_settings) {
         return WaterClass::None;
@@ -70,8 +74,14 @@ WaterClass ClassifyUncached(const Liquid::CInstance* instance) {
 
     // Fast water is the client's own name for a river, and it is the only distinction the liquid data makes that
     // matters to the shading: a river is narrower, faster and reads more turquoise than a lake.
-    const WaterClass waterClass = ClassifyLiquid(type, static_cast<uint32_t>(record->m_soundBank), materialId,
+    WaterClass waterClass = ClassifyLiquid(type, static_cast<uint32_t>(record->m_soundBank), materialId,
                                                 instance->m_settings->m_textureNames[0]);
+
+    // TEMPORARY experiment: every water is shaded as one class, so a frame is a single run and no two classes can fight
+    // over an overlap. Set to WaterClass::None to restore the per-type classes (lake, river, ocean, interior).
+    if (kSingleWaterClass != WaterClass::None && waterClass != WaterClass::None) {
+        waterClass = kSingleWaterClass;
+    }
 
     // One line per new liquid type, which is all it takes to see why a zone's water is not shaded: the type, its
     // material, the surface texture the classifier looked at, and the class it settled on. Without this a misclassified
@@ -155,6 +165,37 @@ WaterClass ClassifyLiquidInstance(const Liquid::CInstance* instance) {
     }
 
     return waterClass;
+}
+
+// TEMPORARY: with WOWWATER_TRACE set, every 300th armed frame appends the frame's sorted liquid draw list to
+// water-trace.txt beside the executable: draw order, liquid type, class, material and height.
+void TraceLiquidDrawList(Liquid::CInstance* const* instances, uint32_t count) {
+    static const bool enabled = std::getenv("WOWWATER_TRACE") != nullptr;
+    static uint32_t frame = 0;
+
+    if (!enabled || (frame++ % 300) != 0) {
+        return;
+    }
+
+    FILE* file = std::fopen("water-trace.txt", "a");
+
+    if (!file) {
+        return;
+    }
+
+    std::fprintf(file, "--- frame %u, %u liquid instances\n", frame, count);
+
+    for (uint32_t index = 0; index < count; ++index) {
+        const Liquid::CInstance* instance = instances[index];
+        const uint32_t type = LiquidTypeOf(instance->m_settings);
+        const LiquidTypeRec* record = type ? g_liquidTypeDB.GetRecord(static_cast<int32_t>(type)) : nullptr;
+        std::fprintf(file, "%3u type %2u material %d class %-8s height %.2f settings %p\n", index, type,
+                     record ? static_cast<int>(record->m_materialID) : -1,
+                     WaterClassLabel(ClassifyLiquidInstance(instance)), instance->m_transform.d3,
+                     static_cast<const void*>(instance->m_settings));
+    }
+
+    std::fclose(file);
 }
 
 bool TagLiquidInstance(const Liquid::CInstance* instance) {

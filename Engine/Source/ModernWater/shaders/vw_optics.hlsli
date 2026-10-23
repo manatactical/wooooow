@@ -4,7 +4,10 @@ static const float kRoughnessExponent = 0.25;
 static const float kMinRoughnessMoment = 1e-8;
 static const float kRefractionUvPerSlopeYard = 0.005;
 static const float kMaxRefractionDepth = 50;
-static const float kShoreFadePerYard = 2;
+// The water fades into the scene over this many yards of vertical thickness. It is measured straight down through the
+// column, not along the view's depth axis: the depth axis gives a shallow river a thickness that changes with where the
+// camera points, which made a thin stretch of water vanish when the camera looked down at it and return when it looked out.
+static const float kShoreFadePerYard = 6;
 static const float kFoamStateGain = 10;
 static const float kFoamWrap = 0.25;
 static const float kFoamCrestSharpness = 8;

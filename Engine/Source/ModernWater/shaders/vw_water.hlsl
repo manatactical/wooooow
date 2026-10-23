@@ -40,6 +40,7 @@ float3 DebugColour(float3 N, float4 foamAlbedo, float3 transmittance, float3 ref
         return ClassColour(WaterClassIndex());
     return RippleColour(ripples);
 }
+// (Debug view 6, the coverage, is handled in main.)
 
 float4 main(float2 pixelIndex : VPOS) : COLOR0
 {
@@ -94,10 +95,27 @@ float4 main(float2 pixelIndex : VPOS) : COLOR0
     // the frame *without* the client's water. Painting it back erased the client's own water on every pixel this pass
     // failed to claim, which is most of them while the coverage tolerance is still being tuned. Blending with coverage
     // as the alpha leaves whatever is on the target untouched and replaces only the pixels actually shaded.
+    [branch] if (WaterDebugView() > 0.5)
+    {
+        clip(w.coverage - 0.003);
+        // View 6 shows the coverage itself (white = fully claimed, dark = barely); the other views blend with it as
+        // alpha, exactly as the real shading does, so a partly covered pixel shows the client's water through.
+        [branch] if (WaterDebugView() > 5.5)
+            return float4(w.coverage.xxx, 1);
+        // View 7 shows how much of the shaded water survives the shoreline fade (white = all of it, black = the pixel
+        // shows the scene copy instead), and NaN or infinite shading as magenta.
+        [branch] if (WaterDebugView() > 6.5)
+        {
+            float3 shown = saturate(kShoreFadePerYard * w.columnDepth).xxx;
+            return float4(any(isnan(colour)) || any(isinf(colour)) ? float3(1, 0, 1) : shown, 1);
+        }
+        return float4(DebugColour(N, foamAlbedo, transmittance, reflected, ripples), w.coverage);
+    }
+
     float3 encoded = LinearToGamma(colour);
     [branch] if (StockFogApplies())
         encoded = lerp(StockFogColour(), encoded, StockFogVisibility(w.waterZ));
-    encoded = lerp(refraction.copied, encoded, saturate(kShoreFadePerYard * refraction.pathDepth));
+    encoded = lerp(refraction.copied, encoded, saturate(kShoreFadePerYard * w.columnDepth));
 
     // Pixels this pass does not own are discarded rather than blended with zero alpha, so an occlusion query around the
     // draw counts exactly the pixels that were shaded.

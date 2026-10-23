@@ -24,7 +24,22 @@
 #include <vector>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+
+namespace {
+
+// TEMPORARY: set the environment variable WOWWATER_DEBUG_VIEW before launching to paint the water with a debug view
+// (1 normal, 2 foam, 3 transmittance, 4 reflection, 5 class: lake blue, river green, ocean red, interior yellow).
+float TemporaryDebugView() {
+    static const float view = [] {
+        const char* value = std::getenv("WOWWATER_DEBUG_VIEW");
+        return value ? static_cast<float>(std::atoi(value)) : 0.0f;
+    }();
+    return view;
+}
+
+}  // namespace
 
 namespace {
 
@@ -1428,7 +1443,7 @@ void WaterRenderer::FillClassConstants(ShadingConstants& constants, const WaterP
 
     constants.inverseTileSizes = {inverse[0], inverse[1], inverse[2], inverse[3]};
     constants.waveControl = {1.0f / static_cast<float>(std::max(tileCount, 1)), 0.0f,
-                             static_cast<float>(waterClass), 0.0f};
+                             static_cast<float>(waterClass), TemporaryDebugView()};
     constants.foamScroll = {ScrollOffset(seconds, 0, preset.waveFoam[1]),
                             ScrollOffset(seconds, 1, preset.waveFoam[1]),
                             ScrollOffset(seconds, 0, preset.shoreFoam[3]),

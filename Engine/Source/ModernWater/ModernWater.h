@@ -38,6 +38,9 @@ WaterTimeInputs WaterSettings();
 // and the water model would turn them into a slightly wrong lake.
 WaterClass ClassifyLiquidInstance(const Liquid::CInstance* instance);
 
+// TEMPORARY: writes the frame's liquid draw list to water-trace.txt when WOWWATER_TRACE is set.
+void TraceLiquidDrawList(Liquid::CInstance* const* instances, uint32_t count);
+
 // True when the instance should be tagged for the modern pass.
 bool TagLiquidInstance(const Liquid::CInstance* instance);
 

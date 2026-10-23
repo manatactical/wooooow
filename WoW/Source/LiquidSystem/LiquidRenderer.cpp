@@ -1,4 +1,5 @@
 #include "Liquid.h"
+#include <algorithm>
 #include <cstdlib>
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/CGxLight.h"
@@ -145,6 +146,19 @@ void Liquid::CRenderer::Flush(const C3Vector& cameraPos, uint32_t pass) {
             water.SetContacts(contacts);
             armed = water.Begin(device, this, frameInputs, ModernWater::WaterSettings());
         }
+    }
+
+    // The list is sorted by material first, so one water class can come in several runs with another class between
+    // them (river, ocean, river). Each run is shaded against the depth the earlier runs left, and a plane that overlaps
+    // an earlier run at the same depth wins no pixels there, so the later run of that class lost the overlap and it
+    // flickered away with the camera angle. Grouping the draws by class makes every class one run; the sort is stable,
+    // so the order inside a class is the client's own.
+    if (armed) {
+        std::stable_sort(instances.m_data, instances.m_data + count,
+                         [](const Liquid::CInstance* l, const Liquid::CInstance* r) {
+                             return ModernWater::ClassifyLiquidInstance(l) < ModernWater::ClassifyLiquidInstance(r);
+                         });
+        ModernWater::TraceLiquidDrawList(instances.m_data, count);
     }
 
     WaterClass pendingClass = WaterClass::None;

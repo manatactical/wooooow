@@ -102,6 +102,12 @@ class CUnitOutline {
     // is returned too, but a caller that needs to sample it will find it unreadable.
     static CGxTex* DepthPassTexture();
 
+    // Not in the original binary. Whether the last BeginDepthPass bound the shared depth, so the texture holds this
+    // frame's world depth. Stays true after EndDepthPass, which only unbinds the surface: a pass drawn after the
+    // world asks this before sampling DepthPassTexture, because the texture itself is non-null from its first
+    // creation on and would otherwise be read stale on a frame where the bind was refused.
+    static bool HasFrameDepth();
+
     private:
     static bool Enabled();
     static bool EnsureResources();

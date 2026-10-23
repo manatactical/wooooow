@@ -26,6 +26,7 @@
 #include "Engine/Source/Services/SysMessage.h"
 #include "Engine/Source/Services/Texture.h"
 #include "Engine/Source/ShaderEffect/ShaderEffect.h"
+#include "Engine/Source/AmbientOcclusion/AmbientOcclusion.h"
 #include "Engine/Source/AntiAlias/AntiAlias.h"
 #include "Engine/Source/ModernWater/ModernWater.h"
 #include "Engine/Source/UnitOutline/UnitOutline.h"
@@ -1273,6 +1274,7 @@ CGWorldFrame::CGWorldFrame(CSimpleFrame* parent) : CSimpleFrame(parent) {
     CUnitOutline::Init();
     // Registers the antiAlias cvar and the device-restored callback. Idempotent for the same reason.
     CAntiAlias::Init();
+    CAmbientOcclusion::Init();
     // Registers the lootBeam cvar. Idempotent for the same reason.
     LootBeam::Init();
     // Registers the modern water pass's device-restored callback. Idempotent for the same reason.
@@ -1837,6 +1839,11 @@ void CGWorldFrame::OnWorldRender() {
     // The world -> interface boundary: the outline is composited here so the interface draws over it, and the
     // shared depth is given back first so nothing past this point tests against the world.
     CUnitOutline::EndDepthPass();
+
+    // Ambient occlusion darkens the world only, so it runs before the outline (a selection cue that must stay at
+    // full brightness) and before the anti-aliasing pass (which then smooths its edges with everything else).
+    PerfLogStage("ssao");
+    CAmbientOcclusion::Apply();
     PerfLogStage("outline");
     CUnitOutline::Composite();
 

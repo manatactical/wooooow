@@ -50,6 +50,10 @@ CVar* CWorldParam::cvar_antiAlias;
 
 // Not in the original binary. See CAntiAlias's quality preset table.
 CVar* CWorldParam::cvar_fxaaQuality;
+// Not in the original binary. See CAmbientOcclusion::Enabled. 0 off, 1 on, 2 the occlusion term itself.
+CVar* CWorldParam::cvar_ssao;
+CVar* CWorldParam::cvar_ssaoSpread;
+CVar* CWorldParam::cvar_ssaoStrength;
 
 // STATIC: 0x00CD857C
 CVar* CWorldParam::cvar_texLodBias;
@@ -858,6 +862,16 @@ void CWorldParam::Initialize() {
     // here for the same reason as the mode. CAntiAlias::Init registers it too, and clamps it itself, so the
     // shader cannot be handed an index off the end of its table.
     CWorldParam::cvar_fxaaQuality = CVar::Register("fxaaQuality", "FXAA quality: 0 low, 1 medium, 2 high, 3 ultra, 4 soothed", 1, "2", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+
+    // Not in the original binary. Ambient occlusion. Unlike antiAlias this defaults to 1: it is on for everyone
+    // who has the hardware for it. CAmbientOcclusion::Init registers it too, and Register reuses an existing
+    // var. A value above 1 is the debug view of the occlusion term.
+    CWorldParam::cvar_ssao = CVar::Register("ssao", "screen-space ambient occlusion: 0 off, 1 on, 2 show the occlusion term", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+
+    // Not in the original binary. How far the occlusion reaches (a multiple of the default, so 1 is the shipped
+    // look) and how dark it goes. Registered here so the Advanced panel can read their defaults at the login screen.
+    CWorldParam::cvar_ssaoSpread = CVar::Register("ssaoSpread", "ambient occlusion spread, as a multiple of the default reach", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    CWorldParam::cvar_ssaoStrength = CVar::Register("ssaoStrength", "ambient occlusion strength: 0 none, 1 full", 1, "0.85", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
     // Not in the original binary. The grass and wind cvars the Physics tab reads. Registered here for the
     // same reason as unitOutline and antiAlias: the panel asks for their defaults while the login screen is

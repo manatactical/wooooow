@@ -244,6 +244,9 @@ CTexture* s_depthTexture;
 CGxTex* s_depth;
 C2iVector s_depthSize;
 bool s_depthBound;
+// Whether the last BeginDepthPass bound the shared depth, i.e. whether the texture holds this frame's world depth.
+// Unlike s_depthBound it survives EndDepthPass, which is what lets a pass after the world read the depth.
+bool s_depthValid;
 // TEMP diagnostic. Whether the device refused the depth bind this frame -- see BeginDepthPass -- and what
 // the stamp saw for its depth test. Delete with the investigation.
 bool s_depthBindMismatch;
@@ -490,6 +493,7 @@ void CUnitOutline::OnDeviceRestored() {
     s_depthSize.x = 0;
     s_depthSize.y = 0;
     s_depthBound = false;
+    s_depthValid = false;
 
     // The mutation guard is cleared too: a reset that somehow arrived mid-composite would otherwise leave
     // the flag set and silently disable every later composite.
@@ -728,7 +732,12 @@ bool CUnitOutline::EnsureResources() {
 // reports as a render target, and the masks are the frame's size by construction, so the pairing is
 // symmetric.
 bool CUnitOutline::OcclusionSupported() {
-    if (!Enabled()) {
+    // The depth is shared for the outline's sake and for the passes that read it afterwards, so either being on
+    // is enough. The ambient occlusion pass is found by name: it links against this module, not the other way.
+    CVar* ssao = CVar::Lookup("ssao");
+    bool depthWanted = ssao && ssao->m_intValue > 0 && g_theGxDevicePtr && g_theGxDevicePtr->m_context;
+
+    if (!Enabled() && !depthWanted) {
         return false;
     }
 
@@ -783,7 +792,9 @@ bool CUnitOutline::EnsureDepthTexture() {
     // scene is, and D3D9 can never sample a D24X8 surface. The outline itself only needs to bind it, so it loses
     // nothing; the water gains the one thing it cannot otherwise have. A device without INTZ falls back to D24X8 and
     // the water stands down, which is the same outcome as before for the outline.
-    CGxTexFlags flags(GxTex_Linear, 0, 0, 0, 0, 1, 1, 0, 0, 0);
+    // GxTex_Nearest: the outline only binds this as the depth surface, so its filter costs it nothing, while the
+    // ambient occlusion pass samples it and must not blend two neighbours' depths into one no surface ever had.
+    CGxTexFlags flags(GxTex_Nearest, 0, 0, 0, 0, 1, 1, 0, 0, 0);
     const EGxTexFormat depthFormat =
         g_theGxDevicePtr->Caps().m_rttFormat[GxTex_INTZ] ? GxTex_INTZ : GxTex_D24X8;
     s_depthTexture = TextureCreate(GxTex_NonPow2, size.x, size.y, 0, depthFormat, depthFormat, flags, nullptr, GxTexNullUserFunc, "UnitOutline::s_depthTexture", 0);
@@ -814,6 +825,7 @@ bool CUnitOutline::EnsureDepthTexture() {
 // against exactly the depth the frame has already accumulated.
 void CUnitOutline::BeginDepthPass() {
     s_depthBound = false;
+    s_depthValid = false;
     s_depthBindMismatch = false;
     s_stampDepthTest = -1;
 
@@ -865,6 +877,7 @@ void CUnitOutline::BeginDepthPass() {
     g_theGxDevicePtr->SceneClear(GxBufferBit_Depth, CImVector(0, 0, 0, 0));
 
     s_depthBound = true;
+    s_depthValid = true;
 }
 
 // Not in the original binary. See the declaration: the one safe way to hand the depth back, because asking
@@ -916,6 +929,11 @@ bool CUnitOutline::IsDepthPassBound() {
 // is only valid while the depth pass is bound. See the declaration for why INTZ matters here.
 CGxTex* CUnitOutline::DepthPassTexture() {
     return s_depth;
+}
+
+// Not in the original binary. See the declaration.
+bool CUnitOutline::HasFrameDepth() {
+    return s_depthValid && s_depth != nullptr;
 }
 
 // ---------------------------------------------------------------------------------------------

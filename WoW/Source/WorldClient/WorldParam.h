@@ -60,6 +60,12 @@ class CWorldParam {
 
     // Not in the original binary. The FXAA quality preset (0 low .. 3 ultra), read alongside the mode.
     static CVar* cvar_fxaaQuality;
+    // Not in the original binary. Screen-space ambient occlusion. Registered here rather than only from
+    // CAmbientOcclusion::Init(), which runs once a world frame exists -- the Advanced panel reads the cvar's
+    // default at the login screen, and GetCVarDefault raises on a name that is not registered yet.
+    static CVar* cvar_ssao;
+    static CVar* cvar_ssaoSpread;
+    static CVar* cvar_ssaoStrength;
     static bool ShadowTextureSizeCallback(CVar* var, const char* oldValue, const char* value, void* arg);
     static bool ShadowModeCallback(CVar* var, const char* oldValue, const char* value, void* arg);
     static bool CascadedShadowsCallback(CVar* var, const char* oldValue, const char* value, void* arg);

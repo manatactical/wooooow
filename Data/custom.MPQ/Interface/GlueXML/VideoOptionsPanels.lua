@@ -553,6 +553,12 @@ CURSOR_LABEL = "Cursor";
 UNIT_OUTLINE = "Unit Outline";
 OPTION_TOOLTIP_UNIT_OUTLINE = "Draws a reaction-coloured outline around the unit under the cursor and your current target. A unit hidden behind terrain or a building has no outline.";
 LOOT_BEAM = "Loot Beam";
+SSAO = "Ambient Occlusion";
+OPTION_TOOLTIP_SSAO = "Darkens the creases and contact points of the world: corners, doorways, the gap under a crate. It is built from the frame's own depth buffer, so it is not applied while multisampling is enabled.";
+SSAO_SPREAD = "AO Spread";
+OPTION_TOOLTIP_SSAO_SPREAD = "How far the occlusion reaches from a crease. Low values keep it to tight contact shadows; high values let it pool across wider gaps.";
+SSAO_STRENGTH = "AO Strength";
+OPTION_TOOLTIP_SSAO_STRENGTH = "How dark the occluded areas get. Zero is no darkening at all.";
 OPTION_TOOLTIP_LOOT_BEAM = "Raises a beam of light over every corpse that can still be looted, tinted by the quality of the rarest item in its loot. Purely a marker: it sends nothing to the server.";
 SHADOWS_LABEL = "Shadows";
 SHADOWS_SUBTEXT = "Shadow quality sets the method and how often shadows update, and shadow resolution how sharp the edges are. Hardware cursor draws the cursor through the GPU; Fix Lag adds a per-frame GPU sync that can reduce cursor lag at a frame rate cost.";
@@ -582,6 +588,9 @@ AdvancedPanelOptions = {
 	gxFixLag = { text = "FIX_LAG" },
 	unitOutline = { text = "UNIT_OUTLINE", tooltip = OPTION_TOOLTIP_UNIT_OUTLINE },
 	lootBeam = { text = "LOOT_BEAM", tooltip = OPTION_TOOLTIP_LOOT_BEAM },
+	ssao = { text = "SSAO", tooltip = OPTION_TOOLTIP_SSAO },
+	ssaoSpread = { text = "SSAO_SPREAD", minValue = 0.25, maxValue = 2, valueStep = 0.05, tooltip = OPTION_TOOLTIP_SSAO_SPREAD },
+	ssaoStrength = { text = "SSAO_STRENGTH", minValue = 0, maxValue = 1, valueStep = 0.05, tooltip = OPTION_TOOLTIP_SSAO_STRENGTH },
 };
 
 local function VideoOptionsShadowsPanel_Level (value, maxValue)
@@ -670,6 +679,13 @@ function VideoOptionsShadowsPanel_OnLoad (self)
 	self.name = SHADOWS_LABEL;
 	self.options = ShadowsPanelOptions;
 	VideoOptionsPanel_OnLoad(self, nil, nil, VideoOptionsShadowsPanel_Default, VideoOptionsShadowsPanel_Refresh);
+end
+
+function VideoOptionsAdvancedPanelSlider_OnValueChanged (self, value)
+	self.newValue = value;
+	if ( self:GetParent():IsVisible() ) then
+		VideoOptionsFrameApply:Enable();
+	end
 end
 
 function VideoOptionsAdvancedPanel_OnLoad (self)

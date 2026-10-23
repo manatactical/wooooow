@@ -1,4 +1,5 @@
 #include "DetailDoodad.h"
+#include "Engine/Source/AmbientOcclusion/AmbientOcclusion.h"
 #include <cmath>
 #include "Engine/Source/Base/Handle.h"
 #include "Engine/Source/Base/ObjectAlloc.h"
@@ -694,7 +695,10 @@ int32_t CDetailDoodad::InitializeRenderState() {
     GxRsSet(GxRs_Culling, 0);
     GxRsSet(GxRs_BlendingMode, 2);
     GxRsSet(GxRs_AlphaRef, CWorld::detailDoodadAlphaRef);
-    GxRsSet(GxRs_DepthWrite, 1);
+    // Not in the original binary. While the ambient occlusion pass is reading the frame's depth, the grass stays
+    // out of it: a field of blades would otherwise shade itself and the ground under it into noise. The blades
+    // still depth-test against the world, so they are hidden by what is in front of them as before.
+    GxRsSet(GxRs_DepthWrite, CAmbientOcclusion::Active() ? 0 : 1);
 
     if (CDetailDoodad::s_bUseShaders) {
         uint32_t shadow = CShadowCache::GetShadowValue();

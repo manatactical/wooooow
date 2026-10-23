@@ -938,7 +938,7 @@
 		</Scripts>	
 		<Frames>
 			<Frame name="$parentCursor" inherits="OptionsBoxTemplate">
-				<Size x="380" y="175"/>
+				<Size x="380" y="275"/>
 				<Anchors>
 					<Anchor point="TOPLEFT" relativeTo="$parentSubText" relativePoint="BOTTOMLEFT">
 						<Offset x="8" y="-24"/>
@@ -1010,6 +1010,64 @@
 					</OnLoad>
 				</Scripts>
 			</CheckButton>
+			<CheckButton name="$parentSsao" inherits="VideoOptionsSmallCheckButtonTemplate">
+				<Anchors>
+					<Anchor point="TOPLEFT" relativeTo="$parentLootBeam" relativePoint="BOTTOMLEFT">
+						<Offset x="0" y="-4"/>
+					</Anchor>
+				</Anchors>
+				<Scripts>
+					<OnLoad>
+						self.type = CONTROLTYPE_CHECKBOX;
+						self.cvar = "ssao";
+						BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
+					</OnLoad>
+				</Scripts>
+			</CheckButton>
+			<Slider name="$parentSsaoSpread" inherits="OptionsSliderTemplate">
+				<Size x="200" y="17"/>
+				<Anchors>
+					<Anchor point="TOPLEFT" relativeTo="$parentSsao" relativePoint="BOTTOMLEFT">
+						<Offset x="4" y="-24"/>
+					</Anchor>
+				</Anchors>
+				<Scripts>
+					<OnLoad>
+						self.type = CONTROLTYPE_SLIDER;
+						self.cvar = "ssaoSpread";
+						self.SetDisplayValue = self.SetValue;
+						self.SetValue = function (self, value)
+							self:SetDisplayValue(value);
+							BlizzardOptionsPanel_SetCVarSafe(self.cvar, value);
+						end
+						_G[self:GetName().."Text"]:SetFontObject("GameFontNormalSmall");
+						BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
+					</OnLoad>
+					<OnValueChanged function="VideoOptionsAdvancedPanelSlider_OnValueChanged"/>
+				</Scripts>
+			</Slider>
+			<Slider name="$parentSsaoStrength" inherits="OptionsSliderTemplate">
+				<Size x="200" y="17"/>
+				<Anchors>
+					<Anchor point="TOPLEFT" relativeTo="$parentSsaoSpread" relativePoint="BOTTOMLEFT">
+						<Offset x="0" y="-28"/>
+					</Anchor>
+				</Anchors>
+				<Scripts>
+					<OnLoad>
+						self.type = CONTROLTYPE_SLIDER;
+						self.cvar = "ssaoStrength";
+						self.SetDisplayValue = self.SetValue;
+						self.SetValue = function (self, value)
+							self:SetDisplayValue(value);
+							BlizzardOptionsPanel_SetCVarSafe(self.cvar, value);
+						end
+						_G[self:GetName().."Text"]:SetFontObject("GameFontNormalSmall");
+						BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
+					</OnLoad>
+					<OnValueChanged function="VideoOptionsAdvancedPanelSlider_OnValueChanged"/>
+				</Scripts>
+			</Slider>
 		</Frames>
 	</Frame>
 	<!-- Physics Panel -->

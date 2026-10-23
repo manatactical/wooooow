@@ -1,0 +1,731 @@
+# Ambient Occlusion — implementation plan
+
+Status: ready to code. Nothing in this document has been implemented yet.
+
+---
+
+## 1. What this adds
+
+A screen-space ambient occlusion pass over the finished world frame. Creases, contact points, corners
+under eaves, the crotch of a tree, the gap between a shoulder and a wall all darken. It runs at the
+world → interface boundary, so the HUD, nameplates, tooltips and text are never darkened.
+
+It is a **post-process over the depth buffer the frame already produced**. No geometry is re-drawn, no
+material or model path changes, nothing in the MPQ is touched.
+
+### Decisions taken (asked and answered)
+
+| Question | Answer |
+|---|---|
+| Depth source | Reuse `CUnitOutline`'s frame-sized shared depth texture. No second depth target, no depth-copy pass. |
+| Algorithm | ~12-tap hemisphere SSAO with normals reconstructed from depth, one depth-aware (bilateral) 8-tap blur, multiply composite. |
+| Default / UI | **On by default**, checkbox on the Advanced tab next to `unitOutline` / `lootBeam`. |
+
+### The one hard constraint this creates
+
+The shared scene depth only exists when `CUnitOutline::OcclusionSupported()` is true:
+
+- D3D9 or D3D9Ex device (not OpenGL / GLL),
+- `gxMultisample` off (`m_format.m_multisampleCount <= 1`),
+- device exposes a non-power-of-two render-target target **and** `GxTex_D24X8` as an RTT.
+
+D3D9 cannot pair a single-sample depth surface with a multisampled colour target, and cannot sample a
+multisampled depth. So **when MSAA is on, AO stands down silently** — exactly like the outline and the
+modern water pass already do. That is the accepted trade, and it must be stated in the checkbox tooltip
+(`"Not applied while multisampling is enabled."`), not discovered by the user as "the setting does
+nothing".
+
+---
+
+## 2. Why multiply-blend, and why no frame copy
+
+`CAntiAlias` has to copy the frame into a scratch before it filters, because it both reads and writes
+the same pixels. AO does not need that: the occlusion term is a *factor*, so the composite is a
+fullscreen quad drawn with multiply blending.
+
+`GxBlend_Mod` maps to `D3DBLEND_DESTCOLOR` / `D3DBLEND_ZERO`
+(`Engine/Source/Gx/CGxDeviceD3d/CGxDeviceD3d.cpp:49-54`), i.e.
+
+```
+result = dst * src
+```
+
+which is the composite for free. Consequences:
+
+- no frame scratch texture,
+- no `GxTexCopy` of the back buffer,
+- the composite cannot sample what it writes (no hazard, no state dance).
+
+The cost is that the multiply happens in display (gamma) space, so occlusion reads as slightly
+stronger in the dark than it would in linear. Standard for cheap SSAO; the strength constant is
+tuned with that in mind. It is noted again in §9.
+
+---
+
+## 3. Frame order
+
+Today (`WoW/Source/Ui/WorldFrame.cpp:1836-1851`):
+
+```
+    LootBeam::Update(elapsed);
+    CUnitOutline::EndDepthPass();
+    PerfLogStage("outline");
+    CUnitOutline::Composite();
+    PerfLogStage("antialias");
+    CAntiAlias::Apply();
+    PerfLogStage("interface");
+```
+
+After this change:
+
+```
+    LootBeam::Update(elapsed);
+    CUnitOutline::EndDepthPass();
+    PerfLogStage("ssao");
+    CAmbientOcclusion::Apply();          // NEW — darkens the world only
+    PerfLogStage("outline");
+    CUnitOutline::Composite();            // outline line stays at full brightness
+    PerfLogStage("antialias");
+    CAntiAlias::Apply();                  // FXAA filters the already-darkened frame
+```
+
+Three ordering facts, each deliberate:
+
+1. **AO before the outline composite.** The outline is a selection cue; darkening it in a corner
+   would look like a bug. The outline's own `EndDepthPass()` has already unbound the depth by this
+   point, but the depth *texture* still holds this frame's depth and is still samplable — unbinding a
+   surface does not clear it.
+2. **AO before FXAA.** FXAA then gets to smooth the AO edges along with everything else, instead of
+   AO re-hardening edges FXAA just softened.
+3. **AO after the loot beam.** The beam is additive and wants to stay bright. It darkens slightly
+   where it passes behind geometry; acceptable and physically defensible.
+
+`CAmbientOcclusion::Apply()` must therefore be safe to call with the world's projection, viewport and
+colour target exactly as `CUnitOutline::Composite()` expects them, and must leave them that way.
+
+---
+
+## 4. Files
+
+### New: `Engine/Source/AmbientOcclusion/`
+
+| File | Contents |
+|---|---|
+| `CMakeLists.txt` | static lib `AmbientOcclusion`, links `d3dcompiler.lib`. Copy of `AntiAlias/CMakeLists.txt`. |
+| `AmbientOcclusion.h` | `class CAmbientOcclusion` + the long "why" comment block, in the style of `AntiAlias.h`. |
+| `AmbientOcclusion.cpp` | Everything: shaders, resources, `Apply()`, composite. |
+
+### Edited
+
+| File | Change |
+|---|---|
+| `CMakeLists.txt` | `add_subdirectory(Engine/Source/AmbientOcclusion)` after `AntiAlias`. |
+| `Tools/WowClient/CMakeLists.txt` | add `AmbientOcclusion` to `target_link_libraries`. |
+| `WoW/Source/CMakeLists.txt` | same, for the `Wow` target. |
+| `Engine/Source/UnitOutline/UnitOutline.h` | 3 accessors (§5.1). |
+| `Engine/Source/UnitOutline/UnitOutline.cpp` | implement them; create the shared depth as `GxTex_Nearest` instead of `GxTex_Linear` (§5.2). |
+| `WoW/Source/WorldClient/WorldParam.h` | `static CVar* cvar_ssao;` |
+| `WoW/Source/WorldClient/WorldParam_CVar.cpp` | definition + `CVar::Register` (§7). |
+| `WoW/Source/Ui/WorldFrame.cpp` | `#include`, `CAmbientOcclusion::Init()` in the ctor, `CAmbientOcclusion::Apply()` in `OnWorldRender` (§3). |
+| `Data/custom.MPQ/Interface/FrameXML/VideoOptionsPanels.lua` | `SSAO` strings + `AdvancedPanelOptions.ssao` entry. |
+| `Data/custom.MPQ/Interface/FrameXML/VideoOptionsPanels.xml` | checkbox after `$parentLootBeam`. |
+| `Data/custom.MPQ/Interface/GlueXML/VideoOptionsPanels.lua` | same two edits as the FrameXML Lua. |
+| `Data/custom.MPQ/Interface/GlueXML/VideoOptionsPanels.xml` | same checkbox as the FrameXML XML. |
+
+Then `powershell -NoProfile -ExecutionPolicy Bypass -File Tools/deploy-ui.ps1` (client closed) to push
+the four UI files into `bin/Win/Data/custom.MPQ/`.
+
+---
+
+## 5. The `CUnitOutline` changes
+
+### 5.1 Accessors — add to `UnitOutline.h`, in the public section
+
+```cpp
+    // Not in the original binary. The frame's shared scene depth, for a pass that only wants to read the
+    // world's depth rather than bind it. Non-null only after BeginDepthPass has succeeded for this frame
+    // (see OcclusionSupported: a multisampled frame has no shared depth at all), and still valid after
+    // EndDepthPass, which only unbinds the surface; the texture keeps the frame's contents.
+    //
+    // The texture is created with GxTex_Nearest (see EnsureDepthTexture), so a consumer's taps are
+    // point-sampled: filtering a depth buffer blends two unrelated depths into a third that no surface
+    // ever had, which shows up as a soft ramp across every silhouette.
+    static CGxTex* SceneDepth();
+    static const C2iVector& SceneDepthSize();
+    static bool HasSceneDepth();
+```
+
+Implementation, next to `IsDepthPassBound()`:
+
+```cpp
+CGxTex* CUnitOutline::SceneDepth() {
+    return s_depth;
+}
+
+const C2iVector& CUnitOutline::SceneDepthSize() {
+    return s_depthSize;
+}
+
+bool CUnitOutline::HasSceneDepth() {
+    return s_depth != nullptr && s_depthSize.x > 0 && s_depthSize.y > 0;
+}
+```
+
+`HasSceneDepth()` is a plain null check on purpose: `OnDeviceRestored()` already nulls `s_depth` and
+zeroes `s_depthSize`, and `EnsureDepthTexture()` sets both together, so the pair cannot disagree.
+
+### 5.2 Point-sampled depth
+
+In `CUnitOutline::EnsureDepthTexture()` (`UnitOutline.cpp:782`) change the flags from
+`CGxTex_Linear` to `CGxTex_Nearest`:
+
+```cpp
+    // GxTex_Nearest, not GxTex_Linear: the outline only ever binds this as the depth surface and never
+    // samples it, so its filter costs the outline nothing -- while a consumer that does sample it (the
+    // ambient occlusion pass) must not have two neighbours' depths blended together.
+    CGxTexFlags flags(GxTex_Nearest, 0, 0, 0, 0, 1, 1, 0, 0, 0);
+    s_depthTexture = TextureCreate(GxTex_NonPow2, size.x, size.y, 0, GxTex_D24X8, GxTex_D24X8, flags, nullptr, GxTexNullUserFunc, "UnitOutline::s_depthTexture", 0);
+```
+
+Verified: `s_depth` is used only as a `GxRenderTargetSet` argument and in
+`DeviceGetTexSurface(s_depth)` / `DeviceGetBoundDepthSurface()` comparisons. Nothing samples it today,
+so no existing behaviour changes.
+
+---
+
+## 6. `CAmbientOcclusion` — the module
+
+### 6.1 Header
+
+```cpp
+#ifndef ENGINE_SOURCE_AMBIENTOCCLUSION_AMBIENTOCCLUSION_H
+#define ENGINE_SOURCE_AMBIENTOCCLUSION_AMBIENTOCCLUSION_H
+
+#include <cstddef>
+#include <cstdint>
+
+#include "Engine/Source/FFX/FFX.h"
+#include "Engine/Source/Tempest/C2iVector.h"
+
+class CGxShader;
+class CGxTex;
+struct CVar;
+
+// Not in the original 3.3.5a binary. Screen-space ambient occlusion over the finished world frame.
+//
+// One frame, in order:
+//
+//   1. Occupancy pass. A fullscreen pixel shader reconstructs each pixel's view-space position and normal
+//      from the shared scene depth (CUnitOutline::SceneDepth), spins a 12-sample hemisphere kernel by an
+//      interleaved-gradient-noise angle, and writes how much of that hemisphere an occluder covers.
+//      1.0 is open space, ~0.35 is a tight corner. Written to a frame-sized AO target.
+//   2. Blur pass. One 8-tap bilateral pass: taps are weighted by how close their depth is to the
+//      centre's, so the term softens without bleeding across a silhouette onto the wall behind it.
+//   3. Composite. Fullscreen quad with multiply blending (GxBlend_Mod: dst * src) reading the blurred
+//      term. The frame is never read into a texture, so no copy of the back buffer is needed.
+//
+// It sits at the world -> interface boundary, before the outline composite and before the anti-aliasing
+// pass: the outline is a selection cue and must not be dimmed by a shadow, and FXAA is left to smooth the
+// AO edges along with everything else. It stands down entirely when the frame has no shared scene depth
+// -- multisampling on, or a device without a non-pow2 D24X8 render target -- because AO without depth is
+// a black frame, not a disabled effect.
+class CAmbientOcclusion {
+    public:
+    // Not in the original binary. Registers the ssao cvar and the device-restored callback. Called once
+    // from the world frame constructor, which happens again after a UI reload, so it is idempotent.
+    static void Init();
+
+    // Not in the original binary. Runs the three passes over the frame the world just finished. Only ever
+    // called at the world -> interface boundary, with the world's own colour target still bound.
+    static void Apply();
+
+    // Not in the original binary. Whether the option is on and the device can run the pass at all.
+    static bool Enabled();
+
+    private:
+    static bool EnsureResources();
+    static void OnDeviceRestored();
+
+    static CVar* s_cvarSsao;
+    static CGxShader* s_aoPS;
+    static CGxShader* s_blurPS;
+    static CGxShader* s_compositePS;
+    static FFX::Tex s_aoTex;
+    static FFX::Tex s_aoBlurTex;
+    static CGxTex* s_ao;
+    static CGxTex* s_aoBlur;
+};
+
+#endif
+```
+
+### 6.2 Constants (top of the .cpp, in an anonymous namespace)
+
+```cpp
+// Tuned for the client's world scale, which is yards: a player is about 2 yards tall, a door about 3.
+// 0.75 is roughly shoulder-to-shoulder -- wide enough to catch a contact shadow under a chest, narrow
+// enough that an open courtyard stays clean.
+constexpr float kRadius = 0.75f;
+
+// How dark a fully occluded pixel goes. 0.45 means a corner keeps 45% of its light; below ~0.3 the world
+// reads as dirty rather than shaded. This is a multiplier on the occlusion term, not a clamp.
+constexpr float kStrength = 0.85f;
+
+// Depth offset, in yards, that stops a surface from occluding itself. Must stay under the kernel radius
+// or it eats the smallest contacts; above ~0.1 no self-shadow acne appears even on the terrain under the
+// camera, because the client's depth buffer is D24X8 and terraces in steps far smaller than this.
+constexpr float kBias = 0.03f;
+
+// Taps in the occupancy pass and the blur. ps_3_0 allows 16 texture fetches with dynamic addressing, so
+// 12 + the depth read fits; the blur is 8 explicit fetches, one axis per pixel plus the centre.
+constexpr int32_t kKernelTaps = 12;
+
+// Fade the term out with distance so the far clip does not get a uniform grey wash. Occlusion is only
+// meaningful where the depth buffer has real geometry, which in this client is roughly fog range.
+constexpr float kFadeStart = 40.0f;
+constexpr float kFadeEnd = 110.0f;
+```
+
+### 6.3 Shaders
+
+Compiled at first use with `D3DCompile(..., "ps_3_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, ...)` into a
+`CGxShader` — the `UnitOutline::CompilePixelShader` pattern, copied verbatim including its
+`DiagnosticLogsEnabled()`-guarded file write (not `CGxDevice::Log`, which was a crash source on the
+failure path there). The engine's own pixel shaders start at `c2`; these use `c0`/`c1`/`c2`, like the
+outline's.
+
+#### Occupancy (`kAoHLSL`)
+
+```hlsl
+sampler2D sDepth : register(s0);
+
+// c0 = { 1/width, 1/height, viewportOriginX*invW, viewportOriginY*invH }   (viewport rect, normalised)
+// c1 = { P00, P11, P08, P09 }        projection terms: the ray reconstruction and the uv scale
+// c2 = { atInfinity, perInverseViewDepth, deepestWorldDepth, radius }
+// c3 = { strength, bias, fadeStart, fadeEnd }
+
+static const float kPi = 3.14159265;
+static const float kGoldenAngle = 2.39996323;
+
+float InverseViewDepth(float depth)
+{
+    // Same mapping the modern water pass uses (water_renderer.cpp, MapWorldDepth): the world draws through
+    // a viewport z range of [minZ, ~0.94], so the projection's own terms have to be scaled by that extent.
+    return depth >= Deepest() ? MaxViewDepth() : min(PerInverse() / max(depth - AtInfinity(), 1e-6), MaxViewDepth());
+}
+
+float3 ViewRay(float2 uv)
+{
+    float2 ndc = uv * 2 - 1;
+    ndc.y = -ndc.y;
+    return float3((ndc.x - Off().x) / Scale().x, (ndc.y - Off().y) / Scale().y, 1);
+}
+
+float3 ViewPosition(float2 uv, float z)
+{
+    return ViewRay(uv) * z;
+}
+
+float3 ViewNormal(float2 uv, float3 centre, float2 texel)
+{
+    float3 dx = ViewPosition(uv + float2(texel.x, 0), InverseViewDepth(tex2D(sDepth, uv + float2(texel.x, 0)).r))
+              - ViewPosition(uv - float2(texel.x, 0), InverseViewDepth(tex2D(sDepth, uv - float2(texel.x, 0)).r));
+    float3 dy = ViewPosition(uv + float2(0, texel.y), InverseViewDepth(tex2D(sDepth, uv + float2(0, texel.y)).r))
+              - ViewPosition(uv - float2(0, texel.y), InverseViewDepth(tex2D(sDepth, uv - float2(0, texel.y)).r));
+    float3 n = normalize(cross(dx, dy));
+    // The camera sits at the origin looking down +z in this convention (see vf_common.hlsli's
+    // ViewRayAtUnitDepth), so a surface facing the camera has a normal pointing back at it.
+    return dot(n, centre) > 0 ? -n : n;
+}
+```
+
+The full pixel shader:
+
+```hlsl
+float4 main(float2 pixelIndex : VPOS) : COLOR0 {
+    float2 uv = (pixelIndex + 0.5) * InvSize() + OriginOffset();
+    float depth = tex2D(sDepth, uv).r;
+
+    // Sky, and anything past the far plane, has no geometry to occlude against.
+    if (depth >= Deepest()) { return 1; }
+
+    float z = InverseViewDepth(depth);
+    float3 p = ViewPosition(uv, z);
+    float3 n = ViewNormal(uv, p, InvSize());
+
+    // One pixel covers this many view-space yards at this depth -- the whole reason the kernel can be
+    // built in screen space instead of being projected tap by tap.
+    float viewPerPixel = z / (Scale().x * ViewportWidthInPixels() * 0.5);
+
+    // Interleaved gradient noise rotates the kernel per pixel; without it, 12 taps read as 12 rings.
+    float spin = frac(52.9829189 * frac(dot(pixelIndex, float2(0.06711056, 0.00583715)))) * kPi * 2;
+
+    float occlusion = 0;
+    float weightSum = 0;
+
+    [unroll] for (int i = 0; i < 12; ++i) {
+        // Golden-angle spiral in the cosine hemisphere: no sqrt, no lookup table, evenly spread.
+        float t = (i + 0.5) / 12.0;
+        float angle = i * kGoldenAngle + spin;
+        float r = sqrt(t);                      // uniform over the disk
+        float2 disk = float2(cos(angle), sin(angle)) * r;
+
+        // Push the tap into the hemisphere around the surface normal: taps pointing away from the viewer
+        // are lifted toward the tangent plane, which is what stops a flat wall from shading itself.
+        float lift = sqrt(max(0, 1 - r * r));
+        float3 tapDir = normalize(n * lift + float3(disk, 0));
+
+        float3 tapPos = p + tapDir * Radius() * t;
+        float2 tapUv = uv + (tapPos.xy - p.xy) / max(tapPos.z, 1e-3) / Scale() / 2;
+
+        float tapZ = InverseViewDepth(tex2D(sDepth, tapUv).r);
+
+        // Occluded when the neighbour is in front of the tap. The range check is what removes the halo a
+        // silhouette would otherwise cast onto the wall behind it.
+        float diff = tapPos.z - tapZ;
+        float occluded = (diff > Bias() && diff < Radius()) ? 1 : 0;
+
+        // Range weight: an occluder right at the kernel radius contributes nothing, so the term fades at
+        // the rim instead of stopping on a hard circle.
+        float w = saturate(1 - t);
+        occlusion += occluded * w;
+        weightSum += w;
+    }
+
+    float ao = 1 - Strength() * saturate(occlusion / max(weightSum, 1e-4));
+
+    // Distance fade, so the far clip does not turn into a grey wash.
+    ao = lerp(ao, 1, saturate((z - FadeStart()) / (FadeEnd() - FadeStart())));
+    return ao;
+}
+```
+
+`Scale()`, `Off()`, `AtInfinity()`, `PerInverse()`, `Deepest()`, `Radius()`, `Strength()`, `Bias()`,
+`FadeStart()`, `FadeEnd()` are one-line accessors on `c1`/`c2`/`c3`, in the style of
+`ModernWater/shaders/vw_constants.hlsli`. Write them out; the compiler needs no dynamic indexing.
+
+Two notes the implementer must not skip:
+
+- `tapUv` derivation: `clip.xy / clip.w` with a `w = z` projection reduces to
+  `pixelOffsetInViewYards / z * (P00 / 2, P11 / 2) / viewportSizeForP00` — hence the `Scale()/2`
+  division. If the AO term looks like it is sampling a *bigger* or *smaller* radius than `kRadius`,
+  this line is the first suspect, and `GetPixelRadius` should be replaced by an honest projection:
+  `tapUv = float2(0.5 + 0.5 * P00 * tapPos.x / tapPos.z, 0.5 - 0.5 * P11 * tapPos.y / tapPos.z)`
+  (which also handles `P08`/`P09` by feeding `tapPos.xy - Off()*tapPos.z`).
+- `Deepest()` must be the world's own deepest stored depth, computed on the CPU from the viewport z
+  range (`worldMaxZ + 2e-6`, or `0.9999995` when the range is full) exactly as
+  `water_renderer.cpp`'s `MapWorldDepth` does. Copy that 12-line function; do not invent a new one.
+
+#### Blur (`kBlurHLSL`)
+
+```hlsl
+sampler2D sAo : register(s0);
+sampler2D sDepth : register(s1);
+
+// c0 = { texel.x, texel.y, unused, unused }
+// c1 = { radius-in-texels, depthSigma, unused, unused }
+
+float4 main(float2 uv : TEXCOORD0) : COLOR0 {
+    float centreZ = InverseViewDepth(tex2D(sDepth, uv).r);
+    float sum = tex2D(sAo, uv).r;
+    float wsum = 1;
+
+    [unroll] for (int i = 0; i < 8; ++i) {
+        float2 offset = kOffsets8[i] * Radius();
+        float2 tapUv = uv + offset;
+        float tapZ = InverseViewDepth(tex2D(sDepth, tapUv).r);
+
+        // Bilateral weight: taps on the far side of a silhouette do not contribute, so blurring cannot
+        // paint a dark fringe onto the wall behind a fence post.
+        float w = 1.0 / (1.0 + abs(tapZ - centreZ) / DepthSigma());
+        sum += tex2D(sAo, tapUv).r * w;
+        wsum += w;
+    }
+
+    return sum / wsum;
+}
+```
+
+`kOffsets8` is the 8-point rotated grid `{(±0.5,±0.5), (±1,0), (0,±1), ...}` scaled by
+`{1,1,1,1,1.4,1.4,1.4,1.4}`; write it as a literal `static const float2 kOffsets8[8]` so ps_3_0 does not
+unroll a loop over a table.
+
+#### Composite (`kCompositeHLSL`)
+
+```hlsl
+sampler2D sAo : register(s0);
+// c0 = { debug, unused, unused, unused }
+
+float4 main(float2 uv : TEXCOORD0) : COLOR0 {
+    float ao = tex2D(sAo, uv).r;
+    // ssao 2: the term itself, for telling "the pass does nothing" apart from "the pass looks wrong".
+    if (Debug() > 0.5) { return float4(ao, ao, ao, 1); }
+    return float4(ao, ao, ao, 1);
+}
+```
+
+The debug branch is identical in both paths because the *blend* is what differs: `GxBlend_Mod` with
+`ssao 1`, `GxBlend_Opaque` with `ssao 2`. One shader, one constant, no variant.
+
+### 6.4 `Apply()` — skeleton, ready to fill in
+
+```cpp
+void CAmbientOcclusion::Apply() {
+    if (!EnsureResources()) { return; }
+
+    // The depth pass is what produces the depth; without it there is nothing to read. Gated here rather
+    // than in CUnitOutline so a frame with the outline off still gets AO.
+    if (!CUnitOutline::HasSceneDepth()) { return; }
+
+    // Hardware MSAA has already resolved this frame and the shared depth cannot exist beside it (see
+    // CUnitOutline::OcclusionSupported). Belt and braces: stand down rather than sample a stale surface.
+    if (g_theGxDevicePtr->m_format.m_multisampleCount > 1) { return; }
+
+    // The pass is built for the whole viewport, and the composite multiplies the pixels it covers. A
+    // viewport inset -- the client does this when the 3D rect is narrower than the frame -- is handled by
+    // passing the viewport rect into the shaders rather than by standing down, since the geometry of a
+    // hand-rolled quad in an inset viewport is otherwise easy to get wrong.
+    float minX, maxX, minY, maxY, minZ, maxZ;
+    GxXformViewport(minX, maxX, minY, maxY, minZ, maxZ);
+    if (maxX - minX <= 0.0f || maxY - minY <= 0.0f) { return; }
+
+    const C2iVector& depthSize = CUnitOutline::SceneDepthSize();
+    const CRect& window = g_theGxDevicePtr->DeviceCurWindow();
+    C2iVector size = { static_cast<int32_t>(window.maxX), static_cast<int32_t>(window.maxY) };
+    if (size.x != depthSize.x || size.y != depthSize.y) { return; }  // never sample a mismatched depth
+
+    if (!CreateFrameTex(s_aoTex, s_ao, size) || !CreateFrameTex(s_aoBlurTex, s_aoBlur, size)) { return; }
+
+    // The frame's own colour target -- the back buffer, or FFX's glow buffer -- is put back by hand:
+    // render targets live outside RsPush/RsPop.
+    CGxTex* frameTarget = nullptr;
+    g_theGxDevicePtr->DeviceGetRenderTarget(GxBuffers_Color, frameTarget);
+
+    // Occupancy and blur target the AO textures, which are the frame's size and need no depth.
+    FFX::SetupGx(&s_aoTex);
+    GxXformSetViewport(0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f);
+    ... // bind s_aoPS, upload c0..c3, GxRsSet(GxRs_Texture0, CUnitOutline::SceneDepth()), DrawFullscreenQuad
+    ... // bind s_blurPS, Texture0 = s_ao, Texture1 = depth, DrawFullscreenQuad into s_aoBlurTex
+    FFX::SetupReset();
+
+    // Composite onto the frame, with whatever blend the cvar asked for.
+    FFX::SetupGx(&frameView);   // frameView = null texture, frame-sized, exactly as CAntiAlias::Apply builds it
+    GxXformSetViewport(minX, maxX, minY, maxY, 0.0f, 1.0f);
+    GxRsSet(GxRs_VertexShader, nullptr);
+    GxRsSet(GxRs_PixelShader, s_compositePS);
+    GxRsSet(GxRs_BlendingMode, debug ? GxBlend_Opaque : GxBlend_Mod);
+    GxRsSet(GxRs_ColorWrite, 15);
+    GxRsSet(GxRs_AlphaRef, 0);
+    GxRsSet(GxRs_Texture0, s_aoBlur);
+    ... // c0 = { debug }
+    DrawFullscreenQuad(frameView);
+    GxRsSet(GxRs_Texture0, nullptr);
+    FFX::SetupReset();
+
+    if (frameTarget) { GxRenderTargetSet(GxBuffers_Color, frameTarget, 0); }
+}
+```
+
+Everything named here already exists and is used the same way by `AntiAlias.cpp` /
+`UnitOutline.cpp`: `DrawFullscreenQuad`, `FFX::SetupGeo_Quad`, `FFX::SetupVB_PCT4`,
+`FFX::s_quadBatch`, `TextureCreate(GxTex_NonPow2, ...)`, `TextureGetGxTex`, `FFX::CreateTex`. Copy
+`CreateFrameTex` and `DrawFullscreenQuad` from `UnitOutline.cpp:352-446` — **not** `AntiAlias`'s quad,
+which takes the source texture for the texel-centre inset (AO's composite is a 1:1 full-target blit, so
+`UnitOutline`'s `(target.m_size, target.m_size, target.m_texSize)` call is the right one).
+
+`CreateFrameTex` must keep using `GxTex_NonPow2` for the same reason the masks do: `GxTexCreate`
+rejects a non-power-of-two size on `GxTex_2d`, and a rounded AO texture would sample the depth at the
+wrong scale.
+
+`OnDeviceRestored()` follows `CAntiAlias::OnDeviceRestored`: destroy the three shaders if non-null
+(`ShaderDestroy` re-nulls what it is given), then refresh the two cached `CGxTex*` from their
+`FFX::Tex`. Nothing else holds device state.
+
+`Enabled()`:
+
+```cpp
+bool CAmbientOcclusion::Enabled() {
+    return s_cvarSsao && s_cvarSsao->m_intValue && g_theGxDevicePtr && g_theGxDevicePtr->m_context;
+}
+```
+
+`ssao 2` is the debug view, so `EnsureResources` must treat any non-zero value as "run".
+
+---
+
+## 7. The cvar
+
+`WorldParam.h`, next to `cvar_antiAlias`:
+
+```cpp
+    // Not in the original binary. Screen-space ambient occlusion. Registered here rather than only from
+    // CAmbientOcclusion::Init(), which runs once a world frame exists -- the Advanced panel reads the
+    // cvar's default at the login screen, and GetCVarDefault raises on a name that is not registered yet.
+    static CVar* cvar_ssao;
+```
+
+`WorldParam_CVar.cpp`:
+
+```cpp
+// Not in the original binary. See CAmbientOcclusion::Enabled. 0 off, 1 on, 2 the occlusion term itself.
+CVar* CWorldParam::cvar_ssao;
+```
+
+and, right after the `cvar_fxaaQuality` registration:
+
+```cpp
+    // Not in the original binary. Ambient occlusion. Unlike antiAlias this defaults to 1: it is on for
+    // everyone who has the hardware for it, which is the point of the feature. CAmbientOcclusion::Init
+    // registers it too, and Register reuses an existing var, so Init order cannot be got wrong. A value
+    // above 1 is the debug view of the occlusion term and is documented in the module's header.
+    CWorldParam::cvar_ssao = CVar::Register("ssao", "screen-space ambient occlusion: 0 off, 1 on, 2 show the occlusion term", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+```
+
+Clamp in `Enabled()`/`Apply()`: any value `< 0` is off, `> 1` is debug. Do not rely on `m_intValue`
+alone for the debug test.
+
+---
+
+## 8. UI (both UI trees — `FrameXML` and `GlueXML` are separate copies)
+
+### `VideoOptionsPanels.lua` (both copies)
+
+Near the other Advanced strings:
+
+```lua
+SSAO = "Ambient Occlusion";
+OPTION_TOOLTIP_SSAO = "Darkens the creases and contact points of the world: corners, doorways, the gap under a crate. It is built from the frame's own depth buffer, so it is skipped while multisampling is enabled.";
+```
+
+and one entry in `AdvancedPanelOptions`, after `lootBeam`:
+
+```lua
+	ssao = { text = "SSAO", tooltip = OPTION_TOOLTIP_SSAO },
+```
+
+### `VideoOptionsPanels.xml` (both copies)
+
+After the `$parentLootBeam` check button:
+
+```xml
+			<CheckButton name="$parentSsao" inherits="VideoOptionsSmallCheckButtonTemplate">
+				<Anchors>
+					<Anchor point="TOPLEFT" relativeTo="$parentLootBeam" relativePoint="BOTTOMLEFT">
+						<Offset x="0" y="-4"/>
+					</Anchor>
+				</Anchors>
+				<Scripts>
+					<OnLoad>
+						self.type = CONTROLTYPE_CHECKBOX;
+						self.cvar = "ssao";
+						BlizzardOptionsPanel_RegisterControl(self, self:GetParent());
+					</OnLoad>
+				</Scripts>
+			</CheckButton>
+```
+
+No `ADVANCED_SUBTEXT` rewrite needed (it lists examples, not an exhaustive list), and no
+`GraphicsQualityLevels.lua` tier entry — Advanced options are deliberately outside the presets.
+
+Then:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File Tools/deploy-ui.ps1
+```
+
+---
+
+## 9. Build and run
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File Tools/build.ps1
+```
+
+`build/x64` is already configured; a new `add_subdirectory` is picked up by the existing cache without
+re-running `cmake -S` (CMake re-runs itself when a `CMakeLists.txt` it read changes). If the wrapper
+exits `1`, re-run `cmake -S . -B build/x64`.
+
+Expected output: `bin/Win/WowClient64.exe`.
+
+---
+
+## 10. Verification checklist, in the order to run it
+
+Run on a machine with MSAA **off** (`gxMultisample 0`), because that is the only configuration where
+this can work. `Logs\gx.log` prints the multisample count at start-up.
+
+1. **`ssao 0`** — frame is pixel-identical to before the change. Any difference is a bug in `Apply`'s
+   early-outs or in the `CUnitOutline` depth-flag change (which should be invisible).
+2. **`ssao 2`** — white where the world is open, dark pools in corners and under objects, black
+   nothing. Check specifically: flat ground in the open is uniformly white (no self-occlusion acne);
+   the wall behind a fence post is *not* dark (no halo); sky is exactly white (the `depth >= Deepest()`
+   branch); far terrain fades to white rather than a grey wash.
+3. **`ssao 1`** — the same structure, at ~`kStrength`. It should read as contact shading, not as dirt.
+   If it is invisible, `kStrength`/`kRadius` are too small; if it looks like a grey film over
+   everything, `kBias` is too small or the `weightSum` normalisation is off.
+4. **Silhouette test** — stand so a post, a torch bracket or a railing crosses the sky. No dark fringe
+   along the sky edge. A fringe there means the bilateral blur's `DepthSigma` is too small, or the
+   range check in the occupancy pass is missing (`diff < Radius()`).
+5. **Water and fire** — walk to a lake and a campfire. AO darkens the water surface. That is expected
+   and correct for a post-process without a G-buffer; note it, do not chase it.
+6. **Ordering** — target a unit in a corner. The outline line is at full brightness. If the line dims,
+   `Apply()` is running after `CUnitOutline::Composite()`.
+7. **MSAA on** (`gxMultisample 4`) — no AO, no visual change, no crash, and the outline still works
+   without its depth test. The two modules stand down independently.
+8. **Device reset** — Alt-Tab, change resolution, `gxWindow 1` toggle. No crash, AO comes back on the
+   next frame. This exercises `OnDeviceRestored` and the `FFX::Tex` refresh.
+9. **Perf** — `perf on 16`, then read `Logs\spikes.<pid>.log`. The new `ssao` stage should be a small
+   single-digit percentage of `work`. If it dominates, the first real optimisation is a half-res AO
+   target with a depth-aware upsample in the composite; do not do it pre-emptively.
+
+### Smallest useful self-check
+
+`ssao 2` is the check: it separates "the pass is not running" (white frame, no structure) from "the
+pass is running and wrong" (structure, but wrong shape or inverted). It is also the only way to tune
+`kRadius`/`kBias` without guessing from the composited result. That is why it is in the plan rather
+than an assert — this code cannot be unit-tested, it can only be looked at.
+
+---
+
+## 11. Risks, known limits, and what is deliberately not done
+
+- **D3D9 only.** The shaders are D3D9 bytecode and the depth pairing is a D3D9 concept. OpenGL and GLL
+  backends must stand down; `EnsureResources` checks `DeviceApi()` the way `AntiAlias` does.
+- **No depth under MSAA.** Stated in the tooltip. Lifting this needs a multisample resolve
+  (`DeviceResolveDepthBuffer` exists for exactly this and is currently unused) and a different depth
+  target; that is a second project, not a refinement of this one.
+- **Multiply in display space.** Occlusion is a bit strong in shadows. Fixing it properly means
+  `GxBlend_Mod` on a linear-ish frame, which the client's pipeline does not give. Tune `kStrength`.
+- **Transparents get darkened.** AO multiplies everything the world drew before it: particles, weather,
+  spell glows, water. Correct-looking on water, slightly wrong on an additive glow. A G-buffer or a
+  separate opaque-only composite is the fix, and both are out of scope.
+- **No half-res path.** Full-res 12 taps at 1920x1200. If perf says otherwise (step 9), half-res is the
+  next change, and it needs a depth-aware upsample rather than a plain bilinear one.
+- **No per-preset wiring.** Deliberately outside `GraphicsQualityLevels.lua`; a preset that silently
+  turns AO on is worse than one checkbox.
+- **`MapWorldDepth` is duplicated.** `water_renderer.cpp` keeps it in an anonymous namespace. Sharing it
+  would mean either a new header with two private consumers or moving it into Gx. Twelve duplicated
+  lines with a comment pointing at the original is the cheaper of the three; upgrade when a third
+  consumer appears.
+- **`shortcut:` marker to leave in the code** above the depth-linearisation function:
+  `shortcut: duplicated from water_renderer.cpp's MapWorldDepth, move to a shared header at the third consumer.`
+
+---
+
+## 12. Task list
+
+1. `UnitOutline.h/.cpp`: add `SceneDepth` / `SceneDepthSize` / `HasSceneDepth`; switch the depth texture
+   to `GxTex_Nearest`. Build, confirm nothing changed visually.
+2. `Engine/Source/AmbientOcclusion/CMakeLists.txt` + empty `AmbientOcclusion.cpp`; wire
+   `add_subdirectory` and both `target_link_libraries`. Build.
+3. Header + `CompilePixelShader` + the three HLSL strings + `CreateFrameTex` + `DrawFullscreenQuad`
+   (copied from `UnitOutline.cpp`). Build.
+4. `EnsureResources` (device-api check, depth availability, frame-size checks) and `OnDeviceRestored`.
+5. `Apply()`: occupancy pass only, composite with `ssao 2` (opaque debug blit). Verify shapes in game.
+   This is the milestone that proves the depth linearisation and the kernel are right.
+6. Add the blur pass; verify halos are gone.
+7. Add `GxBlend_Mod` composite and `ssao`'s 0/1/2 tri-state; tune `kRadius`, `kStrength`, `kBias`.
+8. cvar registration in `WorldParam.h` / `WorldParam_CVar.cpp`; `CAmbientOcclusion::Init()` and
+   `Apply()` in `WorldFrame.cpp`.
+9. Four UI file edits + `Tools/deploy-ui.ps1`.
+10. Run §10 end to end, on MSAA-off and MSAA-on, including one device reset.

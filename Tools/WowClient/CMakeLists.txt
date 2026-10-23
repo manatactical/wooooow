@@ -44,6 +44,7 @@ target_link_libraries(WowClient
     PRIVATE
         BLPFile
         AntiAlias
+        AmbientOcclusion
         Base
         BlizzardCore
         ComSat

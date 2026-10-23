@@ -119,8 +119,6 @@ class WaterRenderer {
     void SetContacts(const WaterContactFrame& contacts) { m_contactFrame = contacts; }
 
     bool Armed() const { return m_armed; }
-    // F9 only: writes the frame once the client's splash rings have been drawn, after the liquid pass.
-    void DumpPostLiquid(IDirect3DDevice9* device);
     unsigned ShadedClassMask() const { return m_shadedClassMask; }
     bool WavesSimulated() const { return m_wavesSimulated; }
     const char* LastSkipReason() const { return m_skip; }
@@ -228,12 +226,6 @@ class WaterRenderer {
     void BindClassTextures(IDirect3DDevice9* device, const WaterPreset& preset);
     // Shades one class over the whole viewport, masked by the depth-difference coverage the shader computes.
     void ShadeClass(IDirect3DDevice9* device, WaterClass waterClass, double seconds);
-    void LogDepthSamples(IDirect3DDevice9* device);
-    float ReadDepthCopy(IDirect3DDevice9* device, IDirect3DTexture9* texture, float u, float v);
-    float ReadColourCopy(IDirect3DDevice9* device, IDirect3DTexture9* texture, float u, float v);
-    float ReadColourSurface(IDirect3DDevice9* device, IDirect3DSurface9* surface, float u, float v);
-    void LogColourGrid(IDirect3DDevice9* device, IDirect3DTexture9* texture, IDirect3DSurface9* surface,
-                       const char* label);
 
     bool m_prepared = false;
     bool m_active = true;
@@ -243,36 +235,9 @@ class WaterRenderer {
     char m_loggedSkip[96] = {};
     bool m_loggedFirstShade = false;
     bool m_loggedDepthMapping = false;
-    bool m_loggedDepthState = false;
-    bool m_loggedDepthSamples = false;
-    bool m_loggedDrawState = false;
-    bool m_loggedCopyResult = false;
-    uint32_t m_shadeRuns = 0;
-    uint32_t m_copyLogs = 0;
-    int m_changedCount = 0;
-    bool m_finalDumped = false;
-    float m_debugView = 0.0f;
-    IDirect3DQuery9* m_occlusion = nullptr;
     IDirect3DTexture9* m_depthRaw = nullptr;
     IDirect3DPixelShader9* m_depthRawShader = nullptr;
     IDirect3DPixelShader9* m_depthRestoreShader = nullptr;
-    bool m_queryOpen = false;
-    IDirect3DQuery9* m_coverQuery = nullptr;
-    bool m_coverPending = false;
-    bool m_coverMeasuring = false;
-    bool m_firstRunOfFrame = false;
-    bool m_f9WasDown = false;
-    bool m_f9Frame = false;
-    bool m_f9SplashPending = false;
-    uint32_t m_f9Run = 0;
-    int64_t m_lastCovered = -1;
-    uint32_t m_coverLogs = 0;
-    int64_t m_waterPixels = -1;
-    uint32_t m_offTarget = 0;
-    uint32_t m_noColour = 0;
-    uint32_t m_blended = 0;
-    bool m_otherDescLogged = false;
-    float m_changedUv[6][2] = {};
     bool m_loggedEndState = false;
     bool m_loggedDepthFormats = false;
 
@@ -292,8 +257,6 @@ class WaterRenderer {
     bool m_stateCaptured = false;
 
     IDirect3DTexture9* m_sceneColour = nullptr;
-    // The frame after the liquid draws, kept so the shader can compare it with m_sceneColour to find the water pixels.
-    IDirect3DTexture9* m_waterColour = nullptr;
     // The scene depth, borrowed from the frame's shared INTZ depth target (see CUnitOutline::DepthPassTexture).
     // Borrowed, not owned: nothing here releases it, and it is only valid while the depth pass is bound.
     IDirect3DTexture9* m_sceneDepthTexture = nullptr;

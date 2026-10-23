@@ -79,30 +79,6 @@ float4 main(float2 pixelIndex : VPOS) : COLOR0
     float3 sunSpecular = SunVisibility() * SunColour() * SpecularStrength() * SunGlint(sunRoughness, N, V, L);
     colour += sunSpecular + environmentAttenuation * environment;
 
-    // Debug views: 1-6 as listed above, 7 the water column depth (white at 50 yards), 8 the water's own distance (white
-    // at 400 yards), 9 the refracted scene copy alone.
-    [branch] if (WaterDebugView() > 0.5)
-    {
-        float view = WaterDebugView();
-        float3 debug = DebugColour(N, foamAlbedo, transmittance, reflected, ripples);
-        float4 inverseSize = cInverseTileSizes;
-        if (view > 11.5)
-            debug = saturate(0.5 + 0.5 * tex2Dlod(sSurface0, float4(w.position.xy * inverseSize.x, 0, 0)).xyz);
-        else if (view > 10.5)
-            debug = float3(ShallowTileWeight(inverseSize.x, w.columnDepth), ShallowTileWeight(inverseSize.y, w.columnDepth),
-                           ShallowTileWeight(inverseSize.z, w.columnDepth));
-        else if (view > 9.5)
-            debug = float3(saturate(0.5 + 0.25 * waves.moments.x), saturate(0.5 + 0.25 * waves.moments.y),
-                           saturate(waves.moments.z * 0.1));
-        else if (view > 8.5)
-            debug = LinearToGamma(refraction.scene);
-        else if (view > 7.5)
-            debug = saturate(w.waterZ / 400).xxx;
-        else if (view > 6.5)
-            debug = saturate(refraction.pathDepth / 50).xxx;
-        return float4(debug, w.coverage);
-    }
-
     // Self-lit surfaces. Zero for every water class, so the line above is all that water does. Lava is drawn with
     // it at full strength and takes its glow from its own scattering colours modulated by the wave normals, which
     // is the only per-pixel variation this shader has for a surface with no foam masks and no transmittance.

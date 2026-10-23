@@ -1950,9 +1950,6 @@ void CWorldScene::RenderLiquidPass() {
     }
 
     CMap::RenderWaterRipples();
-
-    // F9 diagnostic: the client's splash rings have just been drawn, which the modern water's own dumps cannot see.
-    GlobalWaterRenderer().DumpPostLiquid(static_cast<IDirect3DDevice9*>(g_theGxDevicePtr->DeviceNativeD3d9Device()));
 }
 
 // VERIFY: 58728bc0 auto

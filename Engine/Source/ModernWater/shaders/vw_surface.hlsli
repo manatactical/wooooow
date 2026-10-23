@@ -9,12 +9,6 @@ static const float kMinRayRise = 1e-4;
 static const float kRippleSlopeScale = 3;
 static const float kRippleFullDetailTexels = 2;
 static const float kRippleDetailFadeTexels = 2;
-// How many colour steps of change count as water having been drawn. The copies are 8-bit, so a step or two can come
-// from rounding; twelve is well above that and still well below the change a water surface makes.
-static const float kWaterCoverageColourSteps = 12;
-// The sampled difference is a 0..1 float, so it is scaled by 255 to count 8-bit steps before the threshold divides.
-static const float kWaterCoveragePerColourStep = 255 / kWaterCoverageColourSteps;
-
 struct WaterPixel
 {
     float2 uv;

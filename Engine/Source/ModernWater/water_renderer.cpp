@@ -21,7 +21,6 @@
 #include "modernwater-shaders/vs_fullscreen.h"
 
 #include <algorithm>
-#include <array>
 #include <vector>
 #include <cmath>
 #include <cstdio>
@@ -39,8 +38,6 @@ constexpr DWORD kMaxRenderTargets = 4;
 constexpr DWORD kSceneColourStage = 0;
 constexpr DWORD kSceneDepthStage = 1;
 constexpr DWORD kWaterDepthStage = 2;
-// The frame after the liquid draws, compared against kSceneColourStage to find the water pixels.
-constexpr DWORD kWaterColourStage = 13;
 constexpr DWORD kFirstSurfaceStage = 3;
 constexpr DWORD kFirstFoamStateStage = 7;
 constexpr DWORD kWaveFoamMaskStage = 11;
@@ -520,14 +517,9 @@ void WaterRenderer::ReleaseDefaultPool() {
     ReleaseMasks();
     // The scene and water copies are default-pool render targets and do not survive a device reset.
     SafeRelease(m_sceneColour);
-    SafeRelease(m_waterColour);
     SafeRelease(m_sceneDepthBefore);
     SafeRelease(m_waterDepthSurface);
     SafeRelease(m_waterDepth);
-    SafeRelease(m_occlusion);
-    SafeRelease(m_coverQuery);
-    m_coverPending = false;
-    m_queryOpen = false;
     m_copyW = m_copyH = 0;
     m_copyFailed = false;
     m_fft.ReleaseDefaultPool();
@@ -970,7 +962,6 @@ bool WaterRenderer::EnsureCopies(IDirect3DDevice9* device, IDirect3DSurface9* ta
     }
 
     SafeRelease(m_sceneColour);
-    SafeRelease(m_waterColour);
     SafeRelease(m_sceneDepthBefore);
     SafeRelease(m_waterDepthSurface);
     SafeRelease(m_waterDepth);
@@ -986,10 +977,6 @@ bool WaterRenderer::EnsureCopies(IDirect3DDevice9* device, IDirect3DSurface9* ta
 
     const bool colour = CreateTarget(device, width, height, desc.Format, &m_sceneColour) ||
                         CreateTarget(device, width, height, D3DFMT_A8R8G8B8, &m_sceneColour);
-    // The second colour copy is the frame as it stands after the liquid draws. Comparing it with m_sceneColour is what
-    // finds the water: the stock water changes the frame, so wherever the two copies differ is water.
-    const bool waterColour = CreateTarget(device, width, height, desc.Format, &m_waterColour) ||
-                             CreateTarget(device, width, height, D3DFMT_A8R8G8B8, &m_waterColour);
 
     // Both depth copies are attempted unconditionally: evaluating them with || short-circuits, so a failed R32F
     // target would leave m_waterDepth null while m_packedDepth was already set, and every later bind of it would
@@ -1006,9 +993,8 @@ bool WaterRenderer::EnsureCopies(IDirect3DDevice9* device, IDirect3DSurface9* ta
         depth = CreateTarget(device, width, height, D3DFMT_A8R8G8B8, &m_waterDepth) && packed;
     }
 
-    if (!colour || !waterColour || !depth) {
+    if (!colour || !depth) {
         SafeRelease(m_sceneColour);
-        SafeRelease(m_waterColour);
         SafeRelease(m_sceneDepthBefore);
         SafeRelease(m_waterDepth);
         m_copyFailed = true;
@@ -1439,7 +1425,7 @@ void WaterRenderer::FillClassConstants(ShadingConstants& constants, const WaterP
 
     constants.inverseTileSizes = {inverse[0], inverse[1], inverse[2], inverse[3]};
     constants.waveControl = {1.0f / static_cast<float>(std::max(tileCount, 1)), 0.0f,
-                             static_cast<float>(waterClass), m_debugView};
+                             static_cast<float>(waterClass), 0.0f};
     constants.foamScroll = {ScrollOffset(seconds, 0, preset.waveFoam[1]),
                             ScrollOffset(seconds, 1, preset.waveFoam[1]),
                             ScrollOffset(seconds, 0, preset.shoreFoam[3]),
@@ -1501,398 +1487,11 @@ void WaterRenderer::BindClassTextures(IDirect3DDevice9* device, const WaterPrese
                 D3DTEXF_LINEAR);
 }
 
-namespace {
-
-// Diagnostic: writes a surface to an uncompressed PNG at half size, so a frame can be looked at rather than inferred
-// from samples. Stored deflate blocks keep it free of any compression dependency.
-uint32_t PngCrc(const uint8_t* data, size_t size, uint32_t crc = 0xFFFFFFFFu) {
-    for (size_t i = 0; i < size; ++i) {
-        crc ^= data[i];
-
-        for (int bit = 0; bit < 8; ++bit) {
-            crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
-        }
-    }
-
-    return crc;
-}
-
-void PngChunk(FILE* file, const char* type, const std::vector<uint8_t>& body) {
-    auto be32 = [](uint32_t v) {
-        return std::array<uint8_t, 4>{static_cast<uint8_t>(v >> 24), static_cast<uint8_t>(v >> 16),
-                                      static_cast<uint8_t>(v >> 8), static_cast<uint8_t>(v)};
-    };
-    const auto length = be32(static_cast<uint32_t>(body.size()));
-    fwrite(length.data(), 1, 4, file);
-    fwrite(type, 1, 4, file);
-
-    if (!body.empty()) {
-        fwrite(body.data(), 1, body.size(), file);
-    }
-
-    uint32_t crc = PngCrc(reinterpret_cast<const uint8_t*>(type), 4);
-    crc = PngCrc(body.data(), body.size(), crc) ^ 0xFFFFFFFFu;
-    const auto tail = be32(crc);
-    fwrite(tail.data(), 1, 4, file);
-}
-
-// Diagnostic: one pixel of a render target as 8-bit RGB, so a debug view can be quoted as numbers.
-bool ReadPixelRgb(IDirect3DDevice9* device, IDirect3DSurface9* surface, float u, float v, int* rgb) {
-    D3DSURFACE_DESC desc = {};
-    IDirect3DSurface9* staging = nullptr;
-    bool ok = false;
-
-    if (surface && SUCCEEDED(surface->GetDesc(&desc)) &&
-        SUCCEEDED(device->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format, D3DPOOL_SYSTEMMEM,
-                                                      &staging, nullptr)) &&
-        staging && SUCCEEDED(device->GetRenderTargetData(surface, staging))) {
-        D3DLOCKED_RECT locked = {};
-
-        if (SUCCEEDED(staging->LockRect(&locked, nullptr, D3DLOCK_READONLY))) {
-            const uint8_t* row = static_cast<const uint8_t*>(locked.pBits) +
-                                 static_cast<UINT>(v * (desc.Height - 1)) * locked.Pitch;
-            const uint32_t texel = *reinterpret_cast<const uint32_t*>(row + static_cast<UINT>(u * (desc.Width - 1)) * 4);
-            rgb[0] = (texel >> 16) & 0xFF;
-            rgb[1] = (texel >> 8) & 0xFF;
-            rgb[2] = texel & 0xFF;
-            staging->UnlockRect();
-            ok = true;
-        }
-    }
-
-    if (staging) {
-        staging->Release();
-    }
-
-    return ok;
-}
-
-void DumpSurfacePng(IDirect3DDevice9* device, IDirect3DSurface9* surface, const char* path, bool depthFloat = false) {
-    D3DSURFACE_DESC desc = {};
-    IDirect3DSurface9* staging = nullptr;
-
-    if (!surface || FAILED(surface->GetDesc(&desc)) ||
-        FAILED(device->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format, D3DPOOL_SYSTEMMEM, &staging,
-                                                   nullptr)) ||
-        !staging) {
-        return;
-    }
-
-    D3DLOCKED_RECT locked = {};
-
-    if (SUCCEEDED(device->GetRenderTargetData(surface, staging)) &&
-        SUCCEEDED(staging->LockRect(&locked, nullptr, D3DLOCK_READONLY))) {
-        const uint32_t w = desc.Width / 2;
-        const uint32_t h = desc.Height / 2;
-        std::vector<uint8_t> raw;
-        raw.reserve((w * 3 + 1) * h);
-
-        for (uint32_t y = 0; y < h; ++y) {
-            raw.push_back(0);
-            const uint8_t* row = static_cast<const uint8_t*>(locked.pBits) + y * 2 * locked.Pitch;
-
-            for (uint32_t x = 0; x < w; ++x) {
-                const uint32_t texel = *reinterpret_cast<const uint32_t*>(row + x * 8);
-
-                if (depthFloat) {
-                    // R32F view depth, shown on a log scale: 0 is black, 65536 is white.
-                    float z = 0.0f;
-                    std::memcpy(&z, &texel, sizeof(z));
-                    const float g = std::clamp(std::log2(1.0f + std::max(z, 0.0f)) / 16.0f, 0.0f, 1.0f);
-                    const uint8_t grey = static_cast<uint8_t>(g * 255.0f);
-                    raw.push_back(grey);
-                    raw.push_back(grey);
-                    raw.push_back(grey);
-                    continue;
-                }
-
-                raw.push_back(static_cast<uint8_t>(texel >> 16));
-                raw.push_back(static_cast<uint8_t>(texel >> 8));
-                raw.push_back(static_cast<uint8_t>(texel));
-            }
-        }
-
-        staging->UnlockRect();
-
-        std::vector<uint8_t> z = {0x78, 0x01};
-        uint32_t a = 1;
-        uint32_t b = 0;
-
-        for (size_t pos = 0; pos < raw.size(); pos += 65535) {
-            const uint16_t n = static_cast<uint16_t>(std::min<size_t>(65535, raw.size() - pos));
-            z.push_back(pos + n >= raw.size() ? 1 : 0);
-            z.push_back(static_cast<uint8_t>(n));
-            z.push_back(static_cast<uint8_t>(n >> 8));
-            z.push_back(static_cast<uint8_t>(~n));
-            z.push_back(static_cast<uint8_t>(~n >> 8));
-            z.insert(z.end(), raw.begin() + pos, raw.begin() + pos + n);
-        }
-
-        for (uint8_t byte : raw) {
-            a = (a + byte) % 65521;
-            b = (b + a) % 65521;
-        }
-
-        const uint32_t adler = (b << 16) | a;
-        z.push_back(static_cast<uint8_t>(adler >> 24));
-        z.push_back(static_cast<uint8_t>(adler >> 16));
-        z.push_back(static_cast<uint8_t>(adler >> 8));
-        z.push_back(static_cast<uint8_t>(adler));
-
-        FILE* file = fopen(path, "wb");
-
-        if (file) {
-            const uint8_t signature[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
-            fwrite(signature, 1, 8, file);
-            std::vector<uint8_t> header = {static_cast<uint8_t>(w >> 24), static_cast<uint8_t>(w >> 16),
-                                           static_cast<uint8_t>(w >> 8),  static_cast<uint8_t>(w),
-                                           static_cast<uint8_t>(h >> 24), static_cast<uint8_t>(h >> 16),
-                                           static_cast<uint8_t>(h >> 8),  static_cast<uint8_t>(h),
-                                           8, 2, 0, 0, 0};
-            PngChunk(file, "IHDR", header);
-            PngChunk(file, "IDAT", z);
-            PngChunk(file, "IEND", {});
-            fclose(file);
-        }
-    }
-
-    staging->Release();
-}
-
-}  // namespace
-
-void WaterRenderer::LogDepthSamples(IDirect3DDevice9* device) {
-    // The two depth copies are read back on the CPU at a cross of real pixels. The shader turns the difference between
-    // them into coverage, so if they are equal here the water can never be drawn, and if they differ here the fault is
-    // downstream in the shader instead. A full-frame readback was tried first and hangs the client, so this samples a
-    // few points rather than the whole surface.
-    struct Point
-    {
-        const char* name;
-        float u;
-        float v;
-    };
-
-    // A scanline rather than a few guessed points: the previous version sampled five spots that turned out to be
-    // identical in both copies, which said nothing about whether the water drew anywhere. Walking one row across the
-    // width finds the water wherever it is on that row, and the count of changed pixels is the answer that matters.
-    // Only pixels whose colour changed are printed: those are water, and the depth delta there says whether the water's
-    // own surface ever reaches the depth copy.
-    for (int i = 0; i < m_changedCount; ++i) {
-        const float u = m_changedUv[i][0];
-        const float v = m_changedUv[i][1];
-        const float colourBefore = ReadColourCopy(device, m_sceneColour, u, v);
-        const float colourAfter = ReadColourCopy(device, m_waterColour, u, v);
-        const float depthBefore = ReadDepthCopy(device, m_sceneDepthBefore, u, v);
-        const float depthAfter = ReadDepthCopy(device, m_waterDepth, u, v);
-        VF_LOG_INFO("modern water: water pixel u %.3f v %.3f colour %.0f -> %.0f, depth %.3f -> %.3f (delta %.4f)", u, v,
-                    colourBefore, colourAfter, depthBefore, depthAfter, depthBefore - depthAfter);
-    }
-    m_changedCount = 0;
-}
-
-// One staging copy per surface, then a grid of samples read from the locked rect: cheap enough to run once per
-// session, unlike a readback per pixel.
-void WaterRenderer::LogColourGrid(IDirect3DDevice9* device, IDirect3DTexture9* texture, IDirect3DSurface9* surface,
-                                  const char* label) {
-    if (!texture || !surface) {
-        VF_LOG_INFO("modern water: grid %s unavailable", label);
-        return;
-    }
-
-    IDirect3DTexture9* other = m_sceneColour;
-    (void)other;
-
-    IDirect3DSurface9* stagingA = nullptr;
-    IDirect3DSurface9* stagingB = nullptr;
-    IDirect3DSurface9* textureSurface = nullptr;
-    D3DSURFACE_DESC desc = {};
-
-    surface->GetDesc(&desc);
-
-    bool ok = SUCCEEDED(texture->GetSurfaceLevel(0, &textureSurface)) && textureSurface &&
-              SUCCEEDED(device->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format, D3DPOOL_SYSTEMMEM,
-                                                            &stagingA, nullptr)) &&
-              SUCCEEDED(device->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format, D3DPOOL_SYSTEMMEM,
-                                                            &stagingB, nullptr)) &&
-              stagingA && stagingB && SUCCEEDED(device->GetRenderTargetData(textureSurface, stagingA)) &&
-              SUCCEEDED(device->GetRenderTargetData(surface, stagingB));
-
-    int changed = 0;
-    int sampled = 0;
-
-    if (ok) {
-        D3DLOCKED_RECT lockA = {};
-        D3DLOCKED_RECT lockB = {};
-
-        if (SUCCEEDED(stagingA->LockRect(&lockA, nullptr, D3DLOCK_READONLY)) &&
-            SUCCEEDED(stagingB->LockRect(&lockB, nullptr, D3DLOCK_READONLY))) {
-            char rows[12][17] = {};
-
-            for (int gy = 0; gy < 12; ++gy) {
-                for (int gx = 0; gx < 16; ++gx) {
-                    const UINT x = static_cast<UINT>((gx + 0.5f) / 16.0f * (desc.Width - 1));
-                    const UINT y = static_cast<UINT>((gy + 0.5f) / 12.0f * (desc.Height - 1));
-                    const uint8_t* rowA = static_cast<const uint8_t*>(lockA.pBits) + y * lockA.Pitch;
-                    const uint8_t* rowB = static_cast<const uint8_t*>(lockB.pBits) + y * lockB.Pitch;
-                    const uint32_t texelA = *reinterpret_cast<const uint32_t*>(rowA + x * 4);
-                    const uint32_t texelB = *reinterpret_cast<const uint32_t*>(rowB + x * 4);
-                    ++sampled;
-                    rows[gy][gx] = texelA != texelB ? '#' : '.';
-
-                    if (texelA != texelB) {
-                        // Remembered so the depth log can read the same pixels: these are known water pixels.
-                        if (m_changedCount < 6) {
-                            m_changedUv[m_changedCount][0] = (gx + 0.5f) / 16.0f;
-                            m_changedUv[m_changedCount][1] = (gy + 0.5f) / 12.0f;
-                            ++m_changedCount;
-                        }
-
-                        ++changed;
-                    }
-                }
-            }
-
-            stagingA->UnlockRect();
-            stagingB->UnlockRect();
-
-            for (int gy = 0; gy < 12; ++gy) {
-                VF_LOG_INFO("modern water: map %s %s", label, rows[gy]);
-            }
-        }
-
-        VF_LOG_INFO("modern water: grid %s changed %d of %d samples", label, changed, sampled);
-    } else {
-        VF_LOG_INFO("modern water: grid %s readback failed", label);
-    }
-
-    SafeRelease(stagingA);
-    SafeRelease(stagingB);
-    SafeRelease(textureSurface);
-}
-float WaterRenderer::ReadColourSurface(IDirect3DDevice9* device, IDirect3DSurface9* surface, float u, float v) {
-    if (!surface) {
-        return -1.0f;
-    }
-
-    D3DSURFACE_DESC desc = {};
-    surface->GetDesc(&desc);
-    IDirect3DSurface9* staging = nullptr;
-    float value = -1.0f;
-
-    if (SUCCEEDED(device->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format, D3DPOOL_SYSTEMMEM,
-                                                      &staging, nullptr)) &&
-        staging) {
-        if (SUCCEEDED(device->GetRenderTargetData(surface, staging))) {
-            D3DLOCKED_RECT locked = {};
-
-            if (SUCCEEDED(staging->LockRect(&locked, nullptr, D3DLOCK_READONLY))) {
-                const UINT x = static_cast<UINT>(u * (desc.Width - 1));
-                const UINT y = static_cast<UINT>(v * (desc.Height - 1));
-                const uint8_t* row = static_cast<const uint8_t*>(locked.pBits) + y * locked.Pitch;
-                const uint32_t texel = *reinterpret_cast<const uint32_t*>(row + x * 4);
-                value = static_cast<float>(((texel >> 16) & 0xFF) + ((texel >> 8) & 0xFF) + (texel & 0xFF));
-                staging->UnlockRect();
-            }
-        }
-
-        staging->Release();
-    }
-
-    return value;
-}
-float WaterRenderer::ReadColourCopy(IDirect3DDevice9* device, IDirect3DTexture9* texture, float u, float v) {
-    if (!texture) {
-        return -1.0f;
-    }
-
-    IDirect3DSurface9* surface = nullptr;
-
-    if (FAILED(texture->GetSurfaceLevel(0, &surface)) || !surface) {
-        return -1.0f;
-    }
-
-    D3DSURFACE_DESC desc = {};
-    surface->GetDesc(&desc);
-    IDirect3DSurface9* staging = nullptr;
-    float value = -1.0f;
-
-    if (SUCCEEDED(device->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format, D3DPOOL_SYSTEMMEM,
-                                                      &staging, nullptr)) &&
-        staging) {
-        if (SUCCEEDED(device->GetRenderTargetData(surface, staging))) {
-            D3DLOCKED_RECT locked = {};
-
-            if (SUCCEEDED(staging->LockRect(&locked, nullptr, D3DLOCK_READONLY))) {
-                const UINT x = static_cast<UINT>(u * (desc.Width - 1));
-                const UINT y = static_cast<UINT>(v * (desc.Height - 1));
-                const uint8_t* row = static_cast<const uint8_t*>(locked.pBits) + y * locked.Pitch;
-                const uint32_t texel = *reinterpret_cast<const uint32_t*>(row + x * 4);
-                // The three channels summed, which is enough to tell "this pixel changed" from "it did not".
-                value = static_cast<float>(((texel >> 16) & 0xFF) + ((texel >> 8) & 0xFF) + (texel & 0xFF));
-                staging->UnlockRect();
-            }
-        }
-
-        staging->Release();
-    }
-
-    surface->Release();
-    return value;
-}
-
-float WaterRenderer::ReadDepthCopy(IDirect3DDevice9* device, IDirect3DTexture9* texture, float u, float v) {
-    if (!texture) {
-        return -1.0f;
-    }
-
-    IDirect3DSurface9* surface = nullptr;
-
-    if (FAILED(texture->GetSurfaceLevel(0, &surface)) || !surface) {
-        return -1.0f;
-    }
-
-    D3DSURFACE_DESC desc = {};
-    surface->GetDesc(&desc);
-    IDirect3DSurface9* staging = nullptr;
-    float value = -1.0f;
-
-    if (SUCCEEDED(device->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format, D3DPOOL_SYSTEMMEM,
-                                                      &staging, nullptr)) &&
-        staging) {
-        if (SUCCEEDED(device->GetRenderTargetData(surface, staging))) {
-            D3DLOCKED_RECT locked = {};
-
-            if (SUCCEEDED(staging->LockRect(&locked, nullptr, D3DLOCK_READONLY))) {
-                const UINT x = static_cast<UINT>(u * (desc.Width - 1));
-                const UINT y = static_cast<UINT>(v * (desc.Height - 1));
-                const uint8_t* row = static_cast<const uint8_t*>(locked.pBits) + y * locked.Pitch;
-
-                if (m_packedDepth) {
-                    const uint32_t texel = *reinterpret_cast<const uint32_t*>(row + x * 4);
-                    const float unit = kWaterMaxViewDepth / kPackedDepthLevels;
-                    value = ((texel >> 16 & 0xFF) * kHighByteWeight + (texel >> 8 & 0xFF) * kMidByteWeight +
-                             (texel & 0xFF)) *
-                            unit;
-                } else {
-                    value = *reinterpret_cast<const float*>(row + x * 4);
-                }
-
-                staging->UnlockRect();
-            }
-        }
-
-        staging->Release();
-    }
-
-    surface->Release();
-    return value;
-}
 void WaterRenderer::ShadeClass(IDirect3DDevice9* device, WaterClass waterClass, double seconds) {
     const D3DVIEWPORT9& viewport = m_inputs.viewport;
     const RECT world = ViewportRect(viewport);
 
-    // Nothing here reads or writes depth: the coverage test is a texture comparison in the pixel shader. So no
+    // Nothing here reads or writes depth: the coverage test is a depth comparison in the pixel shader. So no
     // depth-stencil surface is bound and no stencil state is set -- there is nothing to leak into the client's passes.
     device->SetRenderTarget(0, m_saved.colour[0]);
     device->SetDepthStencilSurface(nullptr);
@@ -1918,9 +1517,6 @@ void WaterRenderer::ShadeClass(IDirect3DDevice9* device, WaterClass waterClass, 
     device->SetPixelShader(m_shade[m_shadingVariant]);
     device->SetPixelShaderConstantF(0, &m_common[0][0], kCommonConstants);
     BindPointSampler(device, kSceneColourStage, m_sceneColour, D3DTADDRESS_MIRROR);
-    // s13 is the frame after the liquid drew, copied here so the shader can compare it with s0. Where they differ is
-    // water: depth comparison never worked on this client, colour comparison cannot fail that way.
-    BindPointSampler(device, kWaterColourStage, m_waterColour, D3DTADDRESS_MIRROR);
     // s1 is the scene as it was before the liquid pass -- the terrain or object behind the water, which is what the
     // shader refracts and measures the water column against. s2 is the same buffer after the water drew, so on a
     // water pixel it holds the water's own surface; comparing the two is what finds the water.
@@ -1946,68 +1542,7 @@ void WaterRenderer::ShadeClass(IDirect3DDevice9* device, WaterClass waterClass, 
     device->SetPixelShaderConstantF(kShadingFirstConstant, &constants.light.x,
                                     sizeof(constants) / sizeof(Float4));
     BindClassTextures(device, *preset);
-    // Counts the pixels this draw shades (the shader clips the rest). Read next frame without stalling; a frame whose
-    // shading covered next to nothing while liquids were drawn is logged with where the camera was looking.
-    if (m_firstRunOfFrame) {
-        if (m_coverPending && m_coverQuery) {
-            DWORD pixels = 0;
-
-            if (m_coverQuery->GetData(&pixels, sizeof(pixels), 0) == S_OK) {
-                m_coverPending = false;
-                m_lastCovered = static_cast<int64_t>(pixels);
-
-                // A running trace of the covered pixel count against where the camera looks. A line is written when the
-                // look direction moved or the count jumped, and otherwise only now and then, so a sweep through a bad angle
-                // shows up as a handful of lines instead of being buried in identical ones.
-                static uint32_t s_traceFrames = 0;
-                static uint32_t s_traceLines = 0;
-                static float s_lastLook[3] = {0.0f, 0.0f, 0.0f};
-                static int64_t s_lastTraced = -1;
-                const float look[3] = {-m_inputs.cameraRelativeView[8], -m_inputs.cameraRelativeView[9],
-                                       -m_inputs.cameraRelativeView[10]};
-                const bool moved = std::fabs(look[0] - s_lastLook[0]) > 0.03f ||
-                                   std::fabs(look[1] - s_lastLook[1]) > 0.03f ||
-                                   std::fabs(look[2] - s_lastLook[2]) > 0.03f;
-                const bool jumped = s_lastTraced < 0 ||
-                                    std::llabs(static_cast<int64_t>(pixels) - s_lastTraced) > s_lastTraced / 10 + 1000;
-
-                if ((moved || jumped || (s_traceFrames % 180) == 0) && s_traceLines < 800) {
-                    ++s_traceLines;
-                    std::memcpy(s_lastLook, look, sizeof(look));
-                    s_lastTraced = static_cast<int64_t>(pixels);
-                    VF_LOG_INFO("modern water: trace covered %lu draws %u look %.2f %.2f %.2f pos %.1f %.1f %.1f",
-                                static_cast<unsigned long>(pixels), m_draws[static_cast<int>(waterClass)], look[0],
-                                look[1], look[2], m_inputs.camPos[0], m_inputs.camPos[1], m_inputs.camPos[2]);
-                }
-
-                ++s_traceFrames;
-
-                if (pixels < 2000 && m_coverLogs < 40) {
-                    ++m_coverLogs;
-                    VF_LOG_INFO("modern water: shading covered only %lu pixels; looking %.2f %.2f %.2f from %.1f %.1f %.1f",
-                                static_cast<unsigned long>(pixels), -m_inputs.cameraRelativeView[8],
-                                -m_inputs.cameraRelativeView[9], -m_inputs.cameraRelativeView[10], m_inputs.camPos[0],
-                                m_inputs.camPos[1], m_inputs.camPos[2]);
-                }
-            }
-        }
-
-        if (!m_coverQuery) {
-            device->CreateQuery(D3DQUERYTYPE_OCCLUSION, &m_coverQuery);
-        }
-
-        if (m_coverQuery && !m_coverPending && SUCCEEDED(m_coverQuery->Issue(D3DISSUE_BEGIN))) {
-            m_coverMeasuring = true;
-        }
-    }
-
     DrawFullscreenTriangle(device);
-
-    if (m_coverMeasuring) {
-        m_coverMeasuring = false;
-        m_coverPending = SUCCEEDED(m_coverQuery->Issue(D3DISSUE_END));
-    }
-
     ++m_shadedClasses;
     m_shadedClassMask |= 1u << static_cast<int>(waterClass);
 }
@@ -2034,8 +1569,6 @@ void WaterRenderer::ShadeRun(IDirect3DDevice9* device, WaterClass waterClass) {
 
     // The waves and ripples advance once per frame, not once per class: the first run of the frame pays for them and
     // the rest just shade.
-    m_firstRunOfFrame = !m_wavesSimulated;
-
     if (!m_wavesSimulated) {
         // The wave and ripple passes set no render state of their own: they draw fullscreen triangles into float
         // textures and rely on the caller having put the device in the pass state first. This point is still in the
@@ -2063,29 +1596,6 @@ void WaterRenderer::ShadeRun(IDirect3DDevice9* device, WaterClass waterClass) {
     // The frame's depth as it stands now: the water of this run has already drawn into it, so on those pixels it holds
     // the water surface, and everywhere else it holds whatever was there before. Comparing it with the baseline is what
     // finds this run's pixels.
-    //
-    // Measured once, on the first run of the frame: the device's real depth state at this instant, and whether this
-    // pass's depth surface is the one bound. ZWRITEENABLE is ignored by D3D9 while ZENABLE is false, and a stale
-    // "depth writes are on" in gx's cache is enough to swallow the client's own request -- so the values are read back
-    // from the device rather than inferred from what was asked for.
-    if (!m_loggedDepthState && device) {
-        m_loggedDepthState = true;
-        IDirect3DSurface9* boundDepth = nullptr;
-        device->GetDepthStencilSurface(&boundDepth);
-        DWORD zEnable = 0;
-        DWORD zWrite = 0;
-        DWORD stencil = 0;
-        device->GetRenderState(D3DRS_ZENABLE, &zEnable);
-        device->GetRenderState(D3DRS_ZWRITEENABLE, &zWrite);
-        device->GetRenderState(D3DRS_STENCILENABLE, &stencil);
-        VF_LOG_INFO("modern water: at draw time ZENABLE %u, ZWRITE %u, stencil %u, state captured %d, "
-                    "bound depth matches ours %d",
-                    static_cast<unsigned>(zEnable), static_cast<unsigned>(zWrite), static_cast<unsigned>(stencil),
-                    m_stateCaptured ? 1 : 0, boundDepth == m_waterDepthSurface ? 1 : 0);
-        if (boundDepth) {
-            boundDepth->Release();
-        }
-    }
     {
         D3DVIEWPORT9 copyViewport = {0, 0, m_inputs.viewport.Width, m_inputs.viewport.Height, 0.0f, 1.0f};
         SetTarget(device, m_waterDepth);
@@ -2094,183 +1604,7 @@ void WaterRenderer::ShadeRun(IDirect3DDevice9* device, WaterClass waterClass) {
         CopyDepthTargetLinear(device, m_sceneDepthTexture, m_waterDepth);
     }
 
-    // The frame as it stands right now: the water of this run has already drawn, so wherever this differs from the
-    // before copy those pixels are water. Taken through StretchRect on the colour target, which is exact -- unlike the
-    // depth copies it cannot come back identical when the water really drew.
-    if (m_queryOpen) {
-        m_queryOpen = false;
-        DWORD pixels = 0;
-        m_occlusion->Issue(D3DISSUE_END);
-
-        for (int spin = 0; spin < 100000; ++spin) {
-            const HRESULT hr = m_occlusion->GetData(&pixels, sizeof(pixels), D3DGETDATA_FLUSH);
-
-            if (hr == S_OK) {
-                m_waterPixels = static_cast<int64_t>(pixels);
-                break;
-            }
-
-            if (FAILED(hr)) {
-                break;
-            }
-        }
-    }
-
-    ++m_shadeRuns;
-    if (m_copyLogs < 40 && (m_shadeRuns % 120) == 1) {
-        ++m_copyLogs;
-        m_loggedCopyResult = true;
-        VF_LOG_INFO("modern water: waves tile mask 0x%X, valid %d, simulated this frame %d, ripples %d, waves setting %.2f, quality %d",
-                    m_waveTiles, m_wavesValid ? 1 : 0, m_wavesSimulated ? 1 : 0, m_ripplesShaded ? 1 : 0,
-                    m_tuning.waves, m_tuning.quality);
-        VF_LOG_INFO("modern water: fog applies %d, start %.2f end %.2f, colour 0x%08X; visibility at 10 yd %.3f, 50 yd %.3f, 200 yd %.3f",
-                    m_inputs.stockFogApplies ? 1 : 0, m_inputs.fogStart, m_inputs.fogEnd,
-                    static_cast<unsigned>(m_inputs.fogColor),
-                    std::clamp((m_inputs.fogEnd - 10.0f) / std::max(m_inputs.fogEnd - m_inputs.fogStart, 0.001f), 0.0f, 1.0f),
-                    std::clamp((m_inputs.fogEnd - 50.0f) / std::max(m_inputs.fogEnd - m_inputs.fogStart, 0.001f), 0.0f, 1.0f),
-                    std::clamp((m_inputs.fogEnd - 200.0f) / std::max(m_inputs.fogEnd - m_inputs.fogStart, 0.001f), 0.0f, 1.0f));
-        VF_LOG_INFO("modern water: of %u draws, %u off the frame target, %u without rgb write, %u blended", m_draws[static_cast<int>(waterClass)], m_offTarget, m_noColour, m_blended);
-        VF_LOG_INFO("modern water: liquid draws passed the depth test on %lld pixels (draws %u)",
-                    static_cast<long long>(m_waterPixels), m_draws[static_cast<int>(waterClass)]);
-        const bool ok = CopySceneColour(device, m_saved.colour[0], m_inputs.viewport, m_waterColour);
-        const float live = ReadColourSurface(device, m_saved.colour[0], 0.5f, 0.86f);
-        const float before = ReadColourCopy(device, m_sceneColour, 0.5f, 0.86f);
-        const float after = ReadColourCopy(device, m_waterColour, 0.5f, 0.86f);
-        VF_LOG_INFO("modern water: copy ok %d, live frame %.0f, before copy %.0f, after copy %.0f", ok ? 1 : 0,
-                    live, before, after);
-        // Where, over the whole frame, did the live target differ from the copy taken before the liquid draws? That
-        // is the only question that matters: the pixel-by-pixel samples kept landing on unchanged ground.
-        m_changedCount = 0;
-
-        if (m_copyLogs == 3) {
-            IDirect3DSurface9* beforeSurface = nullptr;
-
-            if (SUCCEEDED(m_sceneColour->GetSurfaceLevel(0, &beforeSurface)) && beforeSurface) {
-                DumpSurfacePng(device, beforeSurface, "Logs/water-before.png");
-                beforeSurface->Release();
-            }
-
-            DumpSurfacePng(device, m_saved.colour[0], "Logs/water-live.png");
-
-            IDirect3DSurface9* depthSurface = nullptr;
-
-            if (SUCCEEDED(m_sceneDepthBefore->GetSurfaceLevel(0, &depthSurface)) && depthSurface) {
-                DumpSurfacePng(device, depthSurface, "Logs/water-depth.png", true);
-                depthSurface->Release();
-            }
-
-            // The scene depth the water tested against, down a few screen columns: terrain in the lower half should read
-            // as a near distance, and far (65536) there would mean the shared depth does not hold the terrain.
-            for (int gy = 1; gy <= 5; ++gy) {
-                const float v = gy / 6.0f;
-                VF_LOG_INFO("modern water: scene depth at v %.2f: u.2 %.1f, u.5 %.1f, u.8 %.1f", v,
-                            ReadDepthCopy(device, m_sceneDepthBefore, 0.2f, v),
-                            ReadDepthCopy(device, m_sceneDepthBefore, 0.5f, v),
-                            ReadDepthCopy(device, m_sceneDepthBefore, 0.8f, v));
-            }
-        }
-
-        LogColourGrid(device, m_sceneColour, m_saved.colour[0], "live-vs-before");
-        LogColourGrid(device, m_waterColour, m_saved.colour[0], "after-vs-live");
-    } else {
-        CopySceneColour(device, m_saved.colour[0], m_inputs.viewport, m_waterColour);
-    }
-
-    // F9 captures this frame for inspection: what the frame holds before the shading (the stock water as drawn), and
-    // after it, plus the debug views. Pressed while looking at the angle where the water goes missing, it records what
-    // the pass saw and produced there. Edge-triggered, and only on the first run of a frame.
-    const bool f9Down = (GetAsyncKeyState(VK_F9) & 0x8000) != 0;
-    const bool capture = f9Down && !m_f9WasDown && m_firstRunOfFrame;
-    m_f9WasDown = f9Down;
-
-    if (capture) {
-        m_f9Frame = true;
-        m_f9Run = 0;
-    }
-
-    if (capture) {
-        m_f9SplashPending = true;
-        DumpSurfacePng(device, m_saved.colour[0], "Logs/water-f9-live.png");
-        IDirect3DSurface9* beforeSurface = nullptr;
-
-        if (SUCCEEDED(m_sceneColour->GetSurfaceLevel(0, &beforeSurface)) && beforeSurface) {
-            DumpSurfacePng(device, beforeSurface, "Logs/water-f9-before.png");
-            beforeSurface->Release();
-        }
-
-        IDirect3DSurface9* depthSurface = nullptr;
-
-        if (SUCCEEDED(m_sceneDepthBefore->GetSurfaceLevel(0, &depthSurface)) && depthSurface) {
-            DumpSurfacePng(device, depthSurface, "Logs/water-f9-depth.png", true);
-            depthSurface->Release();
-        }
-
-        VF_LOG_INFO("modern water: F9 capture, class %s, %u draws this run, looking %.2f %.2f %.2f from %.1f %.1f %.1f",
-                    WaterClassLabel(waterClass), m_draws[static_cast<int>(waterClass)], -m_inputs.cameraRelativeView[8],
-                    -m_inputs.cameraRelativeView[9], -m_inputs.cameraRelativeView[10], m_inputs.camPos[0],
-                    m_inputs.camPos[1], m_inputs.camPos[2]);
-    }
-
     ShadeClass(device, waterClass, seconds);
-
-    if (capture) {
-        DumpSurfacePng(device, m_saved.colour[0], "Logs/water-f9-final.png");
-
-        for (const int view : {1, 3, 4, 7, 8, 10}) {
-            m_debugView = static_cast<float>(view);
-            ShadeClass(device, waterClass, seconds);
-            char path[64];
-            std::snprintf(path, sizeof(path), "Logs/water-f9-view%d.png", view);
-            DumpSurfacePng(device, m_saved.colour[0], path);
-            int rgb[3] = {-1, -1, -1};
-            ReadPixelRgb(device, m_saved.colour[0], 0.5f, 0.85f, rgb);
-            VF_LOG_INFO("modern water: F9 view %d at u.5 v.85 = %d %d %d", view, rgb[0], rgb[1], rgb[2]);
-        }
-
-        m_debugView = 0.0f;
-        ShadeClass(device, waterClass, seconds);
-    }
-
-    // Every run of an F9 frame is dumped as it finishes, so a later run (another water class) that paints over the
-    // first one shows up as a change between consecutive images.
-    if (m_f9Frame && m_debugView == 0.0f) {
-        char runPath[64];
-        std::snprintf(runPath, sizeof(runPath), "Logs/water-f9-run%u.png", m_f9Run);
-        DumpSurfacePng(device, m_saved.colour[0], runPath);
-        VF_LOG_INFO("modern water: F9 run %u: class %s, %u draws", m_f9Run, WaterClassLabel(waterClass),
-                    m_draws[static_cast<int>(waterClass)]);
-        ++m_f9Run;
-    }
-
-    if (m_copyLogs == 3 && !m_finalDumped) {
-        m_finalDumped = true;
-        DumpSurfacePng(device, m_saved.colour[0], "Logs/water-final.png");
-
-        // Each debug view of the shader, once, so the artifacts can be told apart: 1 normal, 2 foam, 3 transmittance,
-        // 4 reflection, 6 ripples. Each is drawn over the same covered pixels and dumped, then the normal shading is
-        // put back on top.
-        for (const int view : {1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12}) {
-            m_debugView = static_cast<float>(view);
-            ShadeClass(device, waterClass, seconds);
-            char path[64];
-            std::snprintf(path, sizeof(path), "Logs/water-view%d.png", view);
-            DumpSurfacePng(device, m_saved.colour[0], path);
-            int rgb[3] = {-1, -1, -1};
-            ReadPixelRgb(device, m_saved.colour[0], 0.7f, 0.8f, rgb);
-            VF_LOG_INFO("modern water: view %d at u.7 v.8 = %d %d %d", view, rgb[0], rgb[1], rgb[2]);
-        }
-
-        m_debugView = 0.0f;
-        ShadeClass(device, waterClass, seconds);
-    }
-
-    // Read back both depth copies at a spread of real pixels once. Whether the two differ at all is the single fact
-    // that decides if coverage can ever be non-zero, and it cannot be seen in a screenshot: identical copies look
-    // exactly like water that failed to draw.
-    if (m_loggedCopyResult && device) {
-        m_loggedCopyResult = false;
-        LogDepthSamples(device);
-    }
 
     // This run is resolved, so its pixels become the baseline: the next run's water is measured against a depth that
     // already contains this run's surface, and cannot re-find them.
@@ -2310,13 +1644,6 @@ bool WaterRenderer::Begin(IDirect3DDevice9* device, const void* liquidRenderer, 
     if (device && SUCCEEDED(device->GetViewport(&liveViewport))) {
         inputs.viewport.MinZ = liveViewport.MinZ;
         inputs.viewport.MaxZ = liveViewport.MaxZ;
-        static bool s_loggedRange = false;
-
-        if (!s_loggedRange) {
-            s_loggedRange = true;
-            VF_LOG_INFO("modern water: client viewport %lux%lu, depth range %.4f..%.4f", liveViewport.Width,
-                        liveViewport.Height, liveViewport.MinZ, liveViewport.MaxZ);
-        }
     }
 
     if (m_armed) {
@@ -2441,16 +1768,6 @@ bool WaterRenderer::Begin(IDirect3DDevice9* device, const void* liquidRenderer, 
     // depth instead -- see ShadeClass.
     device->SetRenderState(D3DRS_STENCILENABLE, FALSE);
 
-    // Diagnostic: how many pixels the liquid draws get past the depth test on. Zero with water on screen means the
-    // draws are being rejected by depth; a large count with no colour change means they draw but are not seen.
-    if (!m_occlusion) {
-        device->CreateQuery(D3DQUERYTYPE_OCCLUSION, &m_occlusion);
-    }
-
-    m_queryOpen = m_occlusion && SUCCEEDED(m_occlusion->Issue(D3DISSUE_BEGIN));
-    m_waterPixels = -1;
-    m_offTarget = m_noColour = m_blended = 0;
-
     m_armed = true;
     m_shadedClasses = 0;
     m_shadedClassMask = 0;
@@ -2459,8 +1776,11 @@ bool WaterRenderer::Begin(IDirect3DDevice9* device, const void* liquidRenderer, 
 }
 
 void WaterRenderer::Tag(IDirect3DDevice9* device, WaterClass waterClass) {
-    // Only a tally: the class is recorded so the shading pass does not bother with a preset nothing drew. The water
-    // pixels are found by comparing the frame colour before and after the liquid draws.
+    (void)device;
+
+    // Only a tally: the class is recorded so the shading pass does not bother with a preset nothing drew. The pixels
+    // themselves are found by the depth difference, not by anything written during the draw -- the client's depth
+    // surface is D24X8 and carries no stencil to tag with.
     const int index = static_cast<int>(waterClass);
 
     if (!m_armed || index <= 0 || index >= kWaterClassCount) {
@@ -2468,62 +1788,6 @@ void WaterRenderer::Tag(IDirect3DDevice9* device, WaterClass waterClass) {
     }
 
     ++m_draws[index];
-
-    // Diagnostic on every draw, not just the first: where this draw lands and whether it can write colour.
-    if (device) {
-        IDirect3DSurface9* current = nullptr;
-        DWORD colourWrite = 0;
-        DWORD blend = 0;
-        device->GetRenderTarget(0, &current);
-        device->GetRenderState(D3DRS_COLORWRITEENABLE, &colourWrite);
-        device->GetRenderState(D3DRS_ALPHABLENDENABLE, &blend);
-        m_offTarget += current != m_saved.colour[0] ? 1u : 0u;
-        m_noColour += (colourWrite & 0x7) != 0x7 ? 1u : 0u;
-        m_blended += blend ? 1u : 0u;
-
-        if (current && current != m_saved.colour[0] && !m_otherDescLogged) {
-            m_otherDescLogged = true;
-            D3DSURFACE_DESC d = {};
-            current->GetDesc(&d);
-            VF_LOG_INFO("modern water: a draw targets another surface %ux%u format %u (frame is %ux%u)", d.Width,
-                        d.Height, static_cast<unsigned>(d.Format), m_inputs.viewport.Width, m_inputs.viewport.Height);
-        }
-
-        if (current) {
-            current->Release();
-        }
-    }
-
-    // Measured here, immediately before the draw it applies to. Reading the device after the draws reported ZWRITE 1,
-    // which hid the possibility that ZENABLE is off: D3D9 ignores ZWRITEENABLE while depth testing is disabled, so the
-    // water would write no depth with every state looking correct.
-    if (device && !m_loggedDrawState) {
-        m_loggedDrawState = true;
-        DWORD zEnable = 0;
-        DWORD zWrite = 0;
-        DWORD colourWrite = 0;
-        device->GetRenderState(D3DRS_ZENABLE, &zEnable);
-        device->GetRenderState(D3DRS_ZWRITEENABLE, &zWrite);
-        device->GetRenderState(D3DRS_COLORWRITEENABLE, &colourWrite);
-        IDirect3DSurface9* bound = nullptr;
-        device->GetDepthStencilSurface(&bound);
-        // The surface the client is actually drawing into right now. If this is not the frame this pass captured at
-        // Begin, the water lands somewhere the pass never copies, which is exactly what the grid readback showed.
-        IDirect3DSurface9* current = nullptr;
-        device->GetRenderTarget(0, &current);
-        VF_LOG_INFO("modern water: before water draw ZENABLE %u, ZWRITE %u, colourwrite 0x%X, our depth bound %d, "
-                    "target is frame %d",
-                    static_cast<unsigned>(zEnable), static_cast<unsigned>(zWrite),
-                    static_cast<unsigned>(colourWrite), bound == m_waterDepthSurface ? 1 : 0,
-                    current && current == m_saved.colour[0] ? 1 : 0);
-        if (current) {
-            current->Release();
-        }
-
-        if (bound) {
-            bound->Release();
-        }
-    }
 }
 
 void WaterRenderer::End(IDirect3DDevice9* device) {
@@ -2538,27 +1802,8 @@ void WaterRenderer::End(IDirect3DDevice9* device) {
     // is nothing left to shade here.
     m_armed = false;
 
-    // A frame that armed the pass and shaded nothing is a frame with no modern water; say so, a few times, with the
-    // camera so the angle that causes it can be matched against the log.
-    {
-        static uint32_t s_empty = 0;
-
-        if (m_shadedClasses == 0 && s_empty < 30) {
-            ++s_empty;
-            VF_LOG_INFO("modern water: pass armed but shaded nothing; camera %.1f %.1f %.1f, target %.1f %.1f, skip '%s'",
-                        m_inputs.camPos[0], m_inputs.camPos[1], m_inputs.camPos[2], m_inputs.camTarget[0],
-                        m_inputs.camTarget[1], m_skip);
-        }
-    }
-
     // Put the shared depth back as it was before the water wrote into it, for everything the client draws after the pass.
     RestoreSceneDepth(device);
-
-    if (m_f9Frame) {
-        m_f9Frame = false;
-        DumpSurfacePng(device, m_saved.colour[0], "Logs/water-f9-end.png");
-        VF_LOG_INFO("modern water: F9 end of pass after %u runs", m_f9Run);
-    }
 
     // Everything the client had before Begin is handed back: the frame's colour targets, its depth surface and every
     // render state the shading pass touched.
@@ -2605,23 +1850,6 @@ void WaterRenderer::End(IDirect3DDevice9* device) {
 
     if (expected) {
         expected->Release();
-    }
-}
-
-void WaterRenderer::DumpPostLiquid(IDirect3DDevice9* device) {
-    // The client draws the character's splash and wake rings (CMap::RenderWaterRipples) after the liquid pass has ended,
-    // so none of the F9 dumps taken inside the pass can show them. This one is taken once those have been drawn.
-    if (!m_f9SplashPending || !device) {
-        return;
-    }
-
-    m_f9SplashPending = false;
-    IDirect3DSurface9* target = nullptr;
-
-    if (SUCCEEDED(device->GetRenderTarget(0, &target)) && target) {
-        DumpSurfacePng(device, target, "Logs/water-f9-splash.png");
-        target->Release();
-        VF_LOG_INFO("modern water: F9 frame after the client's ripples written");
     }
 }
 

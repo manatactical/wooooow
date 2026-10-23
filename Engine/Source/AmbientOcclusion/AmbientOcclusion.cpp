@@ -638,6 +638,11 @@ FFX::Tex CAmbientOcclusion::s_excludeTex;
 CGxTex* CAmbientOcclusion::s_exclude;
 bool CAmbientOcclusion::s_excludeStamped;
 bool CAmbientOcclusion::s_stamping;
+
+// Pixel shader constant c0 as the caller had it, put back by EndExcludeStamps. RsPush/RsPop do not cover shader
+// constants, and the stamp's alpha cutoff would otherwise be left in c0 for whatever draws next (the stock water and
+// the effects after it read constants they set earlier and do not set again).
+static float s_savedPixelC0[4];
 FFX::Tex CAmbientOcclusion::s_zTex;
 CGxTex* CAmbientOcclusion::s_z;
 FFX::Tex CAmbientOcclusion::s_aoTex;
@@ -784,6 +789,7 @@ bool CAmbientOcclusion::BeginExcludeStamps(bool ignoreAlpha) {
     GxRsSet(GxRs_DepthWrite, 0);
     GxRsSet(GxRs_ColorWrite, 15);
     GxRsSet(GxRs_PixelShader, s_excludePS);
+    memcpy(s_savedPixelC0, g_theGxDevicePtr->ShaderConstantsLock(GxSh_Pixel), sizeof(s_savedPixelC0));
     GxShaderConstantsSet(GxSh_Pixel, 0, cutoff, 1);
 
     s_stamping = true;
@@ -806,6 +812,7 @@ void CAmbientOcclusion::EndExcludeStamps() {
     s_stamping = false;
     g_theGxDevicePtr->RsPop();
     GxRenderTargetSet(GxBuffers_Color, nullptr, 0);
+    GxShaderConstantsSet(GxSh_Pixel, 0, s_savedPixelC0, 1);
 }
 
 // Not in the original binary. See the declaration. One surface at a time, so the target is switched in and out

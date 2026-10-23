@@ -1657,11 +1657,24 @@ bool WaterRenderer::Begin(IDirect3DDevice9* device, const void* liquidRenderer, 
     // decodes was written through the device's real viewport, so decoding it against an assumed 0..1 range compresses
     // every terrain distance to a few yards and puts the water in the wrong place. Read from the device, not assumed.
     WaterFrameInputs inputs = clientInputs;
-    D3DVIEWPORT9 liveViewport = {};
+    //
+    // The range comes from gx's own viewport, which is what the world was drawn with. The device's live viewport is not
+    // trustworthy at this point: switching a render target (the ambient occlusion stamps do, around the grass and each
+    // water surface) makes D3D reset the viewport to the full 0..1 depth range until gx next flushes its dirty viewport.
+    // A pass that began in that window decoded every depth against the wrong range.
+    float gxMinX = 0.0f, gxMaxX = 0.0f, gxMinY = 0.0f, gxMaxY = 0.0f, gxMinZ = 0.0f, gxMaxZ = 0.0f;
+    GxXformViewport(gxMinX, gxMaxX, gxMinY, gxMaxY, gxMinZ, gxMaxZ);
 
-    if (device && SUCCEEDED(device->GetViewport(&liveViewport))) {
-        inputs.viewport.MinZ = liveViewport.MinZ;
-        inputs.viewport.MaxZ = liveViewport.MaxZ;
+    if (gxMaxZ > gxMinZ) {
+        inputs.viewport.MinZ = gxMinZ;
+        inputs.viewport.MaxZ = gxMaxZ;
+    } else {
+        D3DVIEWPORT9 liveViewport = {};
+
+        if (device && SUCCEEDED(device->GetViewport(&liveViewport))) {
+            inputs.viewport.MinZ = liveViewport.MinZ;
+            inputs.viewport.MaxZ = liveViewport.MaxZ;
+        }
     }
 
     if (m_armed) {

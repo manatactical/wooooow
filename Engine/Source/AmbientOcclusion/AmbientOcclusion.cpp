@@ -645,7 +645,7 @@ bool CAmbientOcclusion::EnsureResources() {
 
 // Not in the original binary. See the declaration; modelled on CUnitOutline::StampMask, except that the render
 // target is switched once for a whole run of stamps instead of once per stamp.
-bool CAmbientOcclusion::BeginExcludeStamps() {
+bool CAmbientOcclusion::BeginExcludeStamps(bool ignoreAlpha) {
     if (!Active() || !EnsureResources()) {
         return false;
     }
@@ -672,7 +672,8 @@ bool CAmbientOcclusion::BeginExcludeStamps() {
     }
 
     const int32_t alphaRef = g_theGxDevicePtr->m_appRenderStates[GxRs_AlphaRef].m_value.m_data.i[0];
-    const float cutoff[4] = { static_cast<float>(alphaRef) * (1.0f / 255.0f), 0.0f, 0.0f, 0.0f };
+    // Below zero nothing is ever clipped: the whole surface is stamped, whatever its texture's alpha says.
+    const float cutoff[4] = { ignoreAlpha ? -1.0f : static_cast<float>(alphaRef) * (1.0f / 255.0f), 0.0f, 0.0f, 0.0f };
 
     // Render targets live outside RsPush/RsPop, so the caller's target is put back by hand in EndExcludeStamps.
     // The world's viewport is left alone: the mask is drawn through the same projection and viewport as the
@@ -716,6 +717,19 @@ void CAmbientOcclusion::EndExcludeStamps() {
     s_stamping = false;
     g_theGxDevicePtr->RsPop();
     GxRenderTargetSet(GxBuffers_Color, nullptr, 0);
+}
+
+// Not in the original binary. See the declaration. One surface at a time, so the target is switched in and out
+// around each; a view has a handful of water surfaces at most.
+void CAmbientOcclusion::StampLiquidBatch(const CGxBatch& batch) {
+    if (!Enabled()) {
+        return;
+    }
+
+    if (BeginExcludeStamps(true)) {
+        StampExcluded(batch);
+        EndExcludeStamps();
+    }
 }
 
 // Not in the original binary. The world -> interface boundary; see the header for the order and why.

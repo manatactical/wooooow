@@ -1,4 +1,5 @@
 #include "Liquid.h"
+#include "Engine/Source/AmbientOcclusion/AmbientOcclusion.h"
 #include "Engine/Source/ModernWater/ModernWater.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/Gx.h"
@@ -200,6 +201,9 @@ void Liquid::CMaterialWater::Render(Liquid::IEnvironment* environment, Liquid::I
     geomFactory->GetBuffers(GxVBF_PNCT2, &vertexBuf, &indexBuf, &batch);
     GxPrimVertexPtr(vertexBuf, GxVBF_PNCT2);
     g_theGxDevicePtr->PrimIndexPtr(indexBuf);
+    // Not in the original binary. Marks the water for the ambient occlusion pass, so what is seen through it keeps
+    // the light it had instead of being shaded as if it were in the open.
+    CAmbientOcclusion::StampLiquidBatch(batch);
     g_theGxDevicePtr->Draw(&batch, 1);
     g_theGxDevicePtr->RsPop();
 }
@@ -279,6 +283,9 @@ void Liquid::CMaterialWaterNoSpec::Render(Liquid::IEnvironment* environment, Liq
     geomFactory->GetBuffers(GxVBF_PNCT2, &vertexBuf, &indexBuf, &batch);
     GxPrimVertexPtr(vertexBuf, GxVBF_PNCT2);
     g_theGxDevicePtr->PrimIndexPtr(indexBuf);
+    // Not in the original binary. Marks the water for the ambient occlusion pass, so what is seen through it keeps
+    // the light it had instead of being shaded as if it were in the open.
+    CAmbientOcclusion::StampLiquidBatch(batch);
     g_theGxDevicePtr->Draw(&batch, 1);
     g_theGxDevicePtr->RsPop();
 }
@@ -352,6 +359,9 @@ void Liquid::CMaterialWaterFFP::Render(Liquid::IEnvironment* environment, Liquid
     geomFactory->GetBuffers(GxVBF_PNCT2, &vertexBuf, &indexBuf, &batch);
     GxPrimVertexPtr(vertexBuf, GxVBF_PNCT2);
     g_theGxDevicePtr->PrimIndexPtr(indexBuf);
+    // Not in the original binary. Marks the water for the ambient occlusion pass, so what is seen through it keeps
+    // the light it had instead of being shaded as if it were in the open.
+    CAmbientOcclusion::StampLiquidBatch(batch);
     g_theGxDevicePtr->Draw(&batch, 1);
 
     GxXformPop(GxXform_Tex1);

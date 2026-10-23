@@ -60,9 +60,14 @@ class CAmbientOcclusion {
     // The stamps go between BeginExcludeStamps and EndExcludeStamps, which switch the render target in and out once
     // for the whole run rather than once per batch. Begin returns false when the pass is not running, and then the
     // other two do nothing.
-    static bool BeginExcludeStamps();
+    static bool BeginExcludeStamps(bool ignoreAlpha = false);
     static void StampExcluded(const CGxBatch& batch);
     static void EndExcludeStamps();
+
+    // Not in the original binary. Called right before a water surface is drawn. The surface is stamped into the same
+    // exclusion mask the grass uses, whole -- its texture alpha is its transparency, not its shape -- so whatever is
+    // seen through it, and the surface itself, is left unshaded.
+    static void StampLiquidBatch(const CGxBatch& batch);
 
     private:
     static bool EnsureResources();

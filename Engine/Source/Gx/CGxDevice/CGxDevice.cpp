@@ -135,6 +135,9 @@ void* CGxDevice::DeviceNativeD3d9Device() {
     return nullptr;
 }
 
+void CGxDevice::DeviceInvalidateGeometryBindings() {
+}
+
 void CGxDevice::LogCrashInfo(char* buffer, uint32_t size) {
 }
 

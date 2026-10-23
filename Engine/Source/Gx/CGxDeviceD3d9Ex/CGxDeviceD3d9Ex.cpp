@@ -3606,6 +3606,14 @@ void* CGxDeviceD3d9Ex::DeviceNativeD3d9Device() {
     return this->m_d3dDevice;
 }
 
+void CGxDeviceD3d9Ex::DeviceInvalidateGeometryBindings() {
+    this->m_d3dCurrentVertexDecl = nullptr;
+
+    for (uint32_t stream = 0; stream < 8; stream++) {
+        this->m_d3dVertexStreamBuf[stream] = nullptr;
+    }
+}
+
 void* CGxDeviceD3d9Ex::DeviceGetTexSurface(CGxTex* texture) {
     if (!texture || texture->m_target == GxTex_CubeMap) {
         return nullptr;

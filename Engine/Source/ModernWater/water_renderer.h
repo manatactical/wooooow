@@ -204,6 +204,7 @@ class WaterRenderer {
                          IDirect3DTexture9* destination);
     void CopyDepthRaw(IDirect3DDevice9* device);
     void RestoreSceneDepth(IDirect3DDevice9* device);
+    void RestoreAfterDraws(IDirect3DDevice9* device);
     bool CopyFrameDepth(IDirect3DDevice9* device, const D3DVIEWPORT9& viewport);
     void CopyDepthTargetLinear(IDirect3DDevice9* device, IDirect3DTexture9* source, IDirect3DTexture9* copy);
     bool BuildCommonConstants(const D3DSURFACE_DESC& depthDesc);

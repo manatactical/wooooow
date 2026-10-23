@@ -256,6 +256,9 @@ class CGxDevice {
     // facade: gx caches hardware state in m_deviceStates and early-outs when a write matches the cache, so a
     // direct SetRenderState would leave the cache disagreeing with the hardware.
     virtual void* DeviceNativeD3d9Device();
+    // Not in the original binary. Forgets the vertex declaration and vertex buffers gx believes are bound, so the next draw
+    // sets them again. For code that changes them on the device behind gx's back (the modern water pass).
+    virtual void DeviceInvalidateGeometryBindings();
 
     static HSLOG m_log;
     static C2iVector s_clientAdjust;

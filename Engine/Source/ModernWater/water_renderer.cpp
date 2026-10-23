@@ -896,7 +896,22 @@ void WaterRenderer::RestoreClientState(IDirect3DDevice9* device) {
     }
 
     g_theGxDevicePtr->IRsForceUpdate();
+    // Applying the block also puts the device's vertex declaration and stream 0 back to what they were at Begin, which
+    // gx's own record of what is bound does not know, so it would skip binding them again.
+    g_theGxDevicePtr->DeviceInvalidateGeometryBindings();
     ForceShaderConstantUpload();
+}
+
+// The end of an armed frame, after the client's liquid draws. Unlike RestoreTargets this puts nothing back from the
+// Begin-time state block: the draws ran through gx on top of the state RestoreClientState left, so the device and gx's
+// cache agree, and applying the older block here silently diverged them. The effects drawn after the liquid pass then
+// inherited the wrong state: a black background, or nothing at all, whenever water was in view.
+void WaterRenderer::RestoreAfterDraws(IDirect3DDevice9* device) {
+    (void)device;
+    m_stateCaptured = false;
+    g_theGxDevicePtr->m_viewportDirty = 1;
+    g_theGxDevicePtr->m_scissorRectDirty = 1;
+    ReleaseTargets();
 }
 
 void WaterRenderer::RestoreTargets(IDirect3DDevice9* device) {
@@ -1576,6 +1591,12 @@ void WaterRenderer::ShadeRun(IDirect3DDevice9* device, WaterClass waterClass) {
         return;
     }
 
+    // The block restored when this run is done has to describe the device as it is *now*, after the client's liquid draws
+    // so far, not as it was at Begin. Those draws went through gx, so gx's cache agrees with the hardware at this point;
+    // restoring the Begin-time block over them put the device back on state gx no longer believed it held, and gx never
+    // resent the difference, so whatever drew after the liquid pass (the effects) ran on stale textures and samplers.
+    CaptureClientState();
+
     const double seconds = WaterSeconds();
 
     // Reported once per class, which is the smallest thing that answers "is the water being shaded at all". If nothing
@@ -1852,7 +1873,7 @@ void WaterRenderer::End(IDirect3DDevice9* device) {
     }
 
     if (m_stateCaptured) {
-        RestoreTargets(device);
+        RestoreAfterDraws(device);
     } else {
         ReleaseTargets();
     }

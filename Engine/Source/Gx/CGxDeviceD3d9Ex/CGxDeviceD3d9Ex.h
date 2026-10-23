@@ -279,6 +279,9 @@ class CGxDeviceD3d9Ex : public CGxDevice {
     virtual void* DeviceGetBoundDepthSurface();
     virtual void* DeviceGetTexSurface(CGxTex* texture);
     virtual void* DeviceNativeD3d9Device();
+    // Not in the original binary. Forgets the vertex declaration and vertex buffers gx believes are bound, so the next draw
+    // sets them again. For code that changes them on the device behind gx's back (the modern water pass).
+    virtual void DeviceInvalidateGeometryBindings();
     virtual void DeviceOverride(EGxOverride override, uint32_t value);
     virtual void CapsWindowSize(CRect& rect);
     virtual void CapsWindowSizeInScreenCoords(CRect& rect);

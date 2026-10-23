@@ -146,6 +146,6 @@ endif ()
 
 foreach (target Wow WowClient MapViewer M2Viewer GxTest MpqTest BlpTest DbcTest AssetCheck)
     if (TARGET ${target})
-        target_sources(${target} PRIVATE ${CMAKE_SOURCE_DIR}/waystone.rc)
+        target_sources(${target} PRIVATE ${CMAKE_SOURCE_DIR}/manastorm.rc)
     endif ()
 endforeach ()

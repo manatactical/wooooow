@@ -41,15 +41,13 @@ namespace {
 // the video options tab carries only the master switch, so they are constants here. Distances are in
 // screen pixels.
 // ---------------------------------------------------------------------------------------------
-constexpr float kThickness = 2.0f;    // edge width
-constexpr float kIntensity = 1.0f;    // final outline alpha scale
 constexpr float kOpacity   = 1.0f;    // final outline alpha scale
-constexpr float kSoftness  = 0.5f;    // blur radius, times kSoftnessScale
+constexpr float kSoftness  = 0.7f;   // blur tap spacing (1 texel at 0.5), times kSoftnessScale; this also sets the line's width
 constexpr float kThreshold = 0.0f;    // clip cutoff; trims faint pixels
 
 // Blur radius, in mask texels, that kSoftness maps to. The mask is back-buffer sized, so one texel is
-// one screen pixel and the value reads as a couple of pixels of softening: enough to take the hard step
-// off a spike or a shoulder without visibly fattening the line.
+// one screen pixel. The edge pass places a solid band from the blurred coverage, so this is what sets how
+// thick the line is and how wide its feathered outer side is.
 constexpr float kSoftnessScale = 2.0f;
 
 constexpr int32_t kMaxTargets   = 64;  // selections and quest givers, each up to two models plus gear
@@ -90,11 +88,11 @@ const char* const kCutoutColorHLSL =
     "  return c0;\n"
     "}\n";
 
-// 8-tap edge detect on the mask: a thin anti-aliased line outside the silhouette.
-//   c0 = {texel.x, texel.y, thickness, intensity}   (texel is 1/mask texture size; thickness in pixels)
-//   c1 = {opacity, threshold, player-mask-on, vis-mask-on} (scale on the default alpha, clip cutoff, 1
-//        when the player mask was stamped this frame so a stale silhouette cannot punch the line, 1 when a
-//        depth-tested visibility mask exists for this frame)
+// Single-pass outline on the blurred mask: one soft-edged band hugging the silhouette, drawn with alpha blending.
+//   c0 = {texel.x, texel.y, unused, unused}   (texel is 1/mask texture size)
+//   c1 = {opacity, threshold, player-mask-on, vis-mask-on} (scale on the alpha, clip cutoff, 1 when the player
+//        mask was stamped this frame so a stale silhouette cannot punch the line, 1 when a depth-tested
+//        visibility mask exists for this frame)
 //
 // s0 is the full silhouette and s2 the depth-tested one. The line's SHAPE comes from the full silhouette,
 // which has no hole where a wall covers the unit: taking it from the depth-tested mask made the hole's rim
@@ -102,25 +100,12 @@ const char* const kCutoutColorHLSL =
 // is worth drawing at all -- if the silhouette right where the line sits is hidden, the line stops there.
 //
 // The mask stores premultiplied colour (rgb * weight, weight), where the weight lets a target's edge
-// brightness vary (the fade). rgb/alpha recovers the colour; the interior test is center-vs-average, so
-// it stays correct whatever the weight is.
+// brightness vary (the fade). rgb/alpha recovers the colour.
 //
-// Four rings at increasing radius, summed and saturated ONCE.
-//
-// Each ring is tested against the centre on its own: its mean coverage minus the centre's, i.e. how much
-// of the silhouette its taps straddle. That per-ring test is what makes a thin ring work at all. The old
-// code formed ONE ring and asked the same question -- fine at 2.75 * 1.7 = 4.7 px, because the ring sat well
-// outside the ~2 px mask blur. A thinner ring lands INSIDE that ramp, where the centre is already as covered
-// as the ring, so the test cancels it and the outline all but disappears.
-//
-// The ring radii are CORE_TAP * {1,2,3,4} * thickness. A pixel d pixels outside the silhouette is covered
-// only by the rings whose radius still reaches it, so the summed band falls off as d grows -- which is the
-// brightness decay this wants. Saturating each ring individually first was the bug behind the earlier flat
-// plateau: every ring clamped to full, so the sum stayed full for 10+ px and then dropped off a cliff.
-//
-// RING_GAIN exists because a band is a mean over 8 taps of an already-blurred mask and peaks near 0.19, not
-// 1: it lifts the sum back to a usable alpha. The original shader peaked at 0.27 alpha, which is why the
-// outline read as a ~5% grey line.
+// The mask arrives blurred, so its coverage is a smooth ramp: 1 inside the body, 0.5 exactly on the silhouette,
+// 0 well outside. The band is placed by that coverage alone. It is fully opaque from the silhouette out to
+// BAND_OUTER and then falls to nothing over the rest of the ramp, so the line reads as a solid, saturated edge
+// whose outer side is feathered by the blur rather than cut. The width of the band is the blur radius.
 const char* const kEdgeHLSL =
     "sampler2D m : register(s0);\n"
     "sampler2D occ : register(s1);\n"
@@ -128,13 +113,12 @@ const char* const kEdgeHLSL =
     "sampler2D cov : register(s3);\n"
     "float4 px : register(c0);\n"
     "float4 par : register(c1);\n"
-    "float4 mode : register(c2);\n"
     "float4 tile : register(c3);\n"
     "// Every tap is an explicit-lod fetch, so the early-out below may leave the rest of the shader in a branch.\n"
     "#define tex2D(s, u) tex2Dlod(s, float4((u), 0, 0))\n"
     "// How much silhouette lies in the 3x3 tiles around this pixel's tile (see kCoverageHLSL). The reach of the\n"
-    "// whole pass from a silhouette pixel is the blur's 8 px plus the outer ring's 14, under the 32 px tile, so a\n"
-    "// pixel whose neighbourhood is empty cannot be part of the line.\n"
+    "// pass from a silhouette pixel is the blur's radius plus the ring's, well under the 32 px tile, so a pixel\n"
+    "// whose neighbourhood is empty cannot be part of the line.\n"
     "float Coverage(float2 uv) {\n"
     "  float2 t = floor(uv / tile.xy / 32.0);\n"
     "  float s = 0;\n"
@@ -145,88 +129,47 @@ const char* const kEdgeHLSL =
     "  }\n"
     "  return s;\n"
     "}\n"
-    "#define CORE_TAP 1.7\n"
-    "#define RING_GAIN 0.75\n"
-    "#define CORE_GAIN 11.0\n"
-    "#define TAIL_POW 1.6\n"
-    "#define CORE_POP 1.55\n"
+    "#define RING_PX 3.0\n"
+    "#define BAND_INNER 0.66\n"
+    "#define BAND_SOLID 0.50\n"
+    "#define BAND_OUTER 0.50\n"
+    "#define BAND_FEATHER 0.05\n"
+    "#define LINE_GAIN 1.00\n"
     "float4 Ring(sampler2D s, float2 uv, float2 o) {\n"
     "  return tex2D(s,uv+float2(o.x,0)) + tex2D(s,uv+float2(-o.x,0))\n"
     "       + tex2D(s,uv+float2(0,o.y)) + tex2D(s,uv+float2(0,-o.y))\n"
     "       + tex2D(s,uv+float2(o.x,o.y)) + tex2D(s,uv+float2(-o.x,-o.y))\n"
     "       + tex2D(s,uv+float2(o.x,-o.y)) + tex2D(s,uv+float2(-o.x,o.y));\n"
     "}\n"
-    "// This ring's mean coverage, i.e. how much silhouette area its taps cover.\n"
-    "float RingAvg(float ringAlpha) {\n"
-    "  return ringAlpha * 0.125;\n"
-    "}\n"
-    "// Gradient magnitude of the blurred mask. This is what centres the line ON the silhouette: the\n"
-    "// steepest slope of a blurred edge is exactly at the edge, so it peaks at distance 0 and falls off\n"
-    "// both ways. The old ring-ratio term did NOT do this -- a ring is strongest where its circumference\n"
-    "// touches the boundary, i.e. one ring-radius away, which is why the colour vanished next to the\n"
-    "// model and bloomed a few pixels out.\n"
-    "float Gradient(float2 uv, float2 e) {\n"
-    "  float gx = tex2D(m, uv + float2(e.x, 0)).a - tex2D(m, uv - float2(e.x, 0)).a;\n"
-    "  float gy = tex2D(m, uv + float2(0, e.y)).a - tex2D(m, uv - float2(0, e.y)).a;\n"
-    "  return sqrt(gx * gx + gy * gy);\n"
-    "}\n"
     "float4 main(float2 uv : TEXCOORD0) : COLOR0 {\n"
-    "  // Most of the frame is nowhere near a silhouette: leave it untouched, which is what the shader would have\n"
-    "  // done to it anyway (no alpha in the line pass, no band in the solid pass).\n"
+    "  // Most of the frame is nowhere near a silhouette: leave it untouched.\n"
     "  [branch] if (Coverage(uv) < 0.001) {\n"
     "    clip(-1);\n"
     "    return float4(0, 0, 0, 0);\n"
     "  }\n"
-    "  float2 o = px.xy * px.z * CORE_TAP;\n"
+    "  float2 o = px.xy * RING_PX;\n"
     "  float center = tex2D(m, uv).a;\n"
-    "  // Outside the body only: the gradient is symmetric, so without this it would also light the\n"
-    "  // model's interior. center is 0.5 exactly on the boundary.\n"
-    "  float outside = smoothstep(0.30, 0.50, 1.0 - center);\n"
-    "  float4 a = Ring(m, uv, o);\n"
-    "  float4 r2 = Ring(m, uv, o * 2.0);\n"
-    "  float4 r3 = Ring(m, uv, o * 3.0);\n"
-    "  float4 r4 = Ring(m, uv, o * 4.0);\n"
-    "  // Core: pinned to the silhouette by the gradient.\n"
-    "  float core = saturate(Gradient(uv, px.xy * px.z * 0.6) * CORE_GAIN) * outside;\n"
-    "  // Tail: the rings carry the line OUTWARD, where the gradient has already died. TAIL_POW steepens\n"
-    "  // the falloff so the tail gives up its brightness sooner than the core does.\n"
-    "  float tail = saturate((RingAvg(a.a) + RingAvg(r2.a) + RingAvg(r3.a) + RingAvg(r4.a))\n"
-    "                        * RING_GAIN) * outside;\n"
-    "  tail = pow(tail, TAIL_POW);\n"
-    "  a += r2 + r3 + r4;\n"
-    "  float outline = saturate(max(core, tail));\n"
+    "  // Soft inner edge just inside the silhouette, solid plateau out to BAND_OUTER, feathered outer edge.\n"
+    "  float band = smoothstep(BAND_INNER, BAND_SOLID, center) * smoothstep(BAND_FEATHER, BAND_OUTER, center);\n"
     "  float visMask = 1.0;\n"
     "  if (par.w > 0.5) {\n"
-    "    visMask = saturate(Ring(vis, uv, o).a * 0.125);\n"
+    "    visMask = saturate(Ring(vis, uv, o).a * 0.75);\n"
     "  }\n"
-    "  outline *= visMask;\n"
-    "  clip(outline - par.y);\n"
-    "  float3 col = a.a > 0.001 ? a.rgb / a.a : float3(1,1,1);\n"
     "  float om = tex2D(occ, uv).a * par.z;\n"
-    "  if (mode.x > 0.5) {\n"
-    "    // Solid band pass: a narrow ring hugging the model, placed by the mask's own coverage rather than\n"
-    "    // by the gradient. center is 1 inside the body, 0 outside, 0.5 exactly on the silhouette, so gating\n"
-    "    // on a window around 0.3 puts the band on the outside shoulder of the softened edge and nothing\n"
-    "    // else -- the gradient's skirt, which is the whole visible line, is left to the alpha pass below.\n"
-    "    // Thresholded rather than blended, so the pixel becomes the line colour instead of a mix with\n"
-    "    // what is behind it. The fade lives in the mask's rgb, so a settled target draws it dimmed.\n"
-    "    float band = smoothstep(0.68, 0.42, center) * smoothstep(0.02, 0.20, center);\n"
-    "    clip(band * visMask * par.x * (1.0 - om) - 0.45);\n"
-    "    return float4(col, 1.0);\n"
-    "  }\n"
-    "  // With alpha-over blending the core pixel is already the exact colour, so this is purely a saturation\n"
-    "  // top-up: CORE_POP past 1 pushes the core channels up and, being gated on outline squared, leaves\n"
-    "  // the tail at its true colour.\n"
-    "  col *= 1.0 + (CORE_POP - 1.0) * outline * outline;\n"
-    "  return float4(col, saturate(outline * par.x) * (1.0 - om));\n"
+    "  float alpha = band * visMask * par.x * (1.0 - om);\n"
+    "  clip(alpha - par.y);\n"
+    "  // The colour is the mean over a ring, which reaches onto the body, so it stays well defined out in the feather.\n"
+    "  float4 a = Ring(m, uv, o);\n"
+    "  float3 col = a.a > 0.001 ? a.rgb / a.a : float3(1,1,1);\n"
+    "  return float4(saturate(col * LINE_GAIN), saturate(alpha));\n"
     "}\n";
 
-// A separable gaussian tap for the softening pass: 5 explicit samples along one axis, written out rather
-// than looped because the taps compile reliably as literals and not as a loop. Run once per axis and the
+// A separable gaussian for the softening pass, sigma 3 texels over 19 taps, fetched as 11 bilinear samples
+// (each pair of neighbouring taps is one fetch placed between them, which the linear-filtered mask turns into
+// the right weighted sum). One-texel tap spacing, so the ramp is sampled finely enough not to stair-step.
+// Written out rather than looped because the taps compile reliably as literals and not as a loop. Run once per axis and the
 // silhouette the edge pass samples has a gradient instead of a hard 1-pixel boundary; the interior is a
-// flat plateau, so only the rim actually widens. The spacing is a fixed fraction of a texel, not a
-// multiple of Thickness: at that scale Thickness reads as line shape, and blurring it proportionally
-// would just mud the whole line.
+// flat plateau, so only the rim actually widens. The spacing sets the width of the line.
 //   c0 = {offset.x, offset.y, unused, unused}
 const char* const kBlurHLSL =
     "sampler2D src : register(s0);\n"
@@ -249,11 +192,12 @@ const char* const kBlurHLSL =
     "  [branch] if (Coverage(uv) < 0.001) {\n"
     "    return float4(0, 0, 0, 0);\n"
     "  }\n"
-    "  float4 s = tex2D(src, uv) * 0.2270270270;\n"
-    "  s += (tex2D(src, uv + dir.xy) + tex2D(src, uv - dir.xy)) * 0.1945945946;\n"
-    "  s += (tex2D(src, uv + dir.xy * 2.0) + tex2D(src, uv - dir.xy * 2.0)) * 0.1216216216;\n"
-    "  s += (tex2D(src, uv + dir.xy * 3.0) + tex2D(src, uv - dir.xy * 3.0)) * 0.0540540541;\n"
-    "  s += (tex2D(src, uv + dir.xy * 4.0) + tex2D(src, uv - dir.xy * 4.0)) * 0.0162162162;\n"
+    "  float4 s = tex2D(src, uv) * 0.1331759960;\n"
+    "  s += (tex2D(src, uv + dir.xy * 1.4584295) + tex2D(src, uv - dir.xy * 1.4584295)) * 0.2326180956;\n"
+    "  s += (tex2D(src, uv + dir.xy * 3.4039848) + tex2D(src, uv - dir.xy * 3.4039848)) * 0.1355256135;\n"
+    "  s += (tex2D(src, uv + dir.xy * 5.3518058) + tex2D(src, uv - dir.xy * 5.3518058)) * 0.0512311399;\n"
+    "  s += (tex2D(src, uv + dir.xy * 7.3029407) + tex2D(src, uv - dir.xy * 7.3029407)) * 0.0125577013;\n"
+    "  s += (tex2D(src, uv + dir.xy * 9.0) + tex2D(src, uv - dir.xy * 9.0)) * 0.0014794517;\n"
     "  return s;\n"
     "}\n";
 
@@ -1225,9 +1169,8 @@ void CUnitOutline::BlurPass() {
 // The edge detect: the mask's rim into the frame, in the colour the mask carries, with the player's own
 // silhouette taken out of it.
 void CUnitOutline::EdgePass() {
-    float c0[4] = { s_maskTex.m_texelSize.x, s_maskTex.m_texelSize.y, kThickness, kIntensity };
+    float c0[4] = { s_maskTex.m_texelSize.x, s_maskTex.m_texelSize.y, 0.0f, 0.0f };
     float c1[4] = { kOpacity, kThreshold, s_playerMaskCleared ? 1.0f : 0.0f, s_visMaskCleared ? 1.0f : 0.0f };
-    float c2[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 
     GxRsSet(GxRs_PixelShader, s_edgePS);
     // GxBlend_Alpha is SRCALPHA / INVSRCALPHA: result = col * alpha + background * (1 - alpha).
@@ -1251,16 +1194,6 @@ void CUnitOutline::EdgePass() {
 
     GxShaderConstantsSet(GxSh_Pixel, 0, c0, 1);
     GxShaderConstantsSet(GxSh_Pixel, 1, c1, 1);
-    GxShaderConstantsSet(GxSh_Pixel, 2, c2, 1);
-
-    DrawFullscreenQuad(s_maskTex);
-
-    // The solid band, drawn on top in the same shader with mode.x set: blending is opaque (src*1 + dst*0),
-    // so that pixel IS the line colour rather than a blend with the frame. This is the one part of the line
-    // that does not wash out over a bright background.
-    GxRsSet(GxRs_BlendingMode, GxBlend_Opaque);
-    c2[0] = 1.0f;
-    GxShaderConstantsSet(GxSh_Pixel, 2, c2, 1);
 
     DrawFullscreenQuad(s_maskTex);
 }

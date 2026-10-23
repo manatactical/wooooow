@@ -32,7 +32,7 @@ namespace {
 const float kHostile[3]        = { 0.545f, 0.0f, 0.0f };  // darkened blood red, not the WXL purple
 const float kNeutral[3]        = { 1.0f, 1.0f, 0.0f };
 const float kFriendly[3]       = { 0.0f, 0.784f, 0.0f };
-const float kFriendlyPlayer[3] = { 0.275f, 0.353f, 1.0f };
+const float kFriendlyPlayer[3] = { 0.376f, 0.376f, 1.0f };  // the stock selection circle for a friendly player: 0x6060FF
 const float kQuestGiver[3]     = { 1.0f, 0.82f, 0.0f };
 const float kDoodad[3]         = { 200.0f / 255.0f, 170.0f / 255.0f, 120.0f / 255.0f };
 

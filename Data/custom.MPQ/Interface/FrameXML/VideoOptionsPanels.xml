@@ -61,8 +61,8 @@
 				<FontString name="$parentSubText" text="VIDEOOPT_DISPLAY_SUBTEXT" inherits="GameFontHighlightSmall" nonspacewrap="true" maxLines="2" justifyH="LEFT" justifyV="TOP">
 					<Size y="26"/>
 					<Anchors>
-						<Anchor point="TOPLEFT" relativeTo="$parentTitle" relativePoint="BOTTOMLEFT"><Offset x="0" y="-6"/></Anchor>
-						<Anchor point="RIGHT"><Offset x="-14" y="0"/></Anchor>
+						<Anchor point="TOPLEFT"><Offset x="14" y="-36"/></Anchor>
+						<Anchor point="TOPRIGHT"><Offset x="-14" y="-36"/></Anchor>
 					</Anchors>
 				</FontString>
 			</Layer>
@@ -70,7 +70,7 @@
 		<Frames>
 			<ScrollFrame name="VideoOptionsResolutionPanel" inherits="UIPanelScrollFrameTemplate">
 				<Anchors>
-					<Anchor point="TOPLEFT"><Offset x="8" y="-58"/></Anchor>
+					<Anchor point="TOPLEFT"><Offset x="8" y="-66"/></Anchor>
 					<Anchor point="BOTTOMRIGHT"><Offset x="-30" y="8"/></Anchor>
 				</Anchors>
 				<Scripts>
@@ -253,7 +253,7 @@
 									<Size y="12"/>
 									<Anchors>
 										<Anchor point="TOPLEFT" relativePoint="BOTTOMLEFT"><Offset x="0" y="-10"/></Anchor>
-										<Anchor point="RIGHT"/>
+										<Anchor point="TOPRIGHT" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-10"/></Anchor>
 									</Anchors>
 								</FontString></Layer></Layers>
 								<Scripts>
@@ -318,7 +318,7 @@
 									<Size y="12"/>
 									<Anchors>
 										<Anchor point="TOPLEFT" relativePoint="BOTTOMLEFT"><Offset x="0" y="-10"/></Anchor>
-										<Anchor point="RIGHT"/>
+										<Anchor point="TOPRIGHT" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-10"/></Anchor>
 									</Anchors>
 								</FontString></Layer></Layers>
 								<Scripts>
@@ -366,8 +366,8 @@
 				<FontString name="$parentSubText" text="VIDEOOPT_GRAPHICS_SUBTEXT" inherits="GameFontHighlightSmall" nonspacewrap="true" maxLines="2" justifyH="LEFT" justifyV="TOP">
 					<Size y="26"/>
 					<Anchors>
-						<Anchor point="TOPLEFT" relativeTo="$parentTitle" relativePoint="BOTTOMLEFT"><Offset x="0" y="-6"/></Anchor>
-						<Anchor point="RIGHT"><Offset x="-14" y="0"/></Anchor>
+						<Anchor point="TOPLEFT"><Offset x="14" y="-36"/></Anchor>
+						<Anchor point="TOPRIGHT"><Offset x="-14" y="-36"/></Anchor>
 					</Anchors>
 				</FontString>
 			</Layer>
@@ -375,7 +375,7 @@
 		<Frames>
 			<ScrollFrame name="VideoOptionsEffectsPanel" inherits="UIPanelScrollFrameTemplate">
 				<Anchors>
-					<Anchor point="TOPLEFT"><Offset x="8" y="-58"/></Anchor>
+					<Anchor point="TOPLEFT"><Offset x="8" y="-66"/></Anchor>
 					<Anchor point="BOTTOMRIGHT"><Offset x="-30" y="8"/></Anchor>
 				</Anchors>
 				<Scripts>
@@ -460,7 +460,7 @@
 									<Size y="12"/>
 									<Anchors>
 										<Anchor point="TOPLEFT" relativePoint="BOTTOMLEFT"><Offset x="0" y="-10"/></Anchor>
-										<Anchor point="RIGHT"/>
+										<Anchor point="TOPRIGHT" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-10"/></Anchor>
 									</Anchors>
 								</FontString></Layer></Layers>
 								<Scripts>
@@ -482,7 +482,7 @@
 									<Size y="12"/>
 									<Anchors>
 										<Anchor point="TOPLEFT" relativePoint="BOTTOMLEFT"><Offset x="0" y="-10"/></Anchor>
-										<Anchor point="RIGHT"/>
+										<Anchor point="TOPRIGHT" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-10"/></Anchor>
 									</Anchors>
 								</FontString></Layer></Layers>
 								<Scripts>
@@ -505,7 +505,7 @@
 									<Size y="12"/>
 									<Anchors>
 										<Anchor point="TOPLEFT" relativePoint="BOTTOMLEFT"><Offset x="0" y="-10"/></Anchor>
-										<Anchor point="RIGHT"/>
+										<Anchor point="TOPRIGHT" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-10"/></Anchor>
 									</Anchors>
 								</FontString></Layer></Layers>
 								<Scripts>
@@ -536,7 +536,7 @@
 									<Size y="12"/>
 									<Anchors>
 										<Anchor point="TOPLEFT" relativePoint="BOTTOMLEFT"><Offset x="0" y="-10"/></Anchor>
-										<Anchor point="RIGHT"/>
+										<Anchor point="TOPRIGHT" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-10"/></Anchor>
 									</Anchors>
 								</FontString></Layer></Layers>
 								<Scripts>
@@ -566,7 +566,7 @@
 									<Size y="12"/>
 									<Anchors>
 										<Anchor point="TOPLEFT" relativePoint="BOTTOMLEFT"><Offset x="0" y="-10"/></Anchor>
-										<Anchor point="RIGHT"/>
+										<Anchor point="TOPRIGHT" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-10"/></Anchor>
 									</Anchors>
 								</FontString></Layer></Layers>
 								<Scripts>
@@ -602,7 +602,7 @@
 									<Size y="12"/>
 									<Anchors>
 										<Anchor point="TOPLEFT" relativePoint="BOTTOMLEFT"><Offset x="0" y="-10"/></Anchor>
-										<Anchor point="RIGHT"/>
+										<Anchor point="TOPRIGHT" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-10"/></Anchor>
 									</Anchors>
 								</FontString></Layer></Layers>
 								<Scripts>
@@ -624,7 +624,7 @@
 									<Size y="12"/>
 									<Anchors>
 										<Anchor point="TOPLEFT" relativePoint="BOTTOMLEFT"><Offset x="0" y="-10"/></Anchor>
-										<Anchor point="RIGHT"/>
+										<Anchor point="TOPRIGHT" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-10"/></Anchor>
 									</Anchors>
 								</FontString></Layer></Layers>
 								<Scripts>
@@ -654,7 +654,7 @@
 									<Size y="12"/>
 									<Anchors>
 										<Anchor point="TOPLEFT" relativePoint="BOTTOMLEFT"><Offset x="0" y="-10"/></Anchor>
-										<Anchor point="RIGHT"/>
+										<Anchor point="TOPRIGHT" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-10"/></Anchor>
 									</Anchors>
 								</FontString></Layer></Layers>
 								<Scripts>
@@ -814,8 +814,8 @@
 				<FontString name="$parentSubText" text="VIDEOOPT_SHADOWS_SUBTEXT" inherits="GameFontHighlightSmall" nonspacewrap="true" maxLines="2" justifyH="LEFT" justifyV="TOP">
 					<Size y="26"/>
 					<Anchors>
-						<Anchor point="TOPLEFT" relativeTo="$parentTitle" relativePoint="BOTTOMLEFT"><Offset x="0" y="-6"/></Anchor>
-						<Anchor point="RIGHT"><Offset x="-14" y="0"/></Anchor>
+						<Anchor point="TOPLEFT"><Offset x="14" y="-36"/></Anchor>
+						<Anchor point="TOPRIGHT"><Offset x="-14" y="-36"/></Anchor>
 					</Anchors>
 				</FontString>
 			</Layer>
@@ -823,7 +823,7 @@
 		<Frames>
 			<ScrollFrame name="VideoOptionsShadowsPanel" inherits="UIPanelScrollFrameTemplate">
 				<Anchors>
-					<Anchor point="TOPLEFT"><Offset x="8" y="-58"/></Anchor>
+					<Anchor point="TOPLEFT"><Offset x="8" y="-66"/></Anchor>
 					<Anchor point="BOTTOMRIGHT"><Offset x="-30" y="8"/></Anchor>
 				</Anchors>
 				<Scripts>
@@ -854,7 +854,7 @@
 									<Size y="12"/>
 									<Anchors>
 										<Anchor point="TOPLEFT" relativePoint="BOTTOMLEFT"><Offset x="0" y="-10"/></Anchor>
-										<Anchor point="RIGHT"/>
+										<Anchor point="TOPRIGHT" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-10"/></Anchor>
 									</Anchors>
 								</FontString></Layer></Layers>
 								<Scripts>
@@ -885,7 +885,7 @@
 									<Size y="12"/>
 									<Anchors>
 										<Anchor point="TOPLEFT" relativePoint="BOTTOMLEFT"><Offset x="0" y="-10"/></Anchor>
-										<Anchor point="RIGHT"/>
+										<Anchor point="TOPRIGHT" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-10"/></Anchor>
 									</Anchors>
 								</FontString></Layer></Layers>
 								<Scripts>
@@ -943,8 +943,8 @@
 				<FontString name="$parentSubText" text="VIDEOOPT_LIGHTING_SUBTEXT" inherits="GameFontHighlightSmall" nonspacewrap="true" maxLines="2" justifyH="LEFT" justifyV="TOP">
 					<Size y="26"/>
 					<Anchors>
-						<Anchor point="TOPLEFT" relativeTo="$parentTitle" relativePoint="BOTTOMLEFT"><Offset x="0" y="-6"/></Anchor>
-						<Anchor point="RIGHT"><Offset x="-14" y="0"/></Anchor>
+						<Anchor point="TOPLEFT"><Offset x="14" y="-36"/></Anchor>
+						<Anchor point="TOPRIGHT"><Offset x="-14" y="-36"/></Anchor>
 					</Anchors>
 				</FontString>
 			</Layer>
@@ -952,7 +952,7 @@
 		<Frames>
 			<ScrollFrame name="VideoOptionsLightingPanel" inherits="UIPanelScrollFrameTemplate">
 				<Anchors>
-					<Anchor point="TOPLEFT"><Offset x="8" y="-58"/></Anchor>
+					<Anchor point="TOPLEFT"><Offset x="8" y="-66"/></Anchor>
 					<Anchor point="BOTTOMRIGHT"><Offset x="-30" y="8"/></Anchor>
 				</Anchors>
 				<Scripts>
@@ -995,7 +995,7 @@
 									<Size y="12"/>
 									<Anchors>
 										<Anchor point="TOPLEFT" relativePoint="BOTTOMLEFT"><Offset x="0" y="-10"/></Anchor>
-										<Anchor point="RIGHT"/>
+										<Anchor point="TOPRIGHT" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-10"/></Anchor>
 									</Anchors>
 								</FontString></Layer></Layers>
 								<Scripts>
@@ -1018,7 +1018,7 @@
 									<Size y="12"/>
 									<Anchors>
 										<Anchor point="TOPLEFT" relativePoint="BOTTOMLEFT"><Offset x="0" y="-10"/></Anchor>
-										<Anchor point="RIGHT"/>
+										<Anchor point="TOPRIGHT" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-10"/></Anchor>
 									</Anchors>
 								</FontString></Layer></Layers>
 								<Scripts>
@@ -1041,7 +1041,7 @@
 									<Size y="12"/>
 									<Anchors>
 										<Anchor point="TOPLEFT" relativePoint="BOTTOMLEFT"><Offset x="0" y="-10"/></Anchor>
-										<Anchor point="RIGHT"/>
+										<Anchor point="TOPRIGHT" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-10"/></Anchor>
 									</Anchors>
 								</FontString></Layer></Layers>
 								<Scripts>
@@ -1084,7 +1084,7 @@
 									<Size y="12"/>
 									<Anchors>
 										<Anchor point="TOPLEFT" relativePoint="BOTTOMLEFT"><Offset x="0" y="-10"/></Anchor>
-										<Anchor point="RIGHT"/>
+										<Anchor point="TOPRIGHT" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-10"/></Anchor>
 									</Anchors>
 								</FontString></Layer></Layers>
 								<Scripts>
@@ -1142,8 +1142,8 @@
 				<FontString name="$parentSubText" text="VIDEOOPT_FOLIAGE_SUBTEXT" inherits="GameFontHighlightSmall" nonspacewrap="true" maxLines="2" justifyH="LEFT" justifyV="TOP">
 					<Size y="26"/>
 					<Anchors>
-						<Anchor point="TOPLEFT" relativeTo="$parentTitle" relativePoint="BOTTOMLEFT"><Offset x="0" y="-6"/></Anchor>
-						<Anchor point="RIGHT"><Offset x="-14" y="0"/></Anchor>
+						<Anchor point="TOPLEFT"><Offset x="14" y="-36"/></Anchor>
+						<Anchor point="TOPRIGHT"><Offset x="-14" y="-36"/></Anchor>
 					</Anchors>
 				</FontString>
 			</Layer>
@@ -1151,7 +1151,7 @@
 		<Frames>
 			<ScrollFrame name="VideoOptionsPhysicsPanel" inherits="UIPanelScrollFrameTemplate">
 				<Anchors>
-					<Anchor point="TOPLEFT"><Offset x="8" y="-58"/></Anchor>
+					<Anchor point="TOPLEFT"><Offset x="8" y="-66"/></Anchor>
 					<Anchor point="BOTTOMRIGHT"><Offset x="-30" y="8"/></Anchor>
 				</Anchors>
 				<Scripts>
@@ -1182,7 +1182,7 @@
 									<Size y="12"/>
 									<Anchors>
 										<Anchor point="TOPLEFT" relativePoint="BOTTOMLEFT"><Offset x="0" y="-10"/></Anchor>
-										<Anchor point="RIGHT"/>
+										<Anchor point="TOPRIGHT" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-10"/></Anchor>
 									</Anchors>
 								</FontString></Layer></Layers>
 								<Scripts>
@@ -1204,7 +1204,7 @@
 									<Size y="12"/>
 									<Anchors>
 										<Anchor point="TOPLEFT" relativePoint="BOTTOMLEFT"><Offset x="0" y="-10"/></Anchor>
-										<Anchor point="RIGHT"/>
+										<Anchor point="TOPRIGHT" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-10"/></Anchor>
 									</Anchors>
 								</FontString></Layer></Layers>
 								<Scripts>
@@ -1246,7 +1246,7 @@
 									<Size y="12"/>
 									<Anchors>
 										<Anchor point="TOPLEFT" relativePoint="BOTTOMLEFT"><Offset x="0" y="-10"/></Anchor>
-										<Anchor point="RIGHT"/>
+										<Anchor point="TOPRIGHT" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-10"/></Anchor>
 									</Anchors>
 								</FontString></Layer></Layers>
 								<Scripts>
@@ -1269,7 +1269,7 @@
 									<Size y="12"/>
 									<Anchors>
 										<Anchor point="TOPLEFT" relativePoint="BOTTOMLEFT"><Offset x="0" y="-10"/></Anchor>
-										<Anchor point="RIGHT"/>
+										<Anchor point="TOPRIGHT" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-10"/></Anchor>
 									</Anchors>
 								</FontString></Layer></Layers>
 								<Scripts>
@@ -1292,7 +1292,7 @@
 									<Size y="12"/>
 									<Anchors>
 										<Anchor point="TOPLEFT" relativePoint="BOTTOMLEFT"><Offset x="0" y="-10"/></Anchor>
-										<Anchor point="RIGHT"/>
+										<Anchor point="TOPRIGHT" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-10"/></Anchor>
 									</Anchors>
 								</FontString></Layer></Layers>
 								<Scripts>
@@ -1335,7 +1335,7 @@
 									<Size y="12"/>
 									<Anchors>
 										<Anchor point="TOPLEFT" relativePoint="BOTTOMLEFT"><Offset x="0" y="-10"/></Anchor>
-										<Anchor point="RIGHT"/>
+										<Anchor point="TOPRIGHT" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-10"/></Anchor>
 									</Anchors>
 								</FontString></Layer></Layers>
 								<Scripts>
@@ -1358,7 +1358,7 @@
 									<Size y="12"/>
 									<Anchors>
 										<Anchor point="TOPLEFT" relativePoint="BOTTOMLEFT"><Offset x="0" y="-10"/></Anchor>
-										<Anchor point="RIGHT"/>
+										<Anchor point="TOPRIGHT" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-10"/></Anchor>
 									</Anchors>
 								</FontString></Layer></Layers>
 								<Scripts>
@@ -1396,8 +1396,8 @@
 				<FontString name="$parentSubText" text="VIDEOOPT_GAMEPLAY_SUBTEXT" inherits="GameFontHighlightSmall" nonspacewrap="true" maxLines="2" justifyH="LEFT" justifyV="TOP">
 					<Size y="26"/>
 					<Anchors>
-						<Anchor point="TOPLEFT" relativeTo="$parentTitle" relativePoint="BOTTOMLEFT"><Offset x="0" y="-6"/></Anchor>
-						<Anchor point="RIGHT"><Offset x="-14" y="0"/></Anchor>
+						<Anchor point="TOPLEFT"><Offset x="14" y="-36"/></Anchor>
+						<Anchor point="TOPRIGHT"><Offset x="-14" y="-36"/></Anchor>
 					</Anchors>
 				</FontString>
 			</Layer>
@@ -1405,7 +1405,7 @@
 		<Frames>
 			<ScrollFrame name="VideoOptionsGameplayPanel" inherits="UIPanelScrollFrameTemplate">
 				<Anchors>
-					<Anchor point="TOPLEFT"><Offset x="8" y="-58"/></Anchor>
+					<Anchor point="TOPLEFT"><Offset x="8" y="-66"/></Anchor>
 					<Anchor point="BOTTOMRIGHT"><Offset x="-30" y="8"/></Anchor>
 				</Anchors>
 				<Scripts>

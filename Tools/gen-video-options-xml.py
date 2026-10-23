@@ -158,7 +158,7 @@ def slider_desc(text):
         '\t<Size y="12"/>',
         '\t<Anchors>',
         '\t\t<Anchor point="TOPLEFT" relativePoint="BOTTOMLEFT"><Offset x="0" y="-10"/></Anchor>',
-        '\t\t<Anchor point="RIGHT"/>',
+        '\t\t<Anchor point="TOPRIGHT" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-10"/></Anchor>',
         '\t</Anchors>',
         '</FontString></Layer></Layers>'))
 
@@ -280,14 +280,14 @@ def emit_page(o, f, page):
     o.add('<FontString name="$parentSubText" text="%s" inherits="%s" nonspacewrap="true" maxLines="2" justifyH="LEFT" justifyV="TOP">\n'
           '\t<Size y="26"/>\n'
           '\t<Anchors>\n'
-          '\t\t<Anchor point="TOPLEFT" relativeTo="$parentTitle" relativePoint="BOTTOMLEFT"><Offset x="0" y="-6"/></Anchor>\n'
-          '\t\t<Anchor point="RIGHT"><Offset x="-14" y="0"/></Anchor>\n'
+          '\t\t<Anchor point="TOPLEFT"><Offset x="14" y="-36"/></Anchor>\n'
+          '\t\t<Anchor point="TOPRIGHT"><Offset x="-14" y="-36"/></Anchor>\n'
           '\t</Anchors>\n</FontString>' % (page.sub_global, f.font("highlight")))
     o.close("</Layer>")
     o.close("</Layers>")
     o.open("<Frames>")
     o.open('<ScrollFrame name="%s" inherits="UIPanelScrollFrameTemplate">' % panel)
-    o.add('<Anchors>\n\t<Anchor point="TOPLEFT"><Offset x="8" y="-58"/></Anchor>\n\t<Anchor point="BOTTOMRIGHT"><Offset x="-30" y="8"/></Anchor>\n</Anchors>')
+    o.add('<Anchors>\n\t<Anchor point="TOPLEFT"><Offset x="8" y="-66"/></Anchor>\n\t<Anchor point="BOTTOMRIGHT"><Offset x="-30" y="8"/></Anchor>\n</Anchors>')
     o.add("<Scripts>\n\t<OnLoad>\n\t\tself.scrollBarHideable = 1;\n\t\tScrollFrame_OnLoad(self);\n\t</OnLoad>\n</Scripts>")
     o.open("<ScrollChild>")
     o.add("<!-- Unnamed on purpose: $parent skips unnamed frames, so every control keeps its %s global name. -->" % panel)

@@ -511,7 +511,7 @@ FXAA_QUALITY_SOOTHED = "Soothed";
 OPTION_TOOLTIP_FXAA_QUALITY = "How strongly FXAA smooths. Low only takes the sharpest edge off and leaves fine texture and detail almost untouched, which suits busy scenes; Ultra applies the full strength of the filter and smooths the most, at the cost of some detail in dense textures. Medium and High are the standard settings. Soothed runs the filter twice: it smooths the most by a wide margin and is happy to lose fine detail and texture to get there.";
 
 VIDEOOPT_GRAPHICS = "Graphics";
-VIDEOOPT_GRAPHICS_SUBTEXT = "Pick an overall quality, or tune world detail, textures, effects and anti-aliasing yourself. Changing any setting below switches the preset to Custom.";
+VIDEOOPT_GRAPHICS_SUBTEXT = "Pick a quality preset, or tune the details yourself. Changing any setting switches the preset to Custom.";
 
 -- particleDensity / environmentDetail were 0.1-1.0 / 0.5-1.5 in 3.3.5, the 4.3.4 world uses percent
 function VideoOptionsEffectsPanel_GetPercentCVar (self)
@@ -929,7 +929,7 @@ end
 -- shadowTextureSize independently, so edge sharpness never changes the cadence.
 
 VIDEOOPT_SHADOWS = "Shadows";
-VIDEOOPT_SHADOWS_SUBTEXT = "How shadows are drawn and how sharp their edges are. Shadows are one of the heaviest options in the game.";
+VIDEOOPT_SHADOWS_SUBTEXT = "How shadows are drawn and how sharp they are. One of the heaviest options in the game.";
 OPTION_TOOLTIP_SHADOW_RESOLUTION = "Resolution of the shadow maps. Lower values give softer, blockier shadow edges and restore some frame rate. How often shadows update is not affected.";
 SHADOW_RESOLUTION = SHADOW_RESOLUTION or "Shadow Resolution";
 OPTION_TOOLTIP_SHADOW_QUALITY = OPTION_TOOLTIP_SHADOW_QUALITY or "Controls both the method and quality of shadows. Decreasing this may greatly improve performance.";
@@ -1011,7 +1011,7 @@ end
 -- The screen-space passes that read the frame's depth buffer. None of them is part of a graphics quality preset.
 
 VIDEOOPT_LIGHTING = "Lighting";
-VIDEOOPT_LIGHTING_SUBTEXT = "Screen-space lighting passes: ambient occlusion, a glow around the sun and distance fog. They read the frame's depth buffer, so they are skipped while multisampling is on.";
+VIDEOOPT_LIGHTING_SUBTEXT = "Ambient occlusion, sun glow and distance fog. Skipped while multisampling is on.";
 SSAO = "Enable Ambient Occlusion";
 OPTION_TOOLTIP_SSAO = "Darkens the creases and contact points of the world: corners, doorways, the gap under a crate. It is built from the frame's own depth buffer, so it is not applied while multisampling is enabled.";
 SSAO_SPREAD = "Spread";
@@ -1056,7 +1056,7 @@ end
 -- to, so a Config.wtf written before this tab existed still loads. The frame keeps its Physics name because
 -- the quality presets address its controls by it.
 VIDEOOPT_FOLIAGE = "Foliage";
-VIDEOOPT_FOLIAGE_SUBTEXT = "Grass and clutter, and the wind that moves them. Density and view distance both grow the grass pool, which is allocated once when the setting changes.";
+VIDEOOPT_FOLIAGE_SUBTEXT = "Grass and clutter, and the wind that moves them.";
 CLUTTER_DENSITY = "Clutter Density";
 CLUTTER_RADIUS = "Clutter Distance";
 WIND_LABEL = "Animate Wind";
@@ -1103,7 +1103,7 @@ end
 -- showPerformance CVar.
 
 VIDEOOPT_GAMEPLAY = "Gameplay";
-VIDEOOPT_GAMEPLAY_SUBTEXT = "Aids for playing: highlights over units and loot, the mouse pointer and a performance overlay. None of these are part of a graphics preset.";
+VIDEOOPT_GAMEPLAY_SUBTEXT = "Highlights over units and loot, the mouse pointer and a performance overlay.";
 UNIT_OUTLINE = "Unit Outline";
 OPTION_TOOLTIP_UNIT_OUTLINE = "Draws a reaction-coloured outline around the unit under the cursor and your current target. A unit hidden behind terrain or a building has no outline.";
 LOOT_BEAM = "Loot Beam";

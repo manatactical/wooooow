@@ -733,9 +733,11 @@ bool CUnitOutline::EnsureResources() {
 // symmetric.
 bool CUnitOutline::OcclusionSupported() {
     // The depth is shared for the outline's sake and for the passes that read it afterwards, so either being on
-    // is enough. The ambient occlusion pass is found by name: it links against this module, not the other way.
+    // is enough. The ambient occlusion and sun shaft passes are found by name: they link against this module, not the
+    // other way.
     CVar* ssao = CVar::Lookup("ssao");
-    bool depthWanted = ssao && ssao->m_intValue > 0 && g_theGxDevicePtr && g_theGxDevicePtr->m_context;
+    CVar* sunShafts = CVar::Lookup("sunShafts");
+    bool depthWanted = ((ssao && ssao->m_intValue > 0) || (sunShafts && sunShafts->m_intValue > 0)) && g_theGxDevicePtr && g_theGxDevicePtr->m_context;
 
     if (!Enabled() && !depthWanted) {
         return false;

@@ -36,6 +36,7 @@ target_link_libraries(Wow
         BLPFile
         AntiAlias
         AmbientOcclusion
+        SunShafts
         Base
         BlizzardCore
         ComSat

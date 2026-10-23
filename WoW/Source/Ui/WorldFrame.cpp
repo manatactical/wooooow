@@ -29,6 +29,7 @@
 #include "Engine/Source/AmbientOcclusion/AmbientOcclusion.h"
 #include "Engine/Source/AntiAlias/AntiAlias.h"
 #include "Engine/Source/ModernWater/ModernWater.h"
+#include "Engine/Source/SunShafts/SunShafts.h"
 #include "Engine/Source/UnitOutline/UnitOutline.h"
 #include "Engine/Source/Tempest/C4Vector.h"
 #include "Engine/Source/Tempest/CAaBox.h"
@@ -1275,6 +1276,7 @@ CGWorldFrame::CGWorldFrame(CSimpleFrame* parent) : CSimpleFrame(parent) {
     // Registers the antiAlias cvar and the device-restored callback. Idempotent for the same reason.
     CAntiAlias::Init();
     CAmbientOcclusion::Init();
+    CSunShafts::Init();
     // Registers the lootBeam cvar. Idempotent for the same reason.
     LootBeam::Init();
     // Registers the modern water pass's device-restored callback. Idempotent for the same reason.
@@ -1680,6 +1682,76 @@ void CGWorldFrame::UpdateObject(CGObject_C* object, uint32_t flags) {
     }
 }
 
+// Not in the original binary. What CSunShafts needs to know about the sun, read from the day/night state: where it
+// is, what colour its light is, and how much of it there is to see. The visibility is the same chain the sun's glare
+// fades by (the time of day's alpha curve, cloud cover over the sun, the camera being underwater) with the glare's own
+// occlusion test left out, because a sun hidden behind a canopy is exactly when its shafts are worth drawing: the depth
+// the shafts are marched through already says what blocks it. An override skybox does not count against it: the glare
+// hides itself behind one (it has its own sun painted in), but the sun's direction and light are still the day's.
+static SunShaftsLight GatherSunShaftsLight() {
+    SunShaftsLight light = {};
+    DayNight::DNInfo* info = DayNight::GetInfo();
+    DayNight::DNGlare& sun = DayNight::g_sunGlare;
+
+    light.toSun = C3Vector(sun.m_position.x - info->m_cameraPos.x, sun.m_position.y - info->m_cameraPos.y, sun.m_position.z - info->m_cameraPos.z);
+    light.color[0] = info->m_light0.m_diffuse.r * (1.0f / 255.0f);
+    light.color[1] = info->m_light0.m_diffuse.g * (1.0f / 255.0f);
+    light.color[2] = info->m_light0.m_diffuse.b * (1.0f / 255.0f);
+    light.visibility = 0.0f;
+
+    // No sky is drawn indoors, and a sun that is not up (the glare's alpha curve is zero through the night) makes
+    // no shafts.
+    if (!info->m_showSky) {
+        static uint32_t s_lastSkyLogMs;
+        if (DiagnosticLogsEnabled() && OsGetAsyncTimeMs() - s_lastSkyLogMs > 2000) {
+            s_lastSkyLogMs = OsGetAsyncTimeMs();
+            if (FILE* file = fopen("Logs\\sunshafts.log", "a")) {
+                fputs("sun: m_showSky is 0\n", file);
+                fclose(file);
+            }
+        }
+        return light;
+    }
+
+    float skyboxWeight = 0.0f;
+
+    if (info->m_skybox && info->m_skyboxWeight > 0.0f) {
+        skyboxWeight = info->m_skyboxWeight;
+    } else {
+        for (int32_t i = 0; i < 3; i++) {
+            if (info->m_blendSkybox[i] && info->m_blendSkyboxWeight[i] > skyboxWeight) {
+                skyboxWeight = info->m_blendSkyboxWeight[i];
+            }
+        }
+    }
+
+    const float length = sqrtf(light.toSun.x * light.toSun.x + light.toSun.y * light.toSun.y + light.toSun.z * light.toSun.z);
+
+    if (!(length > 1e-3f)) {
+        return light;
+    }
+
+    // Elevation of the sun, from -1 (straight down) to 1. The shafts hold through sunset, which is when they are best,
+    // and are gone once the sun is a little below the horizon.
+    const float elevation = light.toSun.z / length;
+    const float rise = fminf(fmaxf((elevation + 0.03f) / 0.08f, 0.0f), 1.0f);
+
+    const float dayAlpha = DayNight::InterpTable(reinterpret_cast<const C2Vector*>(sun.m_alphaCurve), 4, info->m_dayProgression);
+    const float cloudFade = sun.GetCloudDensityFade();
+    const float liquidFade = sun.GetLiquidDepthFade();
+    light.visibility = dayAlpha * cloudFade * liquidFade * rise * rise * (3.0f - 2.0f * rise);
+
+    static uint32_t s_lastLogMs;
+    if (DiagnosticLogsEnabled() && OsGetAsyncTimeMs() - s_lastLogMs > 2000) {
+        s_lastLogMs = OsGetAsyncTimeMs();
+        if (FILE* file = fopen("Logs\\sunshafts.log", "a")) {
+            fprintf(file, "sun: day=%.3f dayAlpha=%.3f skybox=%.3f cloud=%.3f liquid=%.3f elev=%.3f rise=%.3f vis=%.3f\n", info->m_dayProgression, dayAlpha, skyboxWeight, cloudFade, liquidFade, elevation, rise, light.visibility);
+            fclose(file);
+        }
+    }
+    return light;
+}
+
 // VERIFY: 2ea40d3b manual
 // OFFSET: 0x004F8EA0
 void CGWorldFrame::OnWorldRender() {
@@ -1844,6 +1916,12 @@ void CGWorldFrame::OnWorldRender() {
     // full brightness) and before the anti-aliasing pass (which then smooths its edges with everything else).
     PerfLogStage("ssao");
     CAmbientOcclusion::Apply();
+
+    // Sun shafts are light, so they go on after the ambient occlusion rather than under it, and before the outline for
+    // the same reason the occlusion does.
+    PerfLogStage("sunshafts");
+    CSunShafts::Apply(GatherSunShaftsLight());
+
     PerfLogStage("outline");
     CUnitOutline::Composite();
 

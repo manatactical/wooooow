@@ -46,7 +46,7 @@ constexpr float kBias = 0.03f;
 // far geometry is a few pixels per object, where AO is noise rather than shading, and skipping it saves the work
 // too. The fade begins at kFadeStartFraction of that distance.
 constexpr float kDistance = 60.0f;
-constexpr float kFadeStartFraction = 0.4f;
+constexpr float kFadeStartFraction = 0.25f;
 
 // The automatic spread. The kernel's reach is chosen per pixel so that, on screen, it always covers between these
 // two sizes:
@@ -55,7 +55,7 @@ constexpr float kFadeStartFraction = 0.4f;
 //   - a surface right under the camera would get a reach of hundreds of pixels, which makes every tap a cache
 //     miss, so it shrinks to kMaxReachPixels.
 // The result is that a crate, a wall and a mountainside each get a shadow proportioned to how big they look.
-constexpr float kMinReachPixels = 7.0f;
+constexpr float kMinReachPixels = 9.0f;
 constexpr float kMaxReachPixels = 52.0f;
 constexpr float kMaxReachGrowth = 5.0f;
 
@@ -86,6 +86,13 @@ constexpr float kSoftness = 0.35f;
 constexpr float kNearTapWeight = 0.7f;
 constexpr float kFarTapWeight = 0.3f;
 
+// Distance-dependent smoothing. Far surfaces cover few pixels, so single-pixel depth steps are large relative to the
+// surface and a fixed bias and a one-pixel normal baseline both read as noise. Per yard of distance, the bias grows by
+// kBiasPerYard, and the normal is taken over a baseline that widens to kFarNormalSpan pixels by kNormalFarYards.
+constexpr float kBiasPerYard = 0.0035f;
+constexpr float kFarNormalSpan = 3.0f;
+constexpr float kNormalFarYards = 45.0f;
+
 // Blur tap spacing in AO texels, and how far apart two depths may be, as a fraction of the centre's own distance,
 // before the tap stops contributing. Also the upsample's depth tolerance.
 constexpr float kBlurRadius = 1.0f;
@@ -99,7 +106,7 @@ constexpr float kSkyMinDepth = 0.99903f;
 // What a pixel with no geometry decodes to. Far past the fade, so it can never occlude or be occluded.
 constexpr float kMaxViewDepth = 2000.0f;
 
-constexpr int32_t kConstantRows = 9;
+constexpr int32_t kConstantRows = 10;
 
 // Registers shared by the occupancy, blur and composite shaders. These replace the engine's pixel shader
 // outright, so the whole constant range is free.
@@ -112,7 +119,8 @@ constexpr int32_t kConstantRows = 9;
 // c5 = { depth sigma, exclusion mask stamped, 1/AO width, 1/AO height }
 // c6 = { min reach px, max reach px, max reach growth, occlusion gain }
 // c7 = { curve power, tap softness, near tap weight, far tap weight }
-// c8 = { coarse reach scale, coarse tap weight, first coarse tap, unused }
+// c8 = { coarse reach scale, coarse tap weight, first coarse tap, bias per yard }
+// c9 = { far normal span, far normal yards, unused, unused }
 const char* const kCommonHLSL = R"HLSL(
 float4 c0 : register(c0);
 float4 c1 : register(c1);
@@ -123,6 +131,7 @@ float4 c5 : register(c5);
 float4 c6 : register(c6);
 float4 c7 : register(c7);
 float4 c8 : register(c8);
+float4 c9 : register(c9);
 
 // Stored depth back to yards in front of the eye. The denominator is negative for real geometry (the client's
 // projection stores depth = m22 + m32 / z with m32 < 0), which is why there is no clamp on it.
@@ -221,7 +230,7 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
     float3 p = ViewPos(uvC, z);
 
     // Normal from the nearer side on each axis, so a silhouette does not tilt the normal of the pixel beside it.
-    float2 t = c0.xy;
+    float2 t = c0.xy * lerp(1, c9.x, saturate(z / c9.y));
     float3 pr = PosAt(uvC + float2(t.x, 0));
     float3 pl = PosAt(uvC - float2(t.x, 0));
     float3 pd = PosAt(uvC + float2(0, t.y));
@@ -242,7 +251,7 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
     float pixelsPerYard = c1.y * 0.5 * (c4.z / c0.y) / z;
     float reach = clamp(c3.x * pixelsPerYard, c6.x, c6.y) / pixelsPerYard;
     reach = min(reach, c3.x * c6.z);
-    float bias = c3.z * reach / c3.x;
+    float bias = c3.z * reach / c3.x + z * c8.w;
 
     // Each AO texel rotates the kernel by an angle taken from a 3x3 tile of nine evenly spaced angles; without a
     // rotation the taps read as rings. The blur is a 3x3 box over the same texels, so every blur window holds each of
@@ -314,12 +323,16 @@ static const float2 kOffsets[8] = {
 float4 main(float2 uv : TEXCOORD0) : COLOR0
 {
     float centreZ = ViewZ(DepthAt(sDepth, SnapToFramePixel(uv)));
+
+    // The box doubles its spacing with distance. Offsets of two texels still land on all three residues of the 3x3
+    // rotation tile, so the grain keeps cancelling, while each tap reaches twice as far.
+    float spacing = lerp(1, 2, saturate((centreZ - c4.x * 0.5) / max(c4.x, 1)));
     float sum = tex2Dlod(sAo, float4(uv, 0, 0)).r;
     float wsum = 1;
 
     [unroll] for (int i = 0; i < 8; ++i)
     {
-        float2 tapUv = uv + kOffsets[i] * c5.zw * c4.w;
+        float2 tapUv = uv + kOffsets[i] * c5.zw * c4.w * spacing;
         float tapZ = ViewZ(DepthAt(sDepth, SnapToFramePixel(tapUv)));
 
         // Bilateral weight: taps on the far side of a silhouette do not contribute, so blurring cannot paint a
@@ -794,7 +807,8 @@ void CAmbientOcclusion::Apply() {
         kBlurDepthSigma, useExclude ? 1.0f : 0.0f, 1.0f / aoSize.x, 1.0f / aoSize.y,
         kMinReachPixels, kMaxReachPixels, kMaxReachGrowth, kOcclusionGain,
         kCurvePower, kSoftness, kNearTapWeight, kFarTapWeight,
-        kCoarseScale, kCoarseWeight, static_cast<float>(10 - kCoarseTaps), 0.0f,
+        kCoarseScale, kCoarseWeight, static_cast<float>(10 - kCoarseTaps), kBiasPerYard,
+        kFarNormalSpan, kNormalFarYards, 0.0f, 0.0f,
     };
 
     // The engine's own full-screen setup: pixel-space ortho projection, identity view and world, the AO target as

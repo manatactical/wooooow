@@ -2,6 +2,7 @@
 #include "Engine/Source/ModernWater/water_renderer.h"
 #include <d3d9.h>
 #include "World.h"
+#include "Engine/Source/AmbientOcclusion/AmbientOcclusion.h"
 #include "WoW/Source/WorldClient/WorldConstants.h"
 #include <cstdlib>
 #include <new>
@@ -3552,6 +3553,21 @@ void CWorldScene::RenderDetailDoodads() {
 
     int32_t shaders = CDetailDoodad::InitializeRenderState();
     C44Matrix world;
+
+    // Not in the original binary. The ambient occlusion pass leaves grass alone, and learns where the grass is from
+    // a mask the blades are stamped into. Every instance is stamped here in one run, so the render target is
+    // switched twice a frame instead of twice a batch; the real draws below are then the stock ones. Only with the
+    // shader path, which is the one the vertex setup below can be repeated for.
+    if (shaders && CWorldScene::sortTable.m_detailDoodadInstList.Head() && CAmbientOcclusion::BeginExcludeStamps()) {
+        for (CDetailDoodadInst* inst = CWorldScene::sortTable.m_detailDoodadInstList.Head(); inst; inst = CWorldScene::sortTable.m_detailDoodadInstList.Next(inst)) {
+            world = C44Matrix();
+            world.Translate(inst->m_chunk->m_topLeftCoords - CWorldScene::s_activeWorldView);
+            CDetailDoodad::SetupVertexShader(world, 0);
+            inst->DrawBatches(true);
+        }
+
+        CAmbientOcclusion::EndExcludeStamps();
+    }
 
     CDetailDoodadInst* next;
 

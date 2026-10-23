@@ -811,7 +811,7 @@ void CDetailDoodadInst::AddDoodad(uint32_t id, const C3Vector& position, float r
 
 // VERIFY: 9bfece74 manual
 // OFFSET: 0x007B3390
-void CDetailDoodadInstBatch::Draw() {
+void CDetailDoodadInstBatch::Draw(bool stampOnly) {
     if (!this->m_texture) {
         return;
     }
@@ -864,6 +864,10 @@ void CDetailDoodadInstBatch::Draw() {
     // Not in the original binary. One draw per doodad run, each preceded by its own constant row and
     // capped by the distance thinning, instead of the single draw the whole batch used to be. With one
     // doodad in the batch this is the stock call with stock numbers.
+    //
+    // Not in the original binary. With stampOnly set this draws the batch into the ambient occlusion pass's
+    // exclusion mask instead of the frame (see CWorldScene::RenderDetailDoodads, which does all of them in one go so
+    // the render target is switched once per frame rather than once per batch). Otherwise it is the stock draw.
     for (uint32_t i = 0; i < this->m_runs.Count(); i++) {
         const CDetailDoodadInstRun& run = this->m_runs[i];
 
@@ -885,13 +889,11 @@ void CDetailDoodadInstBatch::Draw() {
         drawBatch.m_minIndex = 0;
         drawBatch.m_maxIndex = this->m_vertexCount - 1;
 
-        // Not in the original binary. Marks these blades for the ambient occlusion pass, which leaves grass
-        // alone. Done before the real draw, for the same reason the unit outline's stamps are: the depth test then
-        // sees the scene as the blades themselves do. The blades still write depth exactly as they always did,
-        // so they sort and blend as before.
-        CAmbientOcclusion::StampExcluded(drawBatch);
-
-        g_theGxDevicePtr->Draw(&drawBatch, 1);
+        if (stampOnly) {
+            CAmbientOcclusion::StampExcluded(drawBatch);
+        } else {
+            g_theGxDevicePtr->Draw(&drawBatch, 1);
+        }
     }
 }
 
@@ -958,10 +960,10 @@ void CDetailDoodadInst::Free() {
 
 // VERIFY: 104e29d5 auto
 // OFFSET: 0x007B36B0
-void CDetailDoodadInst::DrawBatches() {
+void CDetailDoodadInst::DrawBatches(bool stampOnly) {
     for (uint32_t i = 0; i < 4; i++) {
         if (this->m_batches[i].m_texture) {
-            this->m_batches[i].Draw();
+            this->m_batches[i].Draw(stampOnly);
         }
     }
 }

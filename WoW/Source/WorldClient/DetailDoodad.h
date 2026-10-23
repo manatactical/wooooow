@@ -127,7 +127,7 @@ class CDetailDoodadInstBatch {
 
     CDetailDoodadInstBatch();
     ~CDetailDoodadInstBatch();
-    void Draw();
+    void Draw(bool stampOnly = false);
     void FillIndices();
     void FillVertices();
     void Free();
@@ -149,7 +149,7 @@ class CDetailDoodadInst {
     CDetailDoodadInst();
     ~CDetailDoodadInst();
     void AddDoodad(uint32_t id, const C3Vector& position, float rotation, float scale, const C3Vector& normal, uint16_t triIndex, const CImVector& color);
-    void DrawBatches();
+    void DrawBatches(bool stampOnly = false);
     int32_t HasBatches();
     void FreeBuffers();
     void Free();

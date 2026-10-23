@@ -56,7 +56,13 @@ class CAmbientOcclusion {
     // a frame-sized mask, depth-tested against the shared scene depth, and the occupancy pass then leaves those
     // pixels alone and does not let them occlude their neighbours. Called right before the caller's own draw of
     // the batch, with its vertex stream, shader and texture already set. A no-op while the pass is not running.
+    //
+    // The stamps go between BeginExcludeStamps and EndExcludeStamps, which switch the render target in and out once
+    // for the whole run rather than once per batch. Begin returns false when the pass is not running, and then the
+    // other two do nothing.
+    static bool BeginExcludeStamps();
     static void StampExcluded(const CGxBatch& batch);
+    static void EndExcludeStamps();
 
     private:
     static bool EnsureResources();
@@ -72,6 +78,7 @@ class CAmbientOcclusion {
     static FFX::Tex s_excludeTex;
     static CGxTex* s_exclude;
     static bool s_excludeStamped;
+    static bool s_stamping;
     static FFX::Tex s_aoTex;
     static FFX::Tex s_aoBlurTex;
     static CGxTex* s_ao;

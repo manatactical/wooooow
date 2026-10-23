@@ -119,8 +119,8 @@ WaterTimeInputs WaterSettings() {
     settings.quality = 2;
     settings.waves = 0.7f;
     settings.wind = 3.0f;
-    settings.foam = 1.0f;
-    settings.reflections = 0.75f;
+    settings.foam = 0.6f;
+    settings.reflections = 0.5f;
     settings.specular = 1.0f;
     settings.clarity = 0.2f;
     settings.zoneColors = 0.7f;

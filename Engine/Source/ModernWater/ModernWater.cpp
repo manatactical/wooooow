@@ -1,5 +1,7 @@
 #include "Engine/Source/ModernWater/ModernWater.h"
 
+#include "Engine/Source/ConsoleBase/ConsoleVar.h"
+#include "Engine/Source/ConsoleBase/Types.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/ModernWater/log.h"
 #include "Engine/Source/ModernWater/water_classify.h"
@@ -10,12 +12,17 @@
 #include "WoW/Source/DB/Rec/LiquidTypeRec.h"
 #include "WoW/Source/LiquidSystem/Liquid.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
 
 namespace {
+
+// Set by Init. Null before the world frame exists, in which case WaterSettings uses the defaults.
+CVar* s_cvarWaves;
+CVar* s_cvarWind;
 
 // The liquid type a settings object belongs to. CSettingsBank stores one settings per liquid type at that type's
 // own index, so the index is the type id -- no back-pointer needed and no layout guessed at. This is the whole of
@@ -103,6 +110,10 @@ namespace ModernWater {
 void Init() {
     static bool s_registered;
 
+    // Registering again returns the existing var, so a rebuilt world frame keeps what the player set.
+    s_cvarWaves = CVar::Register("waterWaves", "modern water wave height: 0 flat, 0.7 default, higher is rougher", 1, "0.7", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvarWind = CVar::Register("waterWind", "modern water wind speed, in yards per second: 3 default, higher is choppier", 1, "3", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+
     if (!s_registered) {
         s_registered = true;
         g_theGxDevicePtr->AddDeviceRestoredCallback([]() { GlobalWaterRenderer().ReleaseDefaultPool(); });
@@ -127,8 +138,8 @@ WaterTimeInputs WaterSettings() {
     // values so the water looks like the module's screenshot rather than like a default someone guessed.
     WaterTimeInputs settings;
     settings.quality = 2;
-    settings.waves = 0.7f;
-    settings.wind = 3.0f;
+    settings.waves = s_cvarWaves ? std::max(s_cvarWaves->m_floatValue, 0.0f) : 0.7f;
+    settings.wind = s_cvarWind ? std::max(s_cvarWind->m_floatValue, 0.0f) : 3.0f;
     settings.foam = 0.6f;
     settings.reflections = 0.5f;
     settings.specular = 1.0f;

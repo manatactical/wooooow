@@ -5,6 +5,7 @@
 #include "Engine/Source/ModernWater/ModernWater.h"
 #include "Engine/Source/ModernWater/water_inputs.h"
 #include "Engine/Source/ModernWater/water_renderer.h"
+#include "Engine/Source/ModernWater/log.h"
 #include "Engine/Source/Storm/H/storm.h"
 #include <d3d9.h>
 
@@ -145,6 +146,42 @@ void Liquid::CRenderer::Flush(const C3Vector& cameraPos, uint32_t pass) {
             water.SetContacts(contacts);
             armed = water.Begin(device, this, frameInputs, ModernWater::WaterSettings());
         }
+    }
+
+    // Diagnostic: which pass the water instances actually land in. The modern pass only arms for pass 1, so water
+    // queued in pass 0 would be drawn by the client and never shaded.
+    {
+        static uint32_t s_flushes[2] = {};
+        static uint32_t s_logged[2] = {};
+        const uint32_t slot = pass != 0;
+
+        if (count && s_logged[slot] < 6 && (s_flushes[slot]++ % 120) == 0) {
+            ++s_logged[slot];
+            uint32_t waterCount = 0;
+
+            for (uint32_t i = 0; i < count; i++) {
+                waterCount += ModernWater::ClassifyLiquidInstance(instances.m_data[i]) != WaterClass::None;
+            }
+
+            VF_LOG_INFO("modern water: flush pass %u has %u instances, %u are water, armed %d", pass, count,
+                        waterCount, armed ? 1 : 0);
+        }
+    }
+
+    // Diagnostic: a frame with liquids queued whose modern pass did not arm is a frame with no modern water. Reported when
+    // the situation changes, so a camera angle that causes it shows up as a line with the reason and the count.
+    if (pass == 1 && count) {
+        static int s_lastState = -1;
+        static uint32_t s_reports = 0;
+        const int state = armed ? 1 : (water.Active() ? 2 : 3);
+
+        if (state != s_lastState && s_reports < 40) {
+            ++s_reports;
+            VF_LOG_INFO("modern water: flush with %u liquids: %s (active %d, last skip '%s')", count,
+                        armed ? "armed" : "NOT armed", water.Active() ? 1 : 0, water.LastSkipReason());
+        }
+
+        s_lastState = state;
     }
 
     WaterClass pendingClass = WaterClass::None;

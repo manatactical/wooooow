@@ -12,7 +12,8 @@ static const float kRippleDetailFadeTexels = 2;
 // How many colour steps of change count as water having been drawn. The copies are 8-bit, so a step or two can come
 // from rounding; twelve is well above that and still well below the change a water surface makes.
 static const float kWaterCoverageColourSteps = 12;
-static const float kWaterCoveragePerColourStep = 1 / kWaterCoverageColourSteps;
+// The sampled difference is a 0..1 float, so it is scaled by 255 to count 8-bit steps before the threshold divides.
+static const float kWaterCoveragePerColourStep = 255 / kWaterCoverageColourSteps;
 
 struct WaterPixel
 {
@@ -90,19 +91,18 @@ WaterPixel ReconstructWaterPixel(float2 pixel)
     w.waterZ = CopiedViewDepth(sWaterDepth, w.uv);
     w.sceneZ = max(w.beforeZ, w.waterZ);
 
-    // Coverage. A pixel is water when the frame's colour changed between the copy taken before the liquid pass and
-    // the copy taken after it: the client's own water is the only thing drawn in between, so any visible change is
-    // water. Depth was tried first and never worked here -- the liquid draws reported a depth write of 1 yet the two
-    // depth copies came out identical on every sampled pixel, so every coverage came out zero and no water was shaded.
-    // Colour cannot lie that way: if the water is on screen it changed the frame, and if it did not change the frame
-    // there was nothing to shade anyway.
+    // Coverage: a pixel is water when this run's liquid draws won it, which is when the water's surface is nearer than the
+    // baseline depth. The water writes its surface into the shared depth, so this holds for the near-transparent shallows
+    // too, which barely change the colour. Both copies come from the same texture through the same shader, so unchanged
+    // pixels match exactly and the tolerance only has to absorb float noise.
     //
-    // The threshold is in gamma space and deliberately small; it only rejects the rounding of an 8-bit copy.
-    float3 waterColour = tex2Dlod(sWaterColour, float4(w.uv, 0, 0)).rgb;
-    float3 sceneColour = tex2Dlod(sSceneColour, float4(w.uv, 0, 0)).rgb;
-    w.coverage = saturate(max(abs(waterColour.r - sceneColour.r),
-                              max(abs(waterColour.g - sceneColour.g), abs(waterColour.b - sceneColour.b))) *
-                          kWaterCoveragePerColourStep);
+    // Colour is deliberately not part of it. The colour copy is the frame as it was before the whole liquid pass, so once
+    // one run has painted its water every pixel it shaded differs from that copy; a later run (another water class, or
+    // the same class resumed after one) would then claim all of them, find no water column left, and paint the dry
+    // pre-pass scene back over the water the first run just drew. The depth baseline is advanced after every run, so
+    // depth does not have that problem.
+    float depthStep = w.beforeZ - w.waterZ;
+    w.coverage = saturate(depthStep / max(w.beforeZ * 0.002, 0.01));
     float3 worldRay = ViewToWorldDirection(ViewRayAtUnitDepth(pixel));
     w.position = CameraPositionWorld() + worldRay * w.waterZ;
     w.toCamera = normalize(-worldRay);

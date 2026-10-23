@@ -1,3 +1,4 @@
+#include "Engine/Source/ModernWater/ModernWater.h"
 #include "Engine/Source/ModernWater/water_renderer.h"
 #include <d3d9.h>
 #include "World.h"
@@ -1940,6 +1941,9 @@ void CWorldScene::UpdateViewerLiquid() {
 // OFFSET: 0x00790A80
 void CWorldScene::RenderLiquidPass() {
     CWorldScene::ApplyFogState();
+
+    // Cleared first so a frame whose liquid flush does not run (or does not arm the modern pass) draws the stock rings.
+    ModernWater::SetClientRipplesSuppressed(false);
 
     if ((CWorld::enables & Enable_Water) && CWorldScene::s_liquidRenderer) {
         CWorldScene::s_liquidRenderer->Flush(CWorldScene::s_activeWorldView, 1);

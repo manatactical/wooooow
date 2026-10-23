@@ -165,4 +165,14 @@ bool WaterPassArmed() {
     return GlobalWaterRenderer().Armed();
 }
 
+static bool s_clientRipplesSuppressed = false;
+
+bool ClientRipplesSuppressed() {
+    return s_clientRipplesSuppressed;
+}
+
+void SetClientRipplesSuppressed(bool suppressed) {
+    s_clientRipplesSuppressed = suppressed;
+}
+
 }  // namespace ModernWater

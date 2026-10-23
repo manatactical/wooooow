@@ -1,4 +1,5 @@
 #include "WaterRipple.h"
+#include "Engine/Source/ModernWater/ModernWater.h"
 #include "Engine/Source/Tempest/C2Vector.h"
 #include "Engine/Source/Tempest/CAaBox.h"
 #include "Engine/Source/Tempest/C44Matrix.h"
@@ -81,6 +82,10 @@ void CMap::RenderWaterRipples() {
     uint32_t vertexCounts[2] = { 0, 0 };
     TSExplicitList<CWaterRipple, offsetof(CWaterRipple, m_bucketLink)> buckets[2];
 
+    // Not in the original binary. The rings still age, grow and expire above, so the list stays healthy; they are only not
+    // drawn while the modern water has taken over the frame, whose own ripples replace them.
+    const bool suppressed = ModernWater::ClientRipplesSuppressed();
+
     while (ripple) {
         CWaterRipple* next = s_activeRipples.Next(ripple);
 
@@ -110,7 +115,7 @@ void CMap::RenderWaterRipples() {
 
         if (ripple->m_alpha <= 0.0f) {
             ripple->m_link.Unlink();
-        } else {
+        } else if (!suppressed) {
             vertexCounts[ripple->m_type] += ripple->m_verts.Count();
             buckets[ripple->m_type].LinkToTail(ripple);
         }

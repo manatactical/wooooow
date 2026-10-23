@@ -204,6 +204,8 @@ class WaterRenderer {
 
     bool CopySceneColour(IDirect3DDevice9* device, IDirect3DSurface9* target, const D3DVIEWPORT9& viewport,
                          IDirect3DTexture9* destination);
+    void CopyDepthRaw(IDirect3DDevice9* device);
+    void RestoreSceneDepth(IDirect3DDevice9* device);
     bool CopyFrameDepth(IDirect3DDevice9* device, const D3DVIEWPORT9& viewport);
     void CopyDepthTargetLinear(IDirect3DDevice9* device, IDirect3DTexture9* source, IDirect3DTexture9* copy);
     bool BuildCommonConstants(const D3DSURFACE_DESC& depthDesc);
@@ -251,6 +253,9 @@ class WaterRenderer {
     bool m_finalDumped = false;
     float m_debugView = 0.0f;
     IDirect3DQuery9* m_occlusion = nullptr;
+    IDirect3DTexture9* m_depthRaw = nullptr;
+    IDirect3DPixelShader9* m_depthRawShader = nullptr;
+    IDirect3DPixelShader9* m_depthRestoreShader = nullptr;
     bool m_queryOpen = false;
     IDirect3DQuery9* m_coverQuery = nullptr;
     bool m_coverPending = false;

@@ -58,6 +58,10 @@ modemwater_shader(ps_vw_shade_high vw_water.hlsl ps_3_0 /DSSR_STEPS=16)
 modemwater_shader(ps_vw_depth vw_linear_depth.hlsl ps_3_0 /DPACKED_DEPTH=0)
 modemwater_shader(ps_vw_depth_packed vw_linear_depth.hlsl ps_3_0 /DPACKED_DEPTH=1)
 
+# The shared depth as stored, and the pass that writes it back once the water has drawn into it.
+modemwater_shader(ps_vw_depth_raw vw_depth_raw.hlsl ps_3_0)
+modemwater_shader(ps_vw_depth_restore vw_depth_restore.hlsl ps_3_0)
+
 # The FFT wave simulation: evolve the spectrum, a row pass and a column pass per stage, assemble the
 # displacement and momentum maps, and derive the foam from the displacement.
 modemwater_shader(ps_vw_fft_evolve vw_fft_evolve.hlsl ps_3_0)

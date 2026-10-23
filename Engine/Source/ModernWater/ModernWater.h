@@ -46,6 +46,12 @@ bool TagLiquidInstance(const Liquid::CInstance* instance);
 // liquid draws, so the water has to write depth even though the client's own water deliberately does not.
 bool WaterPassArmed();
 
+// True when the modern pass shaded this frame's water, so the client's own splash and wake rings -- decals the old water
+// drew its ripples with -- are redundant and are skipped. Set by Liquid::CRenderer::Flush, read by
+// CMap::RenderWaterRipples right after it; false whenever the pass did not run, which brings the stock rings back.
+bool ClientRipplesSuppressed();
+void SetClientRipplesSuppressed(bool suppressed);
+
 }  // namespace ModernWater
 
 #endif

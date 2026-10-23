@@ -134,6 +134,21 @@ void Liquid::CRenderer::Flush(const C3Vector& cameraPos, uint32_t pass) {
     // class in the frame since the last shade, the depth difference is exactly that class's pixels, so no per-class
     // mask (and no stencil) is needed to keep two classes from painting over each other.
     WaterRenderer& water = GlobalWaterRenderer();
+
+    // F10 diagnostic: toggles the modern pass off and on, so the client's own water and splash can be compared with and
+    // without it while a problem is being chased.
+    if (pass == 1) {
+        static bool s_f10WasDown = false;
+        const bool f10Down = (GetAsyncKeyState(VK_F10) & 0x8000) != 0;
+
+        if (f10Down && !s_f10WasDown) {
+            water.SetActive(!water.Active());
+            VF_LOG_INFO("modern water: F10 toggled the pass %s", water.Active() ? "on" : "off");
+        }
+
+        s_f10WasDown = f10Down;
+    }
+
     IDirect3DDevice9* device = static_cast<IDirect3DDevice9*>(g_theGxDevicePtr->DeviceNativeD3d9Device());
     bool armed = false;
 
@@ -213,6 +228,10 @@ void Liquid::CRenderer::Flush(const C3Vector& cameraPos, uint32_t pass) {
         }
 
         water.End(device);
+    }
+
+    if (pass == 1) {
+        ModernWater::SetClientRipplesSuppressed(armed);
     }
 
     for (uint32_t i = 0; i < limit; i++) {

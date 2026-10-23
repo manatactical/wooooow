@@ -13,6 +13,8 @@
 
 #include "modernwater-shaders/ps_vw_depth.h"
 #include "modernwater-shaders/ps_vw_depth_packed.h"
+#include "modernwater-shaders/ps_vw_depth_raw.h"
+#include "modernwater-shaders/ps_vw_depth_restore.h"
 #include "modernwater-shaders/ps_vw_shade_high.h"
 #include "modernwater-shaders/ps_vw_shade_low.h"
 #include "modernwater-shaders/ps_vw_shade_mid.h"
@@ -110,6 +112,18 @@ const D3DSAMPLERSTATETYPE kPassSamplerStates[] = {
     D3DSAMP_MAGFILTER,   D3DSAMP_MINFILTER,      D3DSAMP_MIPFILTER,    D3DSAMP_MIPMAPLODBIAS,
     D3DSAMP_MAXMIPLEVEL, D3DSAMP_MAXANISOTROPY,  D3DSAMP_SRGBTEXTURE,
 };
+
+// gx keeps its own copy of the shader constants and uploads only the range it has marked dirty, and it marks a register
+// dirty only when its value changes. This pass writes constants straight to the device and restores a state block that
+// holds whatever the hardware had at Begin -- which, with gx's uploads still pending, is not what gx believes it holds.
+// Afterwards gx and the hardware disagree and gx never resends the difference, so the client's later draws (the
+// splash rings among them) run with stale constants. Marking every register dirty makes gx resend its own values.
+void ForceShaderConstantUpload() {
+    for (ShadowConstants& shadow : CGxDevice::s_shadowConstants) {
+        shadow.dirtyMin = 0;
+        shadow.dirtyMax = 255;
+    }
+}
 
 template <typename T>
 void SafeRelease(T*& pointer) {
@@ -523,6 +537,9 @@ void WaterRenderer::ReleaseDefaultPool() {
     SafeRelease(m_decl);
     SafeRelease(m_depthCopyShader);
     SafeRelease(m_packedDepthCopyShader);
+    SafeRelease(m_depthRawShader);
+    SafeRelease(m_depthRestoreShader);
+    SafeRelease(m_depthRaw);
 
     for (IDirect3DPixelShader9*& shader : m_shade) {
         SafeRelease(shader);
@@ -595,6 +612,8 @@ bool WaterRenderer::EnsureShaders(IDirect3DDevice9* device) {
     const PixelShaderRequest pixels[] = {
         {"ps_vw_depth", g_ps_vw_depth, &m_depthCopyShader},
         {"ps_vw_depth_packed", g_ps_vw_depth_packed, &m_packedDepthCopyShader},
+        {"ps_vw_depth_raw", g_ps_vw_depth_raw, &m_depthRawShader},
+        {"ps_vw_depth_restore", g_ps_vw_depth_restore, &m_depthRestoreShader},
         {"ps_vw_shade_low", g_ps_vw_shade_low, &m_shade[0]},
         {"ps_vw_shade_mid", g_ps_vw_shade_mid, &m_shade[1]},
         {"ps_vw_shade_high", g_ps_vw_shade_high, &m_shade[2]},
@@ -868,6 +887,7 @@ void WaterRenderer::RestoreClientState(IDirect3DDevice9* device) {
     }
 
     g_theGxDevicePtr->IRsForceUpdate();
+    ForceShaderConstantUpload();
 }
 
 void WaterRenderer::RestoreTargets(IDirect3DDevice9* device) {
@@ -883,6 +903,7 @@ void WaterRenderer::RestoreTargets(IDirect3DDevice9* device) {
         m_state->Apply();
     }
 
+    ForceShaderConstantUpload();
     device->SetDepthStencilSurface(m_saved.depth);
     device->SetStreamSource(0, m_saved.stream, m_saved.streamOffset, m_saved.streamStride);
     ReleaseTargets();
@@ -953,6 +974,7 @@ bool WaterRenderer::EnsureCopies(IDirect3DDevice9* device, IDirect3DSurface9* ta
     SafeRelease(m_sceneDepthBefore);
     SafeRelease(m_waterDepthSurface);
     SafeRelease(m_waterDepth);
+    SafeRelease(m_depthRaw);
     m_copyW = m_copyH = 0;
 
     if (m_copyFailed) {
@@ -995,6 +1017,11 @@ bool WaterRenderer::EnsureCopies(IDirect3DDevice9* device, IDirect3DSurface9* ta
         return Skip("water copy creation failed");
     }
 
+    // Optional: without it the water's depth simply stays in the shared buffer after the pass, as before.
+    if (!m_packedDepth) {
+        CreateTarget(device, width, height, D3DFMT_R32F, &m_depthRaw);
+    }
+
     m_copyW = width;
     m_copyH = height;
     VF_LOG_INFO("modern water: scene copies %ux%u, depth %s", width, height,
@@ -1034,6 +1061,62 @@ void WaterRenderer::CopyDepthTargetLinear(IDirect3DDevice9* device, IDirect3DTex
     device->SetPixelShaderConstantF(0, &m_common[0][0], kCommonConstants);
     BindPointSampler(device, 0, source, D3DTADDRESS_CLAMP);
     DrawFullscreenTriangle(device);
+}
+
+// The shared depth as stored, copied unchanged into an R32F target before the water draws.
+void WaterRenderer::CopyDepthRaw(IDirect3DDevice9* device) {
+    if (!m_depthRaw || !m_depthRawShader || !m_sceneDepthTexture) {
+        return;
+    }
+
+    SetTarget(device, m_depthRaw);
+    device->SetDepthStencilSurface(nullptr);
+    SetPassState(device);
+    device->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
+    device->SetVertexDeclaration(m_decl);
+    device->SetVertexShader(m_vs);
+    device->SetPixelShader(m_depthRawShader);
+    device->SetPixelShaderConstantF(0, &m_common[0][0], kCommonConstants);
+    BindPointSampler(device, 0, m_sceneDepthTexture, D3DTADDRESS_CLAMP);
+    DrawFullscreenTriangle(device);
+}
+
+// Writes the pre-water depth back into the shared depth. The pass makes the liquid draws write depth so it can find the
+// water; left there, everything the client draws afterwards tests against the water's surface instead of the terrain
+// under it. The splash and wake rings are decals on that terrain, so they were hidden wherever water lay over them.
+// Depth only: colour writes are masked, and the viewport's depth range is the identity because a shader depth output is
+// stored as is.
+void WaterRenderer::RestoreSceneDepth(IDirect3DDevice9* device) {
+    if (!m_depthRaw || !m_depthRestoreShader || !m_waterDepthSurface || !m_saved.colour[0]) {
+        return;
+    }
+
+    DWORD zFunc = D3DCMP_LESSEQUAL;
+    device->GetRenderState(D3DRS_ZFUNC, &zFunc);
+
+    for (DWORD stage = 0; stage < kWaterSamplerStages; ++stage) {
+        device->SetTexture(stage, nullptr);
+    }
+
+    device->SetRenderTarget(0, m_saved.colour[0]);
+    device->SetDepthStencilSurface(m_waterDepthSurface);
+    D3DVIEWPORT9 viewport = m_inputs.viewport;
+    viewport.MinZ = 0.0f;
+    viewport.MaxZ = 1.0f;
+    device->SetViewport(&viewport);
+    SetPassState(device);
+    device->SetRenderState(D3DRS_ZENABLE, D3DZB_TRUE);
+    device->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
+    device->SetRenderState(D3DRS_ZFUNC, D3DCMP_ALWAYS);
+    device->SetRenderState(D3DRS_COLORWRITEENABLE, 0);
+    device->SetPixelShader(m_depthRestoreShader);
+    device->SetPixelShaderConstantF(0, &m_common[0][0], kCommonConstants);
+    BindPointSampler(device, 0, m_depthRaw, D3DTADDRESS_CLAMP);
+    DrawFullscreenTriangle(device);
+
+    device->SetTexture(0, nullptr);
+    device->SetRenderState(D3DRS_ZFUNC, zFunc);
+    device->SetRenderState(D3DRS_COLORWRITEENABLE, kColourWriteAll);
 }
 
 bool WaterRenderer::CopyFrameDepth(IDirect3DDevice9* device, const D3DVIEWPORT9& viewport) {
@@ -2316,6 +2399,7 @@ bool WaterRenderer::Begin(IDirect3DDevice9* device, const void* liquidRenderer, 
         device->SetViewport(&copyViewport);
         device->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
         CopyDepthTargetLinear(device, m_sceneDepthTexture, m_sceneDepthBefore);
+        CopyDepthRaw(device);
     }
 
     // The water draws now, into the frame's colour and the frame's *shared INTZ* depth -- not the client's own depth.
@@ -2466,6 +2550,9 @@ void WaterRenderer::End(IDirect3DDevice9* device) {
                         m_inputs.camTarget[1], m_skip);
         }
     }
+
+    // Put the shared depth back as it was before the water wrote into it, for everything the client draws after the pass.
+    RestoreSceneDepth(device);
 
     if (m_f9Frame) {
         m_f9Frame = false;

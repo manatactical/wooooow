@@ -603,7 +603,7 @@ AdvancedPanelOptions = {
 	unitOutline = { text = "UNIT_OUTLINE", tooltip = OPTION_TOOLTIP_UNIT_OUTLINE },
 	lootBeam = { text = "LOOT_BEAM", tooltip = OPTION_TOOLTIP_LOOT_BEAM },
 	ssao = { text = "SSAO", tooltip = OPTION_TOOLTIP_SSAO },
-	ssaoSpread = { text = "SSAO_SPREAD", minValue = 0.25, maxValue = 1.33, valueStep = 0.05, tooltip = OPTION_TOOLTIP_SSAO_SPREAD },
+	ssaoSpread = { text = "SSAO_SPREAD", minValue = 0.06, maxValue = 0.33, valueStep = 0.01, tooltip = OPTION_TOOLTIP_SSAO_SPREAD },
 	ssaoDistance = { text = "SSAO_DISTANCE", minValue = 15, maxValue = 200, valueStep = 5, tooltip = OPTION_TOOLTIP_SSAO_DISTANCE },
 	ssaoStrength = { text = "SSAO_STRENGTH", minValue = 0, maxValue = 1, valueStep = 0.05, tooltip = OPTION_TOOLTIP_SSAO_STRENGTH },
 	sunShafts = { text = "SUN_SHAFTS", tooltip = OPTION_TOOLTIP_SUN_SHAFTS },

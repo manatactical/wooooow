@@ -876,9 +876,9 @@ void CWorldParam::Initialize() {
 
     // Not in the original binary. How far the occlusion reaches (a multiple of the default, so 1 is the shipped
     // look) and how dark it goes. Registered here so the Advanced panel can read their defaults at the login screen.
-    CWorldParam::cvar_ssaoSpread = CVar::Register("ssaoSpread", "ambient occlusion spread, as a multiple of the default reach", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    CWorldParam::cvar_ssaoStrength = CVar::Register("ssaoStrength", "ambient occlusion strength: 0 none, 1 full", 1, "0.85", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    CWorldParam::cvar_ssaoDistance = CVar::Register("ssaoDistance", "ambient occlusion fades out and stops at this distance, in yards", 1, "60", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    CWorldParam::cvar_ssaoSpread = CVar::Register("ssaoSpread", "ambient occlusion spread, as a multiple of the default reach", 1, "0.06", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    CWorldParam::cvar_ssaoStrength = CVar::Register("ssaoStrength", "ambient occlusion strength: 0 none, 1 full", 1, "0.5", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    CWorldParam::cvar_ssaoDistance = CVar::Register("ssaoDistance", "ambient occlusion fades out and stops at this distance, in yards", 1, "145", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
     // Not in the original binary. Sun shafts and how strong they are. Registered here for the same reason as ssao:
     // the Advanced panel reads their defaults at the login screen. CSunShafts::Init registers them too.

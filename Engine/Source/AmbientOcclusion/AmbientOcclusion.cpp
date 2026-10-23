@@ -37,15 +37,19 @@ constexpr float kRadius = 0.65f;
 
 // How dark a fully occluded pixel goes: the occlusion fraction is scaled by this before it is taken from 1. The
 // default of the ssaoStrength cvar; ssaoSpread scales kRadius.
-constexpr float kStrength = 0.85f;
+constexpr float kStrength = 0.5f;
 
 // Depth offset, in yards, that stops a surface from occluding itself. Scaled with the per-pixel reach.
 constexpr float kBias = 0.03f;
 
+// The ssaoSpread slider runs 0.06 to 0.33 and means this many times less than it says: the old default of 1 is 0.25 here, a
+// multiple of 1 on kRadius and kBias, and the slider top of 0.33 is the old top of 1.33.
+constexpr float kSpreadScale = 4.0f;
+
 // The term is faded out with distance and stops entirely at the ssaoDistance cvar (default kDistance, in yards):
 // far geometry is a few pixels per object, where AO is noise rather than shading, and skipping it saves the work
 // too. The fade begins at kFadeStartFraction of that distance.
-constexpr float kDistance = 60.0f;
+constexpr float kDistance = 145.0f;
 constexpr float kFadeStartFraction = 0.25f;
 
 // The automatic spread. The kernel's reach is chosen per pixel so that, on screen, it always covers between these
@@ -94,6 +98,17 @@ constexpr float kBiasPerYard = 0.0035f;
 constexpr float kFarNormalSpan = 2.0f;
 constexpr float kNormalFarYards = 45.0f;
 
+// Foliage. A canopy is hundreds of leaf cards at every angle, so almost every pixel of it has something close enough
+// in front of it to read as a corner, and it comes out far darker than a tree should. A wall or a corner of a building
+// is the opposite: smooth, with its depth changing along one axis only. The shader tells them apart by how many of
+// four directions across the pixel are not flat (see the clutter term), and the occlusion of a pixel where all four
+// are is scaled down to this fraction.
+constexpr float kFoliageKeep = 0.1f;
+
+// The other side of the same measure: occlusion on a smooth surface (a wall, a floor, a corner of a building) is
+// scaled up by this, so the creases of structures come out darker without touching foliage.
+constexpr float kSmoothBoost = 1.45f;
+
 // Blur tap spacing in AO texels, and how far apart two depths may be, as a fraction of the centre's own distance,
 // before the tap stops contributing. Also the upsample's depth tolerance.
 constexpr float kBlurRadius = 1.0f;
@@ -121,7 +136,7 @@ constexpr int32_t kConstantRows = 10;
 // c6 = { min reach px, max reach px, max reach growth, occlusion gain }
 // c7 = { curve power, tap softness, near tap weight, far tap weight }
 // c8 = { coarse reach scale, coarse tap weight, first coarse tap, bias per yard }
-// c9 = { far normal span, far normal yards, unused, unused }
+// c9 = { far normal span, far normal yards, foliage keep, smooth boost }
 const char* const kCommonHLSL = R"HLSL(
 float4 c0 : register(c0);
 float4 c1 : register(c1);
@@ -304,6 +319,23 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
     float spinSin, spinCos;
     sincos(spin, spinSin, spinCos);
 
+    // How broken-up the surface around this pixel is. Inverse depth is linear across a plane whatever its slope, so
+    // the second difference of it across the pixel is ~0 on a wall, a floor or a roof, and large where the depth
+    // jumps. Taken in four directions and reduced with min: a crease or an edge breaks the depth across it but not
+    // along it, so it scores 0 and keeps all its occlusion, while a leaf canopy breaks it every way. Neighbours past
+    // the fade carry no depth and count as flat.
+    float clutter = 1;
+    [unroll] for (int d = 0; d < 4; ++d)
+    {
+        float2 dir = d == 0 ? float2(1, 0) : (d == 1 ? float2(0, 1) : (d == 2 ? float2(1, 1) : float2(1, -1)));
+        float2 off = dir * c5.zw * 3;
+        float zf = ZAt(uvC + off);
+        float zb = ZAt(uvC - off);
+        float jump = abs(1 / zf + 1 / zb - 2 / z) * z;
+        bool known = zf < c4.y * 0.999 && zb < c4.y * 0.999;
+        clutter = min(clutter, known ? saturate((jump - 0.002) / 0.008) : 0);
+    }
+
     float occlusion = 0;
     float weightSum = 0;
 
@@ -342,7 +374,7 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
         weightSum += tapWeight;
     }
 
-    float ao = 1 - c3.y * pow(saturate(occlusion * c6.w / weightSum), c7.x);
+    float ao = 1 - c3.y * pow(saturate(occlusion * c6.w / weightSum * lerp(c9.w, c9.z, clutter)), c7.x);
     ao = lerp(ao, 1, saturate((z - c4.x) / (c4.y - c4.x)));
     return float4(ao, zc, 1);
 }
@@ -626,12 +658,12 @@ void CAmbientOcclusion::Init() {
 
     // The two knobs of the look, registered here as well as by CWorldParam::Initialize for the same reason.
     s_cvarSpread = CVar::Register("ssaoSpread", "ambient occlusion spread, as a multiple of the default reach",
-                                  1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+                                  1, "0.06", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvarStrength = CVar::Register("ssaoStrength", "ambient occlusion strength: 0 none, 1 full",
-                                    1, "0.85", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+                                    1, "0.5", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
     s_cvarDistance = CVar::Register("ssaoDistance", "ambient occlusion fades out and stops at this distance, in yards",
-                                    1, "60", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+                                    1, "145", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
     if (s_registered) {
         return;
@@ -862,9 +894,9 @@ void CAmbientOcclusion::Apply() {
 
     // The player's two knobs scale the compiled-in defaults. Clamped here, so a hand-edited Config.wtf cannot hand
     // the shader a radius of zero (no occlusion at all) or one wide enough to shade the whole screen.
-    float spread = s_cvarSpread ? s_cvarSpread->m_floatValue : 1.0f;
+    float spread = s_cvarSpread ? s_cvarSpread->m_floatValue : 0.06f;
     float strength = s_cvarStrength ? s_cvarStrength->m_floatValue : kStrength;
-    spread = std::min(std::max(spread, 0.1f), 4.0f);
+    spread = std::min(std::max(spread, 0.025f), 0.4f) * kSpreadScale;
     strength = std::min(std::max(strength, 0.0f), 1.0f);
 
     float distance = s_cvarDistance ? s_cvarDistance->m_floatValue : kDistance;
@@ -880,7 +912,7 @@ void CAmbientOcclusion::Apply() {
         kMinReachPixels, kMaxReachPixels, kMaxReachGrowth, kOcclusionGain,
         kCurvePower, kSoftness, kNearTapWeight, kFarTapWeight,
         kCoarseScale, kCoarseWeight, static_cast<float>(10 - kCoarseTaps), kBiasPerYard,
-        kFarNormalSpan, kNormalFarYards, 0.0f, 0.0f,
+        kFarNormalSpan, kNormalFarYards, kFoliageKeep, kSmoothBoost,
     };
 
     // The engine's own full-screen setup: pixel-space ortho projection, identity view and world, the AO target as

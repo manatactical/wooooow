@@ -120,9 +120,9 @@ void Init() {
     s_cvarWind = CVar::Register("waterWind", "modern water wind speed, in yards per second: 3 default, higher is choppier", 1, "3", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
     s_cvarReflections = CVar::Register("waterReflections", "modern water reflection strength: 0 sky only, 0.5 default, higher is more mirror-like", 1, "0.5", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_cvarSunGlow = CVar::Register("waterSunGlow", "modern water sun reflection glow: 0 off, 0.05 default, higher is brighter", 1, "0.05", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvarSunGlow = CVar::Register("waterSunGlow", "modern water sun reflection glow: 0 off, 5 default, higher is brighter", 1, "5", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
-    s_cvarSpecular = CVar::Register("waterSpecular", "modern water sun glint strength: 0 off, 0.25 default, higher is brighter", 1, "0.25", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvarSpecular = CVar::Register("waterSpecular", "modern water sun glint strength: 0 off, 0.15 default, higher is brighter", 1, "0.15", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
     if (!s_registered) {
         s_registered = true;
@@ -152,8 +152,8 @@ WaterTimeInputs WaterSettings() {
     settings.wind = s_cvarWind ? std::max(s_cvarWind->m_floatValue, 0.0f) : 3.0f;
     settings.foam = 0.6f;
     settings.reflections = s_cvarReflections ? std::max(s_cvarReflections->m_floatValue, 0.0f) : 0.5f;
-    settings.sunGlow = s_cvarSunGlow ? std::max(s_cvarSunGlow->m_floatValue, 0.0f) : 0.05f;
-    settings.specular = s_cvarSpecular ? std::max(s_cvarSpecular->m_floatValue, 0.0f) : 0.25f;
+    settings.sunGlow = s_cvarSunGlow ? std::max(s_cvarSunGlow->m_floatValue, 0.0f) : 5.0f;
+    settings.specular = s_cvarSpecular ? std::max(s_cvarSpecular->m_floatValue, 0.0f) : 0.15f;
     settings.clarity = 0.2f;
     settings.zoneColors = 0.7f;
     settings.ripples = 0.5f;

@@ -14733,6 +14733,16 @@ void CGUnit_C::BowModelLoaded(CM2Model* model, void* arg) {
     SysMsgPrintf(SYSMSG_WARNING, "Bow model '%s' equipped without proper events.  Bowstring won't draw.", model->m_shared->m_data->m_name.Data());
 }
 
+// NOT IN BINARY. Bows, guns and crossbows are stowed on the back when not in use.
+static SHEATHE_TYPE GetRangedSheatheType(const CGUnitVirtualItem* item) {
+    // The class and subclass are 0 until the item cache has answered, so a bow is also recognised by its inventory type.
+    if (item->m_inventoryType == INVTYPE_RANGED || (item->m_classID == 2 && (item->m_subclassID == 2 || item->m_subclassID == 3 || item->m_subclassID == 18))) {
+        return SHEATHE_BACK;
+    }
+
+    return static_cast<SHEATHE_TYPE>(item->m_sheatheType);
+}
+
 // VERIFY: 2d7e1e97 manual
 // OFFSET: 0x0072B7F0
 int32_t CGUnit_C::ShowRangedWeapon(bool sheathed, bool* rightHand) {
@@ -14773,7 +14783,7 @@ int32_t CGUnit_C::ShowRangedWeapon(bool sheathed, bool* rightHand) {
         displayRecPtr = &displayRec;
     }
 
-    GEOCOMPONENTLINKS link = CCharacterComponent::AddHandItem(this->m_worldModel, displayRecPtr, INVSLOT_RANGED, static_cast<SHEATHE_TYPE>(item->m_sheatheType), sheathed, false, isRightHand, 0);
+    GEOCOMPONENTLINKS link = CCharacterComponent::AddHandItem(this->m_worldModel, displayRecPtr, INVSLOT_RANGED, GetRangedSheatheType(item), sheathed, false, isRightHand, 0);
 
     if (this->m_characterComponent) {
         this->m_characterComponent->SetItemSlotUsingAttachSlot(static_cast<ITEM_SLOT>(-1), link);
@@ -14966,6 +14976,9 @@ void CGUnit_C::SetSheatheStateInstant() {
                         this->m_worldModel->DetachAllChildrenById(ATTACH_HANDLEFT);
                         CCharacterComponent::ComponentOpenFingers(this->m_worldModel, COMP_HAND_LEFT);
                     }
+
+                    // NOT IN BINARY. Stow the ranged weapon on the back instead of dropping it.
+                    this->ShowRangedWeapon(true, nullptr);
 
                     this->m_animationState &= ~0x300000;
                     return;
@@ -20456,6 +20469,12 @@ void CGUnit_C::AddHandItem(int32_t hand) {
         mainHand = false;
     } else {
         if (this->m_sheatheState != WEAPONMODE_RANGEDMODE) {
+            // NOT IN BINARY. Keep a bow, gun or crossbow visible on the back while it is not in use.
+            if (GetRangedSheatheType(item) == SHEATHE_BACK && !this->IsDisarmed(!ranged)) {
+                this->ShowRangedWeapon(true, nullptr);
+                return;
+            }
+
             CCharacterComponent::RemoveHandItem(this->m_worldModel, static_cast<INVENTORY_SLOTS>(17), static_cast<SHEATHE_TYPE>(0), false);
             return;
         }

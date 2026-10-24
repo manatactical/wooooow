@@ -1874,6 +1874,9 @@ void CGWorldFrame::OnWorldRender() {
     // The outline's target list is built here, before any model batch goes by: a target is stamped from the
     // batches of the frame it is drawn in, so it has to be recorded before that frame's scene draw.
     CUnitOutlineGather::Update();
+    // The ambient occlusion stands down entirely while the camera is underwater. Told here, ahead of the scene draw,
+    // because its stamps (grass, water, the character) go out with the batches.
+    CAmbientOcclusion::SetSubmerged(World::SceneCamLiquidStatus(nullptr) != 0);
     // Terrain and world objects draw into this depth first, so the unit stamps that follow test against the
     // frame's real occluders and a wall clips the line instead of dropping the whole outline. It stays bound
     // across the model passes below, because those are what stamp the units, and is detached at the world ->

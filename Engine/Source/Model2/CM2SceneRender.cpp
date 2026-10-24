@@ -15,6 +15,7 @@
 #include "Engine/Source/ShaderEffect/ShaderEffect.h"
 #include "Engine/Source/ShaderEffect/ShaderEffectManager.h"
 #include "Engine/Source/ShaderEffect/ShadowCache.h"
+#include "Engine/Source/AmbientOcclusion/AmbientOcclusion.h"
 #include "Engine/Source/UnitOutline/UnitOutline.h"
 #include "Engine/Source/Storm/H/storm.h"
 #include "Engine/Source/Tempest/C4Vector.h"
@@ -26,6 +27,14 @@ const uint32_t s_fogModes[M2BLEND_COUNT] = { 1, 1, 1, 2, 2, 3, 4 };
 
 // STATIC: 0x00AF58A8
 static C44Matrix s_identity;
+
+// NOT IN BINARY. One model batch about to be drawn, offered to every pass that wants to re-draw it flat into a mask: the
+// unit outline's silhouettes and the ambient occlusion's close-up character. Both are no-ops for a batch they do not
+// care about, and both leave the device state as they found it.
+static void StampBatchForPasses(const CGxBatch& batch, CM2Model* model) {
+    CUnitOutline::StampBatch(batch, model);
+    CAmbientOcclusion::StampCharacter(batch, model);
+}
 
 // VERIFY: 6a3520ef manual
 // OFFSET: 0x0081F330
@@ -503,7 +512,7 @@ void CM2SceneRender::DrawBatch() {
         batch.m_maxIndex = this->m_curSkinSection->m_vertexCount + this->m_curSkinSection->m_vertexStart - 1;
         // The stamp is issued immediately before the real draw and only when the outline is on, so the
         // module is a no-op the rest of the time. Nothing is consumed: the batch is drawn again below.
-        CUnitOutline::StampBatch(batch, this->m_curModel);
+        StampBatchForPasses(batch, this->m_curModel);
         g_theGxDevicePtr->Draw(&batch, 1);
     } else if (sharedVertices) {
         CGxMatrixStack& world = g_theGxDevicePtr->m_xforms[GxXform_World];
@@ -513,7 +522,7 @@ void CM2SceneRender::DrawBatch() {
 
         batch.m_minIndex = this->m_curSkinSection->m_vertexStart;
         batch.m_maxIndex = this->m_curSkinSection->m_vertexCount + this->m_curSkinSection->m_vertexStart - 1;
-        CUnitOutline::StampBatch(batch, this->m_curModel);
+        StampBatchForPasses(batch, this->m_curModel);
         g_theGxDevicePtr->Draw(&batch, 1);
 
         CGxMatrixStack& restore = g_theGxDevicePtr->m_xforms[GxXform_World];
@@ -523,7 +532,7 @@ void CM2SceneRender::DrawBatch() {
     } else {
         batch.m_minIndex = 0;
         batch.m_maxIndex = this->m_curSkinSection->m_vertexCount - 1;
-        CUnitOutline::StampBatch(batch, this->m_curModel);
+        StampBatchForPasses(batch, this->m_curModel);
         g_theGxDevicePtr->Draw(&batch, 1);
     }
 }
@@ -725,7 +734,7 @@ void CM2SceneRender::DrawBatchDoodad(M2Element* elements, uint32_t* indices) {
 
             batch.m_count = instances * this->m_curSkinSection->m_indexCount;
             batch.m_maxIndex = instances * this->m_curShared->m_skinData->m_vertices.m_count - 1;
-            CUnitOutline::StampBatch(batch, this->m_curModel);
+            StampBatchForPasses(batch, this->m_curModel);
             g_theGxDevicePtr->Draw(&batch, 1);
         }
     } else {
@@ -763,7 +772,7 @@ void CM2SceneRender::DrawBatchDoodad(M2Element* elements, uint32_t* indices) {
 
             batch.m_count = instances * this->m_curSkinSection->m_indexCount;
             batch.m_maxIndex = instances * this->m_curSkinSection->m_vertexCount - 1;
-            CUnitOutline::StampBatch(batch, this->m_curModel);
+            StampBatchForPasses(batch, this->m_curModel);
             g_theGxDevicePtr->Draw(&batch, 1);
         }
     }

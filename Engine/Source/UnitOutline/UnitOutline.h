@@ -110,6 +110,11 @@ class CUnitOutline {
     // creation on and would otherwise be read stale on a frame where the bind was refused.
     static bool HasFrameDepth();
 
+    // Not in the original binary. Whether a model is one of the local player's own this frame (the body, its mount, or
+    // gear hung off them). Exact match. Valid whether or not the outline is on, since the game refills the list every
+    // frame; the ambient occlusion's character pass asks it for each batch the scene draws.
+    static bool IsPlayerModel(CM2Model* model);
+
     private:
     static bool Enabled();
     static bool EnsureResources();

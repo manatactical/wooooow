@@ -98,6 +98,28 @@ constexpr PassScale kPasses[kPassCount] = {
 // in the device). The scales go to red, green and blue in that order, which is the order the shaders read them in.
 constexpr int32_t kChannelMask[kPassCount] = { 1, 4, 2 };
 
+// The close-up character pass (see the shaders for how it works). The exclusion mask's red channel is grass and water,
+// its green the character; these are the engine's colour-write bits for them.
+constexpr int32_t kMaskRed = 1;
+constexpr int32_t kMaskGreen = 4;
+
+// How far the character's occlusion reaches, in yards, and how many screen pixels that is held between: close up
+// a 0.3 yard crease is a hundred pixels wide, which would make every tap a cache miss, and far off it is a few pixels
+// of noise. Strength is the ssaoStrength cvar's, scaled; the bias keeps a surface from shading itself.
+constexpr float kCharRadius = 0.30f;
+constexpr float kCharMinPixels = 10.0f;
+constexpr float kCharMaxPixels = 110.0f;
+constexpr float kCharStrengthScale = 1.0f;
+constexpr float kCharBias = 0.012f;
+constexpr float kCharGain = 3.0f;
+constexpr float kCharCurvePower = 1.5f;
+constexpr float kCharSoftness = 0.35f;
+constexpr float kCharDepthSigma = 0.03f;
+
+// The cvars' defaults: whether the pass is on, and how close the camera has to be (yards from the player).
+constexpr float kCharDistance = 6.0f;
+constexpr int32_t kCharConstantRows = 11;
+
 // The pass runs at half the frame's size in each direction -- a quarter of the pixels -- and is brought back to
 // full size by a depth-aware upsample in the composite.
 constexpr int32_t kResolutionDivisor = 2;
@@ -167,7 +189,7 @@ constexpr int32_t kPassRows = 2;
 // c5 = { depth sigma, exclusion mask stamped, 1/AO width, 1/AO height }
 // c6 = { occlusion gain, curve power, tap softness, bias per yard }
 // c7 = { near tap weight, far tap weight, far normal span, far normal yards }
-// c8 = { foliage keep, smooth boost, unused, unused }
+// c8 = { foliage keep, smooth boost, character pass on, unused }
 //
 // Per draw (kPassRow):
 // c9  = { reach scale, min reach px, max reach px, max reach growth }       (occupancy)
@@ -482,7 +504,10 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
 
     [branch] if (c5.y > 0.5)
     {
-        if (tex2Dlod(sExclude, float4(uv, 0, 0)).r > 0.5) { return float4(1, 1, 1, 1); }
+        // Red: grass and water, which take no part. Green: the character, when its own close-up pass is running --
+        // the pixels it shades are not shaded twice.
+        float2 mask = tex2Dlod(sExclude, float4(uv, 0, 0)).rg;
+        if (mask.r > 0.5 || (c8.z > 0.5 && mask.g > 0.5)) { return float4(1, 1, 1, 1); }
     }
 
     float centreZ = min(ViewZ(DepthAt(sDepth, uv)), c4.y);
@@ -520,6 +545,160 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
     float3 scales = lerp(float3(1, 1, 1), sum / max(wsum, 1e-6), c9.xyz);
     float ao = scales.x * scales.y * scales.z;
     return float4(ao, ao, ao, 1);
+}
+)HLSL";
+
+// The close-up character pass. Everything here runs at the frame's own size on the pixels the character's batches
+// stamped into the green channel of the exclusion mask, and nowhere else (the first line of each shader is the
+// early-out), so its cost follows the character's size on screen rather than the frame's.
+//
+// It shares the common block and its constant layout with the frame-wide passes, plus
+// c9  = { reach in yards, strength, bias in yards, max reach px }
+// c10 = { min reach px, occlusion gain, curve power, tap softness }
+// and, for the blur, c8 = { step x, step y, depth sigma, unused }.
+//
+// A twelve-tap kernel, rotated per pixel through a 4x4 tile of sixteen angles. The blur is two 4-tap passes over
+// the same 4x4 window, so every window holds each of the sixteen rotations exactly once and the rotation cancels
+// out, whatever the surface underneath is doing. That exactness is the point: a random rotation leaves grain that
+// swims as the character moves.
+const char* const kCharAoHLSL = R"HLSL(
+sampler2D sDepth : register(s0);
+sampler2D sMask : register(s1);
+
+static const float4 kKernel[12] = {
+    float4(0.20412, 0.00000, 0.97895, 0.26294),
+    float4(-0.26070, 0.23882, 0.93541, 0.35157),
+    float4(0.03990, -0.45469, 0.88976, 0.42809),
+    float4(0.32859, 0.42859, 0.84163, 0.49854),
+    float4(-0.60301, -0.10666, 0.79057, 0.56502),
+    float4(0.57123, -0.36337, 0.73598, 0.62858),
+    float4(-0.19106, 0.71075, 0.67700, 0.68986),
+    float4(-0.36438, -0.70159, 0.61237, 0.74928),
+    float4(0.79056, 0.28871, 0.54006, 0.80713),
+    float4(-0.82244, 0.33949, 0.45644, 0.86363),
+    float4(0.39647, -0.84724, 0.35355, 0.91895),
+    float4(0.29298, 0.93407, 0.20412, 0.97322)
+};
+
+float ZAtUv(float2 uv)
+{
+    return ViewZ(DepthAt(sDepth, uv));
+}
+
+float3 PosAtUv(float2 uv)
+{
+    return ViewPos(uv, ZAtUv(uv));
+}
+
+float4 main(float2 uv : TEXCOORD0) : COLOR0
+{
+    // Alpha says whether the pixel is the character's; the blur and the composite read it.
+    [branch] if (tex2Dlod(sMask, float4(uv, 0, 0)).g < 0.5) { return float4(1, 1, 1, 0); }
+
+    float z = ZAtUv(uv);
+    float3 p = ViewPos(uv, z);
+
+    // The normal from the full-size depth: across the pixel where the surface is continuous, from the nearer side
+    // where there is an edge.
+    float2 o = c0.xy;
+    float3 pr = PosAtUv(uv + float2(o.x, 0));
+    float3 pl = PosAtUv(uv - float2(o.x, 0));
+    float3 pd = PosAtUv(uv + float2(0, o.y));
+    float3 pu = PosAtUv(uv - float2(0, o.y));
+    float continuous = z * 0.004 + 0.002;
+    float3 dx = abs(pr.z + pl.z - 2 * p.z) < continuous ? (pr - pl) * 0.5 : (abs(pr.z - p.z) < abs(p.z - pl.z) ? pr - p : p - pl);
+    float3 dy = abs(pd.z + pu.z - 2 * p.z) < continuous ? (pd - pu) * 0.5 : (abs(pd.z - p.z) < abs(p.z - pu.z) ? pd - p : p - pu);
+    float3 n = normalize(cross(dx, dy));
+    n = dot(n, p) > 0 ? -n : n;
+
+    float3 up = abs(n.y) < 0.99 ? float3(0, 1, 0) : float3(1, 0, 0);
+    float3 tangent = normalize(cross(up, n));
+    float3 bitangent = cross(n, tangent);
+
+    // The reach in yards, held between a minimum and a maximum number of screen pixels, as in the frame-wide pass.
+    float pixelsPerYard = c1.y * 0.5 * (c4.z / c0.y) / z;
+    float reach = clamp(c9.x * pixelsPerYard, c10.x, c9.w) / pixelsPerYard;
+    reach = min(reach, c9.x * 3);
+    float bias = c9.z + z * 0.002;
+
+    float2 pixel = floor(uv / c0.xy);
+    float2 tile = pixel - 4 * floor(pixel / 4);
+    float spin = frac((tile.x + 4 * tile.y) * (7.0 / 16.0)) * 6.2831853;
+    float spinSin, spinCos;
+    sincos(spin, spinSin, spinCos);
+
+    float occlusion = 0;
+    float weightSum = 0;
+
+    [unroll] for (int i = 0; i < 12; ++i)
+    {
+        float4 k = kKernel[i];
+        float2 disk = float2(k.x * spinCos - k.y * spinSin, k.x * spinSin + k.y * spinCos);
+        float3 dir = tangent * disk.x + bitangent * disk.y + n * k.z;
+        float3 tap = p + dir * (reach * k.w);
+
+        float2 ndc = float2(tap.x / tap.z * c1.x + c1.z, tap.y / tap.z * c1.y + c1.w);
+        float2 tapUv = float2(c0.z + (ndc.x * 0.5 + 0.5) * c3.w, c0.w + (0.5 - ndc.y * 0.5) * c4.z);
+        bool inside = tap.z > 0.05
+                   && tapUv.x >= c0.z && tapUv.x <= c0.z + c3.w
+                   && tapUv.y >= c0.w && tapUv.y <= c0.w + c4.z;
+        float sceneZ = ZAtUv(tapUv);
+
+        float diff = tap.z - sceneZ;
+        float range = smoothstep(0, 1, reach / max(abs(z - sceneZ), 1e-4));
+        float blocked = saturate((diff - bias) / (c10.w * reach * k.w));
+        float tapWeight = lerp(0.7, 0.3, k.w);
+
+        occlusion += inside ? blocked * range * tapWeight : 0;
+        weightSum += tapWeight;
+    }
+
+    float ao = 1 - c9.y * pow(saturate(occlusion * c10.y / weightSum), c10.z);
+    return float4(ao, ao, ao, 1);
+}
+)HLSL";
+
+// One axis of the 4-pixel window {-2, -1, 0, +1}, bilateral on the full-size depth and on the character mask (a
+// neighbour that is not the character has alpha 0 and no weight). Run along x, then along y.
+const char* const kCharBlurHLSL = R"HLSL(
+sampler2D sAo : register(s0);
+sampler2D sDepth : register(s1);
+
+float4 main(float2 uv : TEXCOORD0) : COLOR0
+{
+    float4 centre = tex2Dlod(sAo, float4(uv, 0, 0));
+    [branch] if (centre.a < 0.5) { return centre; }
+
+    float centreZ = ViewZ(DepthAt(sDepth, uv));
+    float sum = centre.r;
+    float wsum = 1;
+
+    [unroll] for (int i = 0; i < 3; ++i)
+    {
+        float offset = i == 0 ? -2 : (i == 1 ? -1 : 1);
+        float2 tapUv = uv + c8.xy * offset;
+        float4 tap = tex2Dlod(sAo, float4(tapUv, 0, 0));
+        float tapZ = ViewZ(DepthAt(sDepth, tapUv));
+        float w = tap.a * saturate(1 - abs(tapZ - centreZ) / (c8.z * centreZ + 0.02));
+        sum += tap.r * w;
+        wsum += w;
+    }
+
+    float v = sum / wsum;
+    return float4(v, v, v, 1);
+}
+)HLSL";
+
+// Multiplied onto the frame by the same blend the frame-wide composite uses. Pixels that are not the character's
+// are clipped, so this never touches what the frame-wide pass shaded (and the debug blit leaves them alone).
+const char* const kCharCompositeHLSL = R"HLSL(
+sampler2D sAo : register(s0);
+
+float4 main(float2 uv : TEXCOORD0) : COLOR0
+{
+    float4 t = tex2Dlod(sAo, float4(uv, 0, 0));
+    clip(t.a - 0.5);
+    return float4(t.r, t.r, t.r, 1);
 }
 )HLSL";
 
@@ -671,12 +850,28 @@ void DrawFullscreenQuad(const FFX::Tex& target) {
 // turned a broken shader into a large frame-rate loss on top of the missing effect. Cleared by a device restore.
 bool s_compileFailed;
 
+// The same for the character pass's own shaders, kept apart so a failure there costs only the character pass and not
+// the frame-wide one.
+bool s_charCompileFailed;
+
 }  // namespace
 
 CVar* CAmbientOcclusion::s_cvarSsao;
 CVar* CAmbientOcclusion::s_cvarSpread;
 CVar* CAmbientOcclusion::s_cvarStrength;
 CVar* CAmbientOcclusion::s_cvarDistance;
+CVar* CAmbientOcclusion::s_cvarCharacter;
+CVar* CAmbientOcclusion::s_cvarCharDistance;
+CGxShader* CAmbientOcclusion::s_charAoPS;
+CGxShader* CAmbientOcclusion::s_charBlurPS;
+CGxShader* CAmbientOcclusion::s_charCompositePS;
+FFX::Tex CAmbientOcclusion::s_charAoTex;
+FFX::Tex CAmbientOcclusion::s_charBlurTex;
+CGxTex* CAmbientOcclusion::s_charAo;
+CGxTex* CAmbientOcclusion::s_charBlur;
+bool CAmbientOcclusion::s_charStamped;
+bool CAmbientOcclusion::s_submerged;
+float CAmbientOcclusion::s_cameraDistance = 1.0e9f;
 CGxShader* CAmbientOcclusion::s_zPS;
 CGxShader* CAmbientOcclusion::s_aoPS;
 CGxShader* CAmbientOcclusion::s_blurPS;
@@ -718,6 +913,11 @@ void CAmbientOcclusion::Init() {
     s_cvarDistance = CVar::Register("ssaoDistance", "ambient occlusion fades out and stops at this distance, in yards",
                                     1, "145", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
+    s_cvarCharacter = CVar::Register("ssaoCharacter", "dedicated high-quality ambient occlusion for the player character when the camera is close",
+                                     1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvarCharDistance = CVar::Register("ssaoCharDistance", "the character's own ambient occlusion runs while the camera is closer than this, in yards",
+                                        1, "6", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+
     if (s_registered) {
         return;
     }
@@ -727,7 +927,12 @@ void CAmbientOcclusion::Init() {
 }
 
 bool CAmbientOcclusion::Enabled() {
-    return s_cvarSsao && s_cvarSsao->m_intValue > 0 && g_theGxDevicePtr && g_theGxDevicePtr->m_context;
+    return s_cvarSsao && s_cvarSsao->m_intValue > 0 && !s_submerged && g_theGxDevicePtr && g_theGxDevicePtr->m_context;
+}
+
+// Not in the original binary. See the declaration.
+void CAmbientOcclusion::SetSubmerged(bool submerged) {
+    s_submerged = submerged;
 }
 
 // Not in the original binary. See the declaration.
@@ -743,7 +948,14 @@ void CAmbientOcclusion::OnDeviceRestored() {
     if (s_blurPS) { g_theGxDevicePtr->ShaderDestroy(s_blurPS); }
     if (s_compositePS) { g_theGxDevicePtr->ShaderDestroy(s_compositePS); }
     if (s_excludePS) { g_theGxDevicePtr->ShaderDestroy(s_excludePS); }
+    if (s_charAoPS) { g_theGxDevicePtr->ShaderDestroy(s_charAoPS); }
+    if (s_charBlurPS) { g_theGxDevicePtr->ShaderDestroy(s_charBlurPS); }
+    if (s_charCompositePS) { g_theGxDevicePtr->ShaderDestroy(s_charCompositePS); }
 
+    s_charCompileFailed = false;
+    s_charStamped = false;
+    RefreshGxTexture(s_charAoTex, s_charAo);
+    RefreshGxTexture(s_charBlurTex, s_charBlur);
     s_compileFailed = false;
     RefreshGxTexture(s_excludeTex, s_exclude);
     s_excludeStamped = false;
@@ -785,9 +997,15 @@ bool CAmbientOcclusion::EnsureResources() {
     return true;
 }
 
-// Not in the original binary. See the declaration; modelled on CUnitOutline::StampMask, except that the render
-// target is switched once for a whole run of stamps instead of once per stamp.
+// Not in the original binary. See the declaration.
 bool CAmbientOcclusion::BeginExcludeStamps(bool ignoreAlpha) {
+    return BeginStamps(ignoreAlpha, kMaskRed);
+}
+
+// Not in the original binary. Modelled on CUnitOutline::StampMask, except that the render target is switched once
+// for a whole run of stamps instead of once per stamp. The mask is one texture shared by what is excluded (red) and
+// by the character (green); channelMask is the engine's colour-write bits for the one this run writes.
+bool CAmbientOcclusion::BeginStamps(bool ignoreAlpha, int32_t channelMask) {
     if (!Active() || !EnsureResources()) {
         return false;
     }
@@ -835,7 +1053,7 @@ bool CAmbientOcclusion::BeginExcludeStamps(bool ignoreAlpha) {
     GxRsSet(GxRs_Lighting, 0);
     GxRsSet(GxRs_Fog, 0);
     GxRsSet(GxRs_DepthWrite, 0);
-    GxRsSet(GxRs_ColorWrite, 15);
+    GxRsSet(GxRs_ColorWrite, channelMask);
     GxRsSet(GxRs_PixelShader, s_excludePS);
     memcpy(s_savedPixelC0, g_theGxDevicePtr->ShaderConstantsLock(GxSh_Pixel), sizeof(s_savedPixelC0));
     GxShaderConstantsSet(GxSh_Pixel, 0, cutoff, 1);
@@ -876,12 +1094,69 @@ void CAmbientOcclusion::StampLiquidBatch(const CGxBatch& batch) {
     }
 }
 
+// Not in the original binary. See the declaration.
+void CAmbientOcclusion::SetCameraDistance(float yards) {
+    s_cameraDistance = yards;
+}
+
+// Not in the original binary. See the declaration.
+bool CAmbientOcclusion::CharacterWanted() {
+    if (!Enabled() || !s_cvarCharacter || s_cvarCharacter->m_intValue <= 0) {
+        return false;
+    }
+
+    const float distance = s_cvarCharDistance ? s_cvarCharDistance->m_floatValue : kCharDistance;
+    return s_cameraDistance < std::min(std::max(distance, 1.0f), 60.0f);
+}
+
+// Not in the original binary. See the declaration. A batch at a time, like the liquid stamps: the character is a few
+// dozen batches and only gets here while the camera is close.
+void CAmbientOcclusion::StampCharacter(const CGxBatch& batch, CM2Model* model) {
+    if (!CharacterWanted() || !CUnitOutline::IsPlayerModel(model)) {
+        return;
+    }
+
+    // What the batch is, as the unit outline reads it: anything but a body, a cutout or a blended surface is an effect
+    // or an attachment glow, whose quads are not the character's shape.
+    const int32_t blend = g_theGxDevicePtr->m_appRenderStates[GxRs_BlendingMode].m_value.m_data.i[0];
+
+    if (blend != GxBlend_Opaque && blend != GxBlend_AlphaKey && blend != GxBlend_Alpha) {
+        return;
+    }
+
+    if (BeginStamps(false, kMaskGreen)) {
+        StampExcluded(batch);
+        EndExcludeStamps();
+        s_charStamped = true;
+    }
+}
+
+// Not in the original binary. Compiled the first time a close-up frame needs them, apart from the frame-wide shaders.
+bool CAmbientOcclusion::EnsureCharacterResources() {
+    if (s_charCompileFailed) {
+        return false;
+    }
+
+    if (!s_charAoPS) { s_charAoPS = CompilePixelShader(kCommonHLSL, kCharAoHLSL); }
+    if (!s_charBlurPS) { s_charBlurPS = CompilePixelShader(kCommonHLSL, kCharBlurHLSL); }
+    if (!s_charCompositePS) { s_charCompositePS = CompilePixelShader(kCommonHLSL, kCharCompositeHLSL); }
+
+    if (!s_charAoPS || !s_charBlurPS || !s_charCompositePS) {
+        s_charCompileFailed = true;
+        return false;
+    }
+
+    return true;
+}
+
 // Not in the original binary. The world -> interface boundary; see the header for the order and why.
 void CAmbientOcclusion::Apply() {
     // Whether the mask was written this frame is consumed here, whatever the pass then decides: a stale mask from
     // a frame that stood down must not be read by the next one.
     const bool excludeStamped = s_excludeStamped;
     s_excludeStamped = false;
+    const bool charStamped = s_charStamped;
+    s_charStamped = false;
 
     if (!EnsureResources()) {
         return;
@@ -957,6 +1232,17 @@ void CAmbientOcclusion::Apply() {
     float distance = s_cvarDistance ? s_cvarDistance->m_floatValue : kDistance;
     distance = std::min(std::max(distance, 10.0f), 500.0f);
 
+    // The close-up character pass: wanted, something was stamped, and its own targets and shaders are there. The
+    // debug views of single scales (3 to 5) leave the character white, so they stay about the frame-wide pass.
+    bool useChar = charStamped && useExclude && mode <= 2 && CharacterWanted() && EnsureCharacterResources()
+                && CreateFrameTex(s_charAoTex, size, true) && CreateFrameTex(s_charBlurTex, size, true);
+
+    if (useChar) {
+        RefreshGxTexture(s_charAoTex, s_charAo);
+        RefreshGxTexture(s_charBlurTex, s_charBlur);
+        useChar = s_charAo && s_charBlur;
+    }
+
     const float constants[kConstantRows * 4] = {
         1.0f / size.x, 1.0f / size.y, minX, minY,
         m[0], m[5], m[8], m[9],
@@ -966,7 +1252,7 @@ void CAmbientOcclusion::Apply() {
         kBlurDepthSigma, useExclude ? 1.0f : 0.0f, 1.0f / aoSize.x, 1.0f / aoSize.y,
         kOcclusionGain, kCurvePower, kSoftness, kBiasPerYard,
         kNearTapWeight, kFarTapWeight, kFarNormalSpan, kNormalFarYards,
-        kFoliageKeep, kSmoothBoost, 0.0f, 0.0f,
+        kFoliageKeep, kSmoothBoost, useChar ? 1.0f : 0.0f, 0.0f,
     };
 
     // The engine's own full-screen setup: pixel-space ortho projection, identity view and world, the AO target as
@@ -1058,5 +1344,70 @@ void CAmbientOcclusion::Apply() {
     GxRsSet(GxRs_Texture1, nullptr);
     GxRsSet(GxRs_Texture2, nullptr);
     GxRsSet(GxRs_Texture3, nullptr);
+    FFX::SetupReset();
+
+    if (!useChar) {
+        return;
+    }
+
+    // The close-up character pass, at the frame's full size over the pixels the character stamped. The frame-wide
+    // composite above left exactly those pixels alone. The constants are the same layout (see kCharAoHLSL), written
+    // again because the frame-wide ones are about a half-size target.
+    const float charStrength = strength * kCharStrengthScale;
+    const float charConstants[kCharConstantRows * 4] = {
+        1.0f / size.x, 1.0f / size.y, minX, minY,
+        m[0], m[5], m[8], m[9],
+        mapping.atInfinity, mapping.perInverseViewDepth, mapping.deepest, kMaxViewDepth,
+        0.0f, 0.0f, 0.0f, maxX - minX,
+        0.0f, 0.0f, maxY - minY, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, kCharDepthSigma, 0.0f,
+        kCharRadius, charStrength, kCharBias, kCharMaxPixels,
+        kCharMinPixels, kCharGain, kCharCurvePower, kCharSoftness,
+    };
+
+    FFX::SetupGx(&s_charAoTex);
+    GxXformSetViewport(0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f);
+    GxRsSet(GxRs_VertexShader, nullptr);
+    GxRsSet(GxRs_BlendingMode, GxBlend_Opaque);
+    GxRsSet(GxRs_ColorWrite, 15);
+    GxRsSet(GxRs_AlphaRef, 0);
+    GxShaderConstantsSet(GxSh_Pixel, 0, charConstants, kCharConstantRows);
+
+    // Occupancy: the depth, and the mask whose green channel is the character.
+    GxRenderTargetSet(GxBuffers_Color, s_charAo, 0);
+    GxRsSet(GxRs_PixelShader, s_charAoPS);
+    GxRsSet(GxRs_Texture0, depth);
+    GxRsSet(GxRs_Texture1, mask);
+    DrawFullscreenQuad(s_charAoTex);
+
+    // The blur, along x and then along y: together the 4x4 window that holds each of the sixteen rotations once.
+    const float stepX[4] = { 1.0f / size.x, 0.0f, kCharDepthSigma, 0.0f };
+    const float stepY[4] = { 0.0f, 1.0f / size.y, kCharDepthSigma, 0.0f };
+
+    GxRenderTargetSet(GxBuffers_Color, s_charBlur, 0);
+    GxRsSet(GxRs_PixelShader, s_charBlurPS);
+    GxRsSet(GxRs_Texture0, s_charAo);
+    GxRsSet(GxRs_Texture1, depth);
+    GxShaderConstantsSet(GxSh_Pixel, 8, stepX, 1);
+    DrawFullscreenQuad(s_charBlurTex);
+
+    GxRenderTargetSet(GxBuffers_Color, s_charAo, 0);
+    GxRsSet(GxRs_Texture0, s_charBlur);
+    GxShaderConstantsSet(GxSh_Pixel, 8, stepY, 1);
+    DrawFullscreenQuad(s_charAoTex);
+
+    // Onto the frame, the same way the frame-wide term goes on.
+    GxRenderTargetSet(GxBuffers_Color, nullptr, 0);
+    GxXformSetViewport(minX, maxX, minY, maxY, 0.0f, 1.0f);
+    GxRsSet(GxRs_PixelShader, s_charCompositePS);
+    GxRsSet(GxRs_BlendingMode, mode > 1 ? GxBlend_Opaque : GxBlend_Mod);
+    GxRsSet(GxRs_Texture0, s_charAo);
+    DrawFullscreenQuad(s_charAoTex);
+
+    GxRsSet(GxRs_Texture0, nullptr);
+    GxRsSet(GxRs_Texture1, nullptr);
     FFX::SetupReset();
 }

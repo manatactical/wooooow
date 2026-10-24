@@ -10,6 +10,7 @@
 class CGxBatch;
 class CGxShader;
 class CGxTex;
+class CM2Model;
 struct CVar;
 
 // Not in the original 3.3.5a binary. Screen-space ambient occlusion over the finished world frame; see
@@ -48,8 +49,16 @@ class CAmbientOcclusion {
     // called at the world -> interface boundary, with the world's own projection and viewport still current.
     static void Apply();
 
-    // Not in the original binary. Whether the option is on and a device exists.
+    // Not in the original binary. Whether the option is on and a device exists. Always false while the camera is
+    // submerged (see SetSubmerged), which stands down every part of the module at once: the passes, the exclusion
+    // stamps and the character pass.
     static bool Enabled();
+
+    // Not in the original binary. Whether the camera is below a liquid surface. The game says so once per frame, before
+    // the scene draws, because the stamps that go with the scene have to know too. The module cannot ask the world
+    // itself: it knows nothing of liquids. Underwater there is no ambient light to occlude, and the underwater fog and
+    // blur are drawn over the frame.
+    static void SetSubmerged(bool submerged);
 
     // Not in the original binary. Whether the world being drawn right now is feeding the pass: the option is on
     // and the shared depth is bound. Geometry that must not take part in the occlusion -- the grass -- asks this
@@ -73,14 +82,47 @@ class CAmbientOcclusion {
     // seen through it, and the surface itself, is left unshaded.
     static void StampLiquidBatch(const CGxBatch& batch);
 
+    // Not in the original binary. The close-up character pass: while the camera is closer to the player than the
+    // ssaoCharDistance cvar (yards), the player's own model -- body, mount, gear -- gets a dedicated occlusion of its
+    // own instead of the frame-wide one. It runs at the frame's full size on the character's pixels only, with a
+    // denser kernel and a blur that cancels the per-pixel rotation exactly, so a curved, small, moving surface comes out
+    // smooth where the half-size pass is grainy. The frame-wide pass leaves those pixels alone (they are still in the
+    // depth it reads, so the character shades the world around it as before).
+    //
+    // The game says how far the camera is, once per frame, before the scene draws (see CUnitOutlineGather::Update).
+    static void SetCameraDistance(float yards);
+
+    // Not in the original binary. One model batch about to be drawn. If it is the player's and the close-up pass is
+    // on, it is re-drawn flat into the green channel of the exclusion mask, depth-tested against the scene so a wall
+    // in front of the character hides the pixels it covers. Called by the model scene right before the caller's own draw
+    // of the batch, with its vertex stream, shader and texture already set; a no-op for anything else.
+    static void StampCharacter(const CGxBatch& batch, CM2Model* model);
+
+    // Not in the original binary. Whether the close-up character pass is wanted this frame.
+    static bool CharacterWanted();
+
     private:
     static bool EnsureResources();
+    static bool EnsureCharacterResources();
+    static bool BeginStamps(bool ignoreAlpha, int32_t channelMask);
     static void OnDeviceRestored();
 
     static CVar* s_cvarSsao;
     static CVar* s_cvarSpread;
     static CVar* s_cvarStrength;
     static CVar* s_cvarDistance;
+    static CVar* s_cvarCharacter;
+    static CVar* s_cvarCharDistance;
+    static CGxShader* s_charAoPS;
+    static CGxShader* s_charBlurPS;
+    static CGxShader* s_charCompositePS;
+    static FFX::Tex s_charAoTex;
+    static FFX::Tex s_charBlurTex;
+    static CGxTex* s_charAo;
+    static CGxTex* s_charBlur;
+    static bool s_charStamped;
+    static bool s_submerged;
+    static float s_cameraDistance;
     static CGxShader* s_zPS;
     static CGxShader* s_aoPS;
     static CGxShader* s_blurPS;

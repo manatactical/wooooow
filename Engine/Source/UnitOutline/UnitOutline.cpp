@@ -694,6 +694,17 @@ void CUnitOutline::AddOccluder(CM2Model* model) {
     s_playerModels[s_playerCount++] = model;
 }
 
+// Not in the original binary. See the declaration.
+bool CUnitOutline::IsPlayerModel(CM2Model* model) {
+    for (int32_t i = 0; model && i < s_playerCount; i++) {
+        if (s_playerModels[i] == model) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 // Not in the original binary. Exactly one model is recorded, and FindTarget matches exactly that pointer.
 // The attach chain is deliberately not followed: an M2 hung off a unit -- a quest icon, a spell effect, a
 // weapon glow -- shares the unit's chain, and walking it put every one of those in the silhouette along

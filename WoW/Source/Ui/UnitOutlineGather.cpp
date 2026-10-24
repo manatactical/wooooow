@@ -11,6 +11,7 @@
 
 #include <cstdint>
 
+#include "Engine/Source/AmbientOcclusion/AmbientOcclusion.h"
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
 #include "Engine/Source/Model2/M2Model.h"
 #include "Engine/Source/Storm/H/storm.h"
@@ -24,6 +25,8 @@
 #include "WoW/Source/ObjectMgrClient/ObjectMgrClient.h"
 #include "WoW/Source/Ui/GameUI.h"
 #include "WoW/Source/Ui/PetInfo.h"
+#include "WoW/Source/Ui/WorldFrame.h"
+#include "WoW/Source/UIUtil/Camera.h"
 
 namespace {
 
@@ -294,6 +297,12 @@ int32_t QuestGiverEnumProc(WOWGUID guid, void* param) {
 void CUnitOutlineGather::Update() {
     // The list that is about to be filled describes this frame; the engine empties it after compositing.
     CUnitOutline::BeginTargets();
+
+    // The ambient occlusion gives the player character its own close-up pass while the camera is near it. It is
+    // told how far the camera is, here, because the scene's batches are what stamp the character and they come
+    // after this. Far until proven otherwise, so a frame with no camera or no player runs the frame-wide pass only.
+    CGCamera* camera = CGWorldFrame::GetActiveCamera();
+    CAmbientOcclusion::SetCameraDistance(camera ? camera->m_distance : 1.0e9f);
 
     CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 

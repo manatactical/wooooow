@@ -10,6 +10,7 @@
 #include "Engine/Source/ModernWater/log.h"
 #include "Engine/Source/ModernWater/water_classify.h"
 #include "Engine/Source/UnitOutline/UnitOutline.h"
+#include "WoW/Source/WorldClient/SkyCapture.h"
 
 #include "modernwater-shaders/ps_vw_depth.h"
 #include "modernwater-shaders/ps_vw_depth_packed.h"
@@ -57,6 +58,7 @@ constexpr DWORD kFirstSurfaceStage = 3;
 constexpr DWORD kFirstFoamStateStage = 7;
 constexpr DWORD kWaveFoamMaskStage = 11;
 constexpr DWORD kRippleStage = 12;
+constexpr DWORD kSkyCaptureStage = 13;
 constexpr DWORD kShoreFoamMaskStage = 14;
 constexpr DWORD kDepthFoamMaskStage = 15;
 constexpr int kShoreFoamSlot = static_cast<int>(WaterMaskSlot::ShoreFoam);
@@ -194,6 +196,13 @@ void BindSampler(IDirect3DDevice9* device, DWORD stage, IDirect3DBaseTexture9* t
 void BindPointSampler(IDirect3DDevice9* device, DWORD stage, IDirect3DBaseTexture9* texture,
                       D3DTEXTUREADDRESS address) {
     BindSampler(device, stage, texture, address, D3DTEXF_POINT, D3DTEXF_NONE);
+}
+
+// The captured sky as a native texture, or null when the sky is not being captured (the water then reflects the light
+// bands). The pointer is read fresh each time: a device reset recreates the gx texture behind it.
+IDirect3DTexture9* SkyCaptureTexture() {
+    CGxTex* sky = SkyCapture::Texture();
+    return sky ? static_cast<IDirect3DTexture9*>(sky->m_apiSpecificData) : nullptr;
 }
 
 RECT ViewportRect(const D3DVIEWPORT9& viewport) {
@@ -1363,15 +1372,16 @@ void WaterRenderer::FillClassConstants(ShadingConstants& constants, const WaterP
         channel *= moonScale;
     }
 
+    // The ambient is the client's own light ambient, not an average of the sky bands: at dusk and at night the horizon
+    // bands stay orange while the light's ambient has already gone blue, and the average tinted the water's body colour
+    // orange when seen from straight above.
+    float ambient[3];
+    LinearColour(m_inputs.ambientColor, ambient);
+
     float sky[6][3];
-    float ambient[3] = {};
 
     for (int band = 0; band < 6; ++band) {
         LinearColour(m_inputs.skyColors[band], sky[band]);
-
-        for (int channel = 0; channel < 3; ++channel) {
-            ambient[channel] += sky[band][channel] / 6.0f;
-        }
     }
 
     constants.light = {toLight[0], toLight[1], toLight[2], sunVisibility};
@@ -1384,6 +1394,9 @@ void WaterRenderer::FillClassConstants(ShadingConstants& constants, const WaterP
         const float* colour = sky[kSkyColourOfBand[band]];
         constants.sky[band] = {colour[0], colour[1], colour[2], 0.0f};
     }
+
+    // cSkyTop.w says whether the shader reflects the captured sky (bound to the sky-capture sampler) or the bands above.
+    constants.sky[kSkyTop].w = SkyCaptureTexture() ? 1.0f : 0.0f;
 
     if (m_inputs.stockFogApplies) {
         float fog[3];
@@ -1557,6 +1570,8 @@ void WaterRenderer::ShadeClass(IDirect3DDevice9* device, WaterClass waterClass, 
     BindPointSampler(device, kWaterDepthStage, m_waterDepth, D3DTADDRESS_CLAMP);
     BindSampler(device, kRippleStage, m_ripplesShaded ? m_ripples.Map() : m_flat, D3DTADDRESS_CLAMP,
                 D3DTEXF_LINEAR, D3DTEXF_NONE);
+    BindSampler(device, kSkyCaptureStage, SkyCaptureTexture() ? static_cast<IDirect3DBaseTexture9*>(SkyCaptureTexture()) : m_flat,
+                D3DTADDRESS_CLAMP, D3DTEXF_LINEAR, D3DTEXF_NONE);
 
     const WaterData& data = GlobalWaterData();
     const WaterPreset magma = MagmaPreset();

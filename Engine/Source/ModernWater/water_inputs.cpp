@@ -109,7 +109,7 @@ bool BuildFrameInputs(WaterFrameInputs& out) {
     out.sunColor = PackColour(info.m_bands.m_sunCloudColors[0]);
     out.directColor = PackColour(light.m_diffuse);
     out.ambientColor = PackColour(light.m_ambient);
-    out.lightIsMoon = LightIsMoon(info.m_day);
+    out.lightIsMoon = LightIsMoon(info.m_dayProgression);
 
     // Fog: the group fog is what the frame is drawn with. The client draws its water through this same fog, so
     // the water's own fog has to be the same or the shoreline would not match the lake behind it.

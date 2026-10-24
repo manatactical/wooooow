@@ -9,8 +9,25 @@ float3 ReflectedDirection(float3 V, float3 N)
     return float3(r.xy, abs(r.z));
 }
 
+static const float kSkyCaptureTiles = 4;
+static const float kSkyCapturePitch = 0.78539816;
+
+// The captured sky at an elevation (the sine of the angle above the horizon). Each strip looks 45 degrees up with a 90
+// degree vertical field, so a ray's row is the tangent of its angle from the strip's axis. The four compass strips are
+// averaged in linear light, which keeps the sun and moon from tinting the gradient.
+float3 CapturedSkyColour(float elevation)
+{
+    float row = 0.5 - 0.5 * tan(asin(saturate(elevation)) - kSkyCapturePitch);
+    float3 sum = 0;
+    [unroll] for (int tile = 0; tile < 4; ++tile)
+        sum += GammaToLinear(tex2Dlod(sSkyCapture, float4((tile + 0.5) / kSkyCaptureTiles, row, 0, 0)).rgb);
+    return sum / kSkyCaptureTiles;
+}
+
 float3 SkyColour(float elevation)
 {
+    [branch] if (cSkyTop.w > 0.5)
+        return CapturedSkyColour(elevation);
     float3 colour = lerp(cSkyHorizon.rgb, cSkyLowerBand.rgb, smoothstep(0, kSkyLowerBandElevation, elevation));
     colour = lerp(colour, cSkyUpperBand.rgb, smoothstep(kSkyLowerBandElevation, kSkyUpperBandElevation, elevation));
     colour = lerp(colour, cSkyMiddle.rgb, smoothstep(kSkyUpperBandElevation, kSkyMiddleElevation, elevation));

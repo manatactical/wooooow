@@ -46,6 +46,9 @@ sampler2D sFoamState2 : register(s9);
 sampler2D sFoamState3 : register(s10);
 sampler2D sWaveFoamMasks : register(s11);
 sampler2D sRipples : register(s12);
+// The sky as the player sees it: four 16x64 strips side by side, each running horizon (bottom) to zenith (top). See
+// WoW/Source/WorldClient/SkyCapture.h. Used only when cSkyTop.w is set.
+sampler2D sSkyCapture : register(s13);
 sampler2D sShoreFoamMask : register(s14);
 sampler2D sDepthFoamMask : register(s15);
 

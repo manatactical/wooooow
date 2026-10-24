@@ -24,6 +24,7 @@
 #include "WoW/Source/WorldClient/MapRenderChunk.h"
 #include "WoW/Source/WorldClient/MapWeather.h"
 #include "WoW/Source/WorldClient/ShadowQuery.h"
+#include "WoW/Source/WorldClient/SkyCapture.h"
 #include "WoW/Source/WorldClient/SortTable.h"
 #include "Engine/Source/Gx/CGxMatrixStack.h"
 #include "Engine/Source/ShaderEffect/ShadowCache.h"
@@ -215,6 +216,7 @@ void CWorldScene::Render(const C3Vector& cameraPos, float time) {
 
         if (!s_liquidTypeId) {
             DayNight::RenderSky(&CWorldScene::s_unk_ADF570);
+            SkyCapture::Update(&CWorldScene::s_unk_ADF570);
         }
     }
 

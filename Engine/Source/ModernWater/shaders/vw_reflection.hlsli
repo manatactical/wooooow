@@ -19,9 +19,24 @@ float3 CapturedSkyColour(float elevation)
 {
     float row = 0.5 - 0.5 * tan(asin(saturate(elevation)) - kSkyCapturePitch);
     float3 sum = 0;
+    float3 first = 0;
+    float3 second = 0;
+    float firstLuma = -1;
+    float secondLuma = -1;
     [unroll] for (int tile = 0; tile < 4; ++tile)
-        sum += GammaToLinear(tex2Dlod(sSkyCapture, float4((tile + 0.5) / kSkyCaptureTiles, row, 0, 0)).rgb);
-    return sum / kSkyCaptureTiles;
+    {
+        float3 colour = GammaToLinear(tex2Dlod(sSkyCapture, float4((tile + 0.5) / kSkyCaptureTiles, row, 0, 0)).rgb);
+        float luma = dot(colour, float3(0.2126, 0.7152, 0.0722));
+        sum += colour;
+        // Track the two brightest strips: a low sun or moon glows across the horizon of one or two of them.
+        bool isFirst = luma > firstLuma;
+        bool isSecond = !isFirst && luma > secondLuma;
+        second = isFirst ? first : (isSecond ? colour : second);
+        secondLuma = isFirst ? firstLuma : (isSecond ? luma : secondLuma);
+        first = isFirst ? colour : first;
+        firstLuma = isFirst ? luma : firstLuma;
+    }
+    return (sum - first - second) * 0.5;
 }
 
 float3 SkyColour(float elevation)

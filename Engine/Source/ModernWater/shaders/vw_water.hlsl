@@ -12,6 +12,7 @@ static const float kMinSceneVisibility = 0.05;
 static const float kOpaqueDepthYards = 35;static const float kDebugLiquidClass = 5;
 static const float kFoamSkyElevation = 0.6;
 static const float kEdgeCoverageGain = 32;
+static const float kSunGlowSharpness = 500;
 static const float kDebugRippleHeightGain = 4;
 static const float kDebugRippleWindowShade = 0.25;
 
@@ -78,7 +79,12 @@ float4 main(float2 pixelIndex : VPOS) : COLOR0
     float4 screenReflection = TraceScreenReflection(w, pixel, R, hitUv);
     float3 sky = 0;
     [branch] if (screenReflection.a < 1)
-        sky = FoggedSkyReflection(w, R, SkyColour(R.z));
+    {
+        // The captured sky has the sun taken out, so the glow around it is added back here: a soft lobe around the light
+        // direction, in the light's colour, rippled by the wave normals through R.
+        float sunGlow = pow(saturate(dot(R, L)), kSunGlowSharpness) * cWaveControl.y * SunVisibility();
+        sky = FoggedSkyReflection(w, R, SkyColour(R.z) + SunColour() * sunGlow);
+    }
     [branch] if (screenReflection.a > 0)
         screenReflection.rgb = FoggedScreenReflection(w, R, screenReflection.rgb, hitUv);
     float3 reflected = lerp(sky, screenReflection.rgb, screenReflection.a);

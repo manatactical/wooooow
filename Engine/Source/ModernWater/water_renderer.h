@@ -75,7 +75,8 @@ struct WaterTimeInputs {
     float zoneColors = 0.7f;
     float foam = 1.0f;
     float reflections = 0.75f;
-    float specular = 1.0f;
+    float specular = 0.25f;
+    float sunGlow = 0.05f;
     float ripples = 0.5f;
     int quality = 2;
 };

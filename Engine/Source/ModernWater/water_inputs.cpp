@@ -100,16 +100,30 @@ bool BuildFrameInputs(WaterFrameInputs& out) {
     out.inLiquid = camera->m_underwater != 0;
     out.mapId = static_cast<int>(ClntObjMgrGetMapID());
 
-    // The light direction and colour. m_light0 is the primary light (sun or moon) with its direction already
-    // pointing from the light towards the world, which is the convention the shader's ToLight uses.
+    // The light direction and colour. m_light0's direction is the client's fixed lighting vector, which points down
+    // (its z is negative all day) and does not follow the sun, so the shader read the sun as always below the horizon
+    // and drew no sun light or glint. The direction to the light is taken from the sun or moon the sky actually draws.
     const DNLightState& light = info.m_light0;
-    out.toLight[0] = light.m_dir.x;
-    out.toLight[1] = light.m_dir.y;
-    out.toLight[2] = light.m_dir.z;
+    out.lightIsMoon = LightIsMoon(info.m_dayProgression);
+    const DayNight::DNPlanet& planet = out.lightIsMoon ? DayNight::g_planets.m_moon : DayNight::g_planets.m_sun;
+    float toLight[3] = {static_cast<float>(planet.m_position.x - info.m_cameraPos.x),
+                        static_cast<float>(planet.m_position.y - info.m_cameraPos.y),
+                        static_cast<float>(planet.m_position.z - info.m_cameraPos.z)};
+    const float toLightLength = std::sqrt(toLight[0] * toLight[0] + toLight[1] * toLight[1] + toLight[2] * toLight[2]);
+
+    if (toLightLength > 1e-4f) {
+        for (int axis = 0; axis < 3; ++axis) {
+            out.toLight[axis] = toLight[axis] / toLightLength;
+        }
+    } else {
+        out.toLight[0] = -light.m_dir.x;
+        out.toLight[1] = -light.m_dir.y;
+        out.toLight[2] = -light.m_dir.z;
+    }
+
     out.sunColor = PackColour(info.m_bands.m_sunCloudColors[0]);
     out.directColor = PackColour(light.m_diffuse);
     out.ambientColor = PackColour(light.m_ambient);
-    out.lightIsMoon = LightIsMoon(info.m_dayProgression);
 
     // Fog: the group fog is what the frame is drawn with. The client draws its water through this same fog, so
     // the water's own fog has to be the same or the shoreline would not match the lake behind it.

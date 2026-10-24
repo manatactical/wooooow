@@ -1470,7 +1470,7 @@ void WaterRenderer::FillClassConstants(ShadingConstants& constants, const WaterP
     }
 
     constants.inverseTileSizes = {inverse[0], inverse[1], inverse[2], inverse[3]};
-    constants.waveControl = {1.0f / static_cast<float>(std::max(tileCount, 1)), 0.0f,
+    constants.waveControl = {1.0f / static_cast<float>(std::max(tileCount, 1)), std::max(m_tuning.sunGlow, 0.0f),
                              static_cast<float>(waterClass), TemporaryDebugView()};
     constants.foamScroll = {ScrollOffset(seconds, 0, preset.waveFoam[1]),
                             ScrollOffset(seconds, 1, preset.waveFoam[1]),

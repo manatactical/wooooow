@@ -53,9 +53,10 @@ constexpr float kDistance = 145.0f;
 constexpr float kFadeStartFraction = 0.25f;
 
 // The three scales. One kernel size cannot suit everything: sized for a crate it misses the wide creases of a
-// building, and sized for a building it smothers small props. So the occupancy runs three times, each with its own
-// reach, and the three terms are multiplied at the end. Each lives in its own colour channel of the one AO target
-// (a colour write mask per pass), so the blur and the upsample that follow handle all three in a single pass.
+// building, and sized for a building it smothers small props. So the occupancy runs three scales, each with its own
+// reach, and the three terms are multiplied at the end. They are computed in one draw (the setup they share is paid
+// once) and each lives in its own colour channel of the one AO target, so the blur and the upsample that follow handle
+// all three in a single pass.
 //
 // The automatic spread, per scale. The kernel's reach is chosen per pixel so that, on screen, it always covers
 // between minPixels and maxPixels:
@@ -94,12 +95,9 @@ constexpr PassScale kPasses[kPassCount] = {
     { 9.0f, 30.0f, 105.0f, 3.0f, 0.50f, 1.00f, 0.66f, false },
 };
 
-// GxRs_ColorWrite's bits are not Direct3D's: the engine's are 1 red, 4 green, 2 blue, 8 alpha (see Ds_ColorWriteEnable
-// in the device). The scales go to red, green and blue in that order, which is the order the shaders read them in.
-constexpr int32_t kChannelMask[kPassCount] = { 1, 4, 2 };
-
 // The close-up character pass (see the shaders for how it works). The exclusion mask's red channel is grass and water,
-// its green the character; these are the engine's colour-write bits for them.
+// its green the character; these are the engine's colour-write bits for them. (GxRs_ColorWrite's bits are not
+// Direct3D's: the engine's are 1 red, 4 green, 2 blue, 8 alpha -- see Ds_ColorWriteEnable in the device.)
 constexpr int32_t kMaskRed = 1;
 constexpr int32_t kMaskGreen = 4;
 
@@ -188,7 +186,7 @@ constexpr float kMaxViewDepth = 2000.0f;
 // The rows shared by every pass, uploaded once per frame; the two after them are rewritten for each draw.
 constexpr int32_t kConstantRows = 9;
 constexpr int32_t kPassRow = 9;
-constexpr int32_t kPassRows = 2;
+constexpr int32_t kPassRows = 6;
 
 // Registers shared by the occupancy, blur and composite shaders. These replace the engine's pixel shader
 // outright, so the whole constant range is free.
@@ -203,10 +201,13 @@ constexpr int32_t kPassRows = 2;
 // c7 = { near tap weight, far tap weight, far normal span, far normal yards }
 // c8 = { foliage keep, smooth boost, character pass share (0..1), fog start }
 //
-// Per draw (kPassRow):
-// c9  = { reach scale, min reach px, max reach px, max reach growth }       (occupancy)
-// c10 = { strength scale, distance fraction, spin offset, unused }          (occupancy)
-// c9  = { show small, show medium, show big, fog end }                      (composite: 1 shows a scale, 0 hides it)
+// Per draw (kPassRow onward):
+// occupancy, two rows per scale (small c9/c10, medium c11/c12, big c13/c14):
+//   A = { reach scale, min reach px, max reach px, max reach growth }
+//   B = { strength scale, distance fraction, spin offset, enabled }
+// composite:
+//   c9  = { show small, show medium, show big, fog end }                    (1 shows a scale, 0 hides it)
+//   c10 = { rain tint r, g, b, how much }
 const char* const kCommonHLSL = R"HLSL(
 float4 c0 : register(c0);
 float4 c1 : register(c1);
@@ -219,6 +220,10 @@ float4 c7 : register(c7);
 float4 c8 : register(c8);
 float4 c9 : register(c9);
 float4 c10 : register(c10);
+float4 c11 : register(c11);
+float4 c12 : register(c12);
+float4 c13 : register(c13);
+float4 c14 : register(c14);
 
 // Stored depth back to yards in front of the eye. The denominator is negative for real geometry (the client's
 // projection stores depth = m22 + m32 / z with m32 < 0), which is why there is no clamp on it.
@@ -334,19 +339,31 @@ static const float4 kKernel[5] = {
     float4(-0.93420, -0.16530, 0.31623, 1.00000)
 };
 
+// All three scales in one draw. What is the same for every scale -- the pixel's position, its normal and tangent frame,
+// the foliage measure, the rotation tile -- is worked out once, and each enabled scale then only runs its own taps.
+// Three separate draws used to repeat all of that (twelve of the eighteen fetches a pixel made) once per scale.
 float4 main(float2 uv : TEXCOORD0) : COLOR0
 {
+    // The scales' settings: A = { reach scale, min reach px, max reach px, max reach growth },
+    // B = { strength scale, distance fraction, spin offset, enabled }. Indexed only by the unrolled loops below.
+    float4 scaleA[3] = { c9, c11, c13 };
+    float4 scaleB[3] = { c10, c12, c14 };
+
     float2 pixel = floor(uv / c0.xy + 0.25);
     float2 uvC = (pixel + 0.5) * c0.xy;
     float2 zc = tex2Dlod(sZ, float4(uv, 0, 0)).rg;
     float z = UnpackZ(zc);
 
-    // Sky, anything past the far plane and anything marked as not to be occluded (the grass, the water) were all
-    // written as "past the fade", where the term is exactly 1 and there is nothing to compute. The same goes for
-    // anything past this scale's own distance: fine detail is invisible far away, so the small pass stops first.
-    // The output is written through a colour mask, so all four channels carry the one value.
-    float passEnd = c4.y * c10.y;
-    [branch] if (z >= c4.y * 0.999 || z >= passEnd) { return float4(1, 1, 1, 1); }
+    // The farthest any enabled scale goes. Past it, like sky, anything past the far plane and anything marked as not to
+    // be occluded (the grass, the water, written as "past the fade"), the term is exactly 1 and there is nothing to
+    // compute -- not even the normal.
+    float reachEnd = 0;
+    [unroll] for (int e = 0; e < 3; ++e)
+    {
+        reachEnd = max(reachEnd, scaleB[e].w > 0.5 ? c4.y * scaleB[e].y : 0);
+    }
+
+    [branch] if (z >= c4.y * 0.999 || z >= reachEnd) { return float4(1, 1, 1, 1); }
 
     float3 p = ViewPos(uvC, z);
 
@@ -367,14 +384,10 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
     float3 tangent = normalize(cross(up, n));
     float3 bitangent = cross(n, tangent);
 
-    // The automatic spread. How many screen pixels a yard covers here, and from that the reach in yards that
-    // lands the kernel between the minimum and maximum size on screen: nearby surfaces get a tighter kernel
-    // (cheaper, and proportioned to what is in front of the eye), distant ones a wider one (so they still read).
+    // How many screen pixels a yard covers here; each scale turns this into its own reach in yards, so that the kernel
+    // lands between its minimum and maximum size on screen: nearby surfaces get a tighter kernel (cheaper, and
+    // proportioned to what is in front of the eye), distant ones a wider one (so they still read).
     float pixelsPerYard = c1.y * 0.5 * (c4.z / c0.y) / z;
-    float baseReach = c3.x * c9.x;
-    float reach = clamp(baseReach * pixelsPerYard, c9.y, c9.z) / pixelsPerYard;
-    reach = min(reach, baseReach * c9.w);
-    float bias = c3.z * reach / c3.x + z * c6.w;
 
     // Each AO texel rotates the kernel by an angle taken from a 3x3 tile of nine evenly spaced angles; without a
     // rotation the taps read as rings. The blur is a 3x3 box over the same texels, so every blur window holds each of
@@ -384,10 +397,6 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
     float2 texel = floor(uv / c5.zw);
     float2 tile = texel - 3 * floor(texel / 3);
     float slot = tile.x + 3 * tile.y;
-    float spin = frac(slot * (4.0 / 9.0) + c10.z) * 6.2831853;
-
-    float spinSin, spinCos;
-    sincos(spin, spinSin, spinCos);
 
     // How broken-up the surface around this pixel is. Inverse depth is linear across a plane whatever its slope, so
     // the second difference of it across the pixel is ~0 on a wall, a floor or a roof, and large where the depth
@@ -406,45 +415,70 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
         clutter = min(clutter, known ? saturate((jump - 0.002) / 0.008) : 0);
     }
 
-    float occlusion = 0;
-    float weightSum = 0;
+    float shape = lerp(c8.y, c8.x, clutter);
+    float3 result = float3(1, 1, 1);
 
-    [unroll] for (int i = 0; i < 5; ++i)
+    [unroll] for (int s = 0; s < 3; ++s)
     {
-        float4 k = kKernel[i];
-        float2 disk = float2(k.x * spinCos - k.y * spinSin, k.x * spinSin + k.y * spinCos);
-        float3 dir = tangent * disk.x + bitangent * disk.y + n * k.z;
-        float tapReach = reach;
-        float3 tap = p + dir * (tapReach * k.w);
+        float4 A = scaleA[s];
+        float4 B = scaleB[s];
 
-        float2 ndc = float2(tap.x / tap.z * c1.x + c1.z, tap.y / tap.z * c1.y + c1.w);
-        float2 tapUv = float2(c0.z + (ndc.x * 0.5 + 0.5) * c3.w, c0.w + (0.5 - ndc.y * 0.5) * c4.z);
+        // A scale that is off, or past its own distance (fine detail is invisible far away, so the small one stops
+        // first), costs nothing.
+        [branch] if (B.w > 0.5 && z < c4.y * B.y)
+        {
+            float baseReach = c3.x * A.x;
+            float reach = clamp(baseReach * pixelsPerYard, A.y, A.z) / pixelsPerYard;
+            reach = min(reach, baseReach * A.w);
+            float bias = c3.z * reach / c3.x + z * c6.w;
 
-        bool inside = tap.z > 0.05
-                   && tapUv.x >= c0.z && tapUv.x <= c0.z + c3.w
-                   && tapUv.y >= c0.w && tapUv.y <= c0.w + c4.z;
-        float sceneZ = ZAt(tapUv);
+            float spin = frac(slot * (4.0 / 9.0) + B.z) * 6.2831853;
+            float spinSin, spinCos;
+            sincos(spin, spinSin, spinCos);
 
-        // Occluded when the neighbour is in front of the tap. The range weight fades an occluder that is much
-        // nearer than the kernel reaches, which is what removes the halo a silhouette would cast on the wall behind.
-        // A tap that lands on an excluded surface does not occlude: blades are not geometry that shades anything.
-        float diff = tap.z - sceneZ;
-        float range = smoothstep(0, 1, tapReach / max(abs(z - sceneZ), 1e-4));
+            float occlusion = 0;
+            float weightSum = 0;
 
-        // How far in front of the tap the neighbour is, as a ramp: the whole step from clear to occluded takes
-        // kSoftness of the tap's own distance from the surface, so a tap does not flip on a pixel's worth of depth.
-        float blocked = saturate((diff - bias) / (c6.z * tapReach * k.w));
+            [unroll] for (int i = 0; i < 5; ++i)
+            {
+                float4 k = kKernel[i];
+                float2 disk = float2(k.x * spinCos - k.y * spinSin, k.x * spinSin + k.y * spinCos);
+                float3 dir = tangent * disk.x + bitangent * disk.y + n * k.z;
+                float3 tap = p + dir * (reach * k.w);
 
-        // A tap near the surface says more about a contact than one at the rim of the kernel.
-        float tapWeight = lerp(c7.x, c7.y, k.w);
+                float2 ndc = float2(tap.x / tap.z * c1.x + c1.z, tap.y / tap.z * c1.y + c1.w);
+                float2 tapUv = float2(c0.z + (ndc.x * 0.5 + 0.5) * c3.w, c0.w + (0.5 - ndc.y * 0.5) * c4.z);
 
-        occlusion += inside ? blocked * range * tapWeight : 0;
-        weightSum += tapWeight;
+                bool inside = tap.z > 0.05
+                           && tapUv.x >= c0.z && tapUv.x <= c0.z + c3.w
+                           && tapUv.y >= c0.w && tapUv.y <= c0.w + c4.z;
+                float sceneZ = ZAt(tapUv);
+
+                // Occluded when the neighbour is in front of the tap. The range weight fades an occluder that is much
+                // nearer than the kernel reaches, which is what removes the halo a silhouette would cast on the wall
+                // behind. A tap that lands on an excluded surface does not occlude: blades are not geometry that
+                // shades anything.
+                float diff = tap.z - sceneZ;
+                float range = smoothstep(0, 1, reach / max(abs(z - sceneZ), 1e-4));
+
+                // How far in front of the tap the neighbour is, as a ramp: the whole step from clear to occluded takes
+                // kSoftness of the tap's own distance from the surface, so a tap does not flip on a pixel's worth of
+                // depth.
+                float blocked = saturate((diff - bias) / (c6.z * reach * k.w));
+
+                // A tap near the surface says more about a contact than one at the rim of the kernel.
+                float tapWeight = lerp(c7.x, c7.y, k.w);
+
+                occlusion += inside ? blocked * range * tapWeight : 0;
+                weightSum += tapWeight;
+            }
+
+            float ao = 1 - c3.y * B.x * pow(saturate(occlusion * c6.x / weightSum * shape), c6.y);
+            result[s] = lerp(ao, 1, saturate((z - c4.x * B.y) / ((c4.y - c4.x) * B.y)));
+        }
     }
 
-    float ao = 1 - c3.y * c10.x * pow(saturate(occlusion * c6.x / weightSum * lerp(c8.y, c8.x, clutter)), c6.y);
-    ao = lerp(ao, 1, saturate((z - c4.x * c10.y) / ((c4.y - c4.x) * c10.y)));
-    return float4(ao, ao, ao, ao);
+    return float4(result, 1);
 }
 )HLSL";
 
@@ -463,6 +497,10 @@ static const float2 kOffsets[8] = {
     float2( 1,  1), float2(-1,  1), float2( 1, -1), float2(-1, -1)
 };
 
+// The one blur, and the last thing that touches the term before it is put on the frame. Alpha is not an AO scale: it
+// marks the texels that sit on a depth edge (1) and the ones in the open (0), which is what lets the composite filter
+// the term with a single hardware fetch almost everywhere and look at depths only along edges. The blur already knows:
+// it is comparing the depth of nine texels anyway.
 float4 main(float2 uv : TEXCOORD0) : COLOR0
 {
     float3 centre = tex2Dlod(sAo, float4(uv, 0, 0)).rgb;
@@ -470,7 +508,8 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
 
     // Sky, far terrain and excluded surfaces hold exactly 1 and every neighbour that could reach them is either 1 as
     // well or weighted out by the depth test, so the blur would return the texel unchanged. Skipping it is exact, and
-    // those texels are most of a typical frame.
+    // those texels are most of a typical frame. They count as edge: the composite's filter has to look at the depths
+    // wherever a pixel's footprint touches one of them.
     [branch] if (centreZ >= c4.y * 0.999)
     {
         return float4(1, 1, 1, 1);
@@ -483,6 +522,7 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
     // are paid once, not three times.
     float3 sum = centre;
     float wsum = 1;
+    float edge = 0;
 
     [unroll] for (int i = 0; i < 8; ++i)
     {
@@ -492,12 +532,14 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
 
         // Bilateral weight: taps on the far side of a silhouette do not contribute, so blurring cannot paint a
         // dark fringe onto the wall behind a fence post.
-        float w = saturate(1 - abs(tapZ - centreZ) / (c5.x * centreZ + 0.05));
+        float apart = abs(tapZ - centreZ) / (c5.x * centreZ + 0.05);
+        float w = saturate(1 - apart);
         sum += tap * w;
         wsum += w;
+        edge = max(edge, apart);
     }
 
-    return float4(sum / wsum, 1);
+    return float4(sum / wsum, edge > 0.5 ? 1 : 0);
 }
 )HLSL";
 
@@ -537,29 +579,44 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
 
     // AO texel j stands for frame pixel 2j + 1, so this pixel sits (pixel - 1) / 2 texels along.
     float2 t = (pixel - 1) * 0.5;
-    float2 base = floor(t);
-    float2 f = t - base;
 
-    float3 sum = 0;
-    float wsum = 0;
+    // The common case, one fetch: the hardware's own bilinear filter over the four texels around the pixel, at exactly
+    // the weights the careful path below uses. Its alpha is the blur's edge flag, filtered the same way, so anything
+    // above zero means one of those four texels sits on a depth edge, where a plain filter would smear the term across
+    // a silhouette. Open surfaces, which are nearly all of a frame, never leave this path.
+    float4 filtered = tex2Dlod(sAo, float4((t + 0.5) * c5.zw, 0, 0));
+    float3 term = filtered.rgb;
 
-    [unroll] for (int i = 0; i < 4; ++i)
+    [branch] if (filtered.a > 0.001)
     {
-        float2 corner = float2((i == 1 || i == 3) ? 1 : 0, i >= 2 ? 1 : 0);
-        float2 texel = base + corner;
-        float2 aoUv = (texel + 0.5) * c5.zw;
-        float3 tap = tex2Dlod(sAo, float4(aoUv, 0, 0)).rgb;
-        float tapZ = UnpackZ(tex2Dlod(sZ, float4(aoUv, 0, 0)).rg);
+        // Along an edge: each of the four texels is weighted by the usual bilinear share times how close its depth is to
+        // this pixel's own, so the term does not leak across a silhouette.
+        float2 base = floor(t);
+        float2 f = t - base;
 
-        float2 bil = lerp(1 - f, f, corner);
-        float w = bil.x * bil.y * (saturate(1 - abs(tapZ - centreZ) / (c5.x * centreZ + 0.05)) + 0.001);
-        sum += tap * w;
-        wsum += w;
+        float3 sum = 0;
+        float wsum = 0;
+
+        [unroll] for (int i = 0; i < 4; ++i)
+        {
+            float2 corner = float2((i == 1 || i == 3) ? 1 : 0, i >= 2 ? 1 : 0);
+            float2 texel = base + corner;
+            float2 aoUv = (texel + 0.5) * c5.zw;
+            float3 tap = tex2Dlod(sAo, float4(aoUv, 0, 0)).rgb;
+            float tapZ = UnpackZ(tex2Dlod(sZ, float4(aoUv, 0, 0)).rg);
+
+            float2 bil = lerp(1 - f, f, corner);
+            float w = bil.x * bil.y * (saturate(1 - abs(tapZ - centreZ) / (c5.x * centreZ + 0.05)) + 0.001);
+            sum += tap * w;
+            wsum += w;
+        }
+
+        term = sum / max(wsum, 1e-6);
     }
 
     // The three scales stack by multiplication, each as an independent dimming of the light. c9 picks which of
     // them take part, for the debug views; a hidden scale is 1.
-    float3 scales = lerp(float3(1, 1, 1), sum / max(wsum, 1e-6), c9.xyz);
+    float3 scales = lerp(float3(1, 1, 1), term, c9.xyz);
     float ao = scales.x * scales.y * scales.z;
 
     // The engine's own fog is already in the frame. A pixel that is mostly fog has no surface left to occlude, so the
@@ -1366,44 +1423,39 @@ void CAmbientOcclusion::Apply() {
     GxRsSet(GxRs_Texture1, mask);
     DrawFullscreenQuad(s_zTex);
 
-    // Occupancy, once per scale. Each scale owns one colour channel of the AO target (small red, medium green, big
-    // blue) and writes only that channel, so the three draws fill one texture between them. The reads are all from
-    // the half-size distance, never from the target being written.
-    GxRenderTargetSet(GxBuffers_Color, s_ao, 0);
-    GxRsSet(GxRs_PixelShader, s_aoPS);
-    GxRsSet(GxRs_Texture0, s_z);
+    // Occupancy: one draw for all three scales. Their settings go in as two rows each, and each lands in its own colour
+    // channel of the AO target (small red, medium green, big blue); a scale that is off leaves its channel at 1. The
+    // reads are all from the half-size distance, never from the target being written.
+    float scaleConstants[kPassRows * 4];
 
     for (int32_t pass = 0; pass < kPassCount; ++pass) {
         const PassScale& scale = kPasses[pass];
+        float* row = &scaleConstants[pass * 8];
 
-        if (!scale.enabled) {
-            continue;
-        }
-
-        const float passConstants[kPassRows * 4] = {
-            scale.reachScale, scale.minPixels, scale.maxPixels, scale.maxGrowth,
-            scale.strength, scale.distance, scale.spin, 0.0f,
-        };
-
-        GxShaderConstantsSet(GxSh_Pixel, kPassRow, passConstants, kPassRows);
-        GxRsSet(GxRs_ColorWrite, kChannelMask[pass]);
-        DrawFullscreenQuad(s_aoTex);
+        row[0] = scale.reachScale;
+        row[1] = scale.minPixels;
+        row[2] = scale.maxPixels;
+        row[3] = scale.maxGrowth;
+        row[4] = scale.strength;
+        row[5] = scale.distance;
+        row[6] = scale.spin;
+        row[7] = scale.enabled ? 1.0f : 0.0f;
     }
 
-    GxRsSet(GxRs_ColorWrite, 15);
+    GxRenderTargetSet(GxBuffers_Color, s_ao, 0);
+    GxRsSet(GxRs_PixelShader, s_aoPS);
+    GxRsSet(GxRs_Texture0, s_z);
+    GxShaderConstantsSet(GxSh_Pixel, kPassRow, scaleConstants, kPassRows);
+    DrawFullscreenQuad(s_aoTex);
 
-    // Blur, all three scales at once. The distance is the second input, since the AO target no longer carries it.
+    // Blur, all three scales at once, and the one blur: a single 3x3 box over the nine-angle rotation tile cancels the
+    // rotation exactly. The distance is the second input, since the AO target does not carry it; the alpha it writes
+    // marks the texels on a depth edge, for the composite.
     GxRenderTargetSet(GxBuffers_Color, s_aoBlur, 0);
     GxRsSet(GxRs_PixelShader, s_blurPS);
     GxRsSet(GxRs_Texture0, s_ao);
     GxRsSet(GxRs_Texture1, s_z);
     DrawFullscreenQuad(s_aoBlurTex);
-
-    // Blur again, back into the first target. Two 3x3 passes are a 5x5 tent, which takes most of what grain the
-    // first leaves, for the price of one more cheap pass at a quarter of the frame's pixels.
-    GxRenderTargetSet(GxBuffers_Color, s_ao, 0);
-    GxRsSet(GxRs_Texture0, s_aoBlur);
-    DrawFullscreenQuad(s_aoTex);
 
     // Composite onto the frame: upsample, then multiply by the term -- or, for the debug view, replace the frame
     // with it. Back to the default back buffer, clipped to the 3D rectangle the world drew into. The quad is the
@@ -1412,7 +1464,7 @@ void CAmbientOcclusion::Apply() {
     GxXformSetViewport(minX, maxX, minY, maxY, 0.0f, 1.0f);
     GxRsSet(GxRs_PixelShader, s_compositePS);
     GxRsSet(GxRs_BlendingMode, mode > 1 ? GxBlend_Opaque : GxBlend_Mod);
-    GxRsSet(GxRs_Texture0, s_ao);
+    GxRsSet(GxRs_Texture0, s_aoBlur);
     GxRsSet(GxRs_Texture1, depth);
     GxRsSet(GxRs_Texture2, mask);
     GxRsSet(GxRs_Texture3, s_z);

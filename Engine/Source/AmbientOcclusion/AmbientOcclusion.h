@@ -18,15 +18,16 @@ struct CVar;
 //
 // One frame, in order:
 //
-//   1. Occupancy passes, three of them, one per size of thing: small (props, contact shadows), medium (furniture,
-//      boxes) and big (buildings). Each is a fullscreen pixel shader that reconstructs the pixel's view-space
-//      position and normal from the half-size distance buffer, spins a 5-tap hemisphere kernel, and writes how
-//      much of that hemisphere an occluder covers. 1.0 is open space, lower is a corner. The scales differ in
-//      reach (in yards and in on-screen pixels), in strength, and in how far away they still run: the small one
-//      stops first. Each writes one colour channel of the same half-size AO target (a colour write mask).
-//   2. Blur passes. Two 3x3 bilateral passes over all three channels at once: taps are weighted by how close
-//      their depth is to the centre's, so the term softens without bleeding across a silhouette onto the wall
-//      behind it.
+//   1. Occupancy, three scales in one draw, one per size of thing: small (props, contact shadows), medium
+//      (furniture, boxes) and big (buildings). A fullscreen pixel shader reconstructs the pixel's view-space
+//      position and normal from the half-size distance buffer once, then for each enabled scale spins a 5-tap
+//      hemisphere kernel and writes how much of that hemisphere an occluder covers. 1.0 is open space, lower is a
+//      corner. The scales differ in reach (in yards and in on-screen pixels), in strength, and in how far away
+//      they still run: the small one stops first. Each lands in one colour channel of the half-size AO target.
+//   2. Blur pass. One 3x3 bilateral pass over all three channels at once: taps are weighted by how close their
+//      depth is to the centre's, so the term softens without bleeding across a silhouette onto the wall behind
+//      it. It also flags the texels that sit on a depth edge, so the composite can filter with one fetch in the
+//      open and look at depths only along edges.
 //   3. Composite. A fullscreen quad with multiply blending (GxBlend_Mod: dst * src) reading the blurred term,
 //      upsampled depth-aware to full size, with the three scales multiplied together.
 //      The frame is never read into a texture, so no copy of the back buffer is needed.

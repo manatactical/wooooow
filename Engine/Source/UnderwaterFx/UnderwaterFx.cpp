@@ -50,7 +50,7 @@ constexpr float kBlurPixelsPerYard = 0.08f;
 constexpr float kBlurMaxPixels = 5.0f;
 
 // Seconds the effect takes to ramp in or out as the camera crosses the surface.
-constexpr float kFadeSeconds = 0.3f;
+constexpr float kFadeSeconds = 0.6f;
 
 // The stored depth of a pixel with no geometry; see MapWorldDepth.
 constexpr float kMinViewportDepthExtent = 0.01f;
@@ -107,7 +107,9 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
     float t = c4.x;
     float2 wave = float2(sin(uv.y * 23 + t * 1.3) + 0.7 * sin(uv.y * 9 - t * 0.8) + 0.4 * sin(uv.y * 57 + t * 2.1),
                          cos(uv.x * 19 + t * 1.1) + 0.7 * cos(uv.x * 7 + t * 0.6) + 0.4 * cos(uv.x * 43 - t * 1.9));
-    float sway = c4.y * lerp(0.35 + 0.65 * saturate(z / 60), 2.5, exterior);
+    // Scaled by the effect amount, as the blur is: the sway grows in with the fade and shrinks away with it, instead of
+    // being at full size from the first frame of the transition and gone on the last.
+    float sway = c4.y * lerp(0.35 + 0.65 * saturate(z / 60), 2.5, exterior) * c2.w;
     float2 suv = uv + wave * sway * c0.xy;
 
     float radius = lerp(min(c3.w + z * c3.y, c3.z), c4.z, exterior) * c2.w;

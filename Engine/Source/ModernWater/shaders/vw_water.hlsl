@@ -10,6 +10,8 @@ static const float kDebugTransmittance = 3;
 static const float kDebugReflection = 4;
 static const float kMinSceneVisibility = 0.05;
 static const float kOpaqueDepthYards = 35;static const float kDebugLiquidClass = 5;
+static const float kFoamSkyElevation = 0.6;
+static const float kEdgeCoverageGain = 32;
 static const float kDebugRippleHeightGain = 4;
 static const float kDebugRippleWindowShade = 0.25;
 
@@ -68,7 +70,7 @@ float4 main(float2 pixelIndex : VPOS) : COLOR0
     // Short of that depth the fog is at most 95% opaque: a twentieth of what is under it still shows through.
     float3 sceneVisibility = lerp(kMinSceneVisibility, 1, transmittance) * (1 - depthOpacity);
     float3 water = sceneVisibility * refraction.scene + inscatter;
-    float3 foam = FoamLight(N, waves.foam.x) * foamAlbedo.rgb + inscatter;
+    float3 foam = FoamLight(N, waves.foam.x, SkyColour(kFoamSkyElevation)) * foamAlbedo.rgb + inscatter;
     float3 colour = lerp(water, foam, foamAlbedo.a);
 
     float3 R = ReflectedDirection(V, N);
@@ -123,5 +125,8 @@ float4 main(float2 pixelIndex : VPOS) : COLOR0
     // Pixels this pass does not own are discarded rather than blended with zero alpha, so an occlusion query around the
     // draw counts exactly the pixels that were shaded.
     clip(w.coverage - 0.003);
-    return float4(encoded, w.coverage);
+    // The coverage ramps up over a thin band at the waterline, and the client's own water (dark and purple at its edge)
+    // showed through that band as a line. The ramp is steepened here so the band is claimed by this pass; the clip above
+    // still uses the plain coverage.
+    return float4(encoded, saturate(w.coverage * kEdgeCoverageGain));
 }

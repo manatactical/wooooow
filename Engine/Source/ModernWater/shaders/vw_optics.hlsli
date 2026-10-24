@@ -107,14 +107,16 @@ float WrappedFoamDiffuse(float NoL, float3 L)
     return saturate(NoL + kFoamWrap * saturate(L.z));
 }
 
-float3 FoamLight(float3 N, float foamState)
+float3 FoamLight(float3 N, float foamState, float3 skyLight)
 {
     float3 L = ToLight();
     float NoL = clamp(dot(N, L), kMinCosine, 1);
     float state = saturate(foamState * kFoamStateGain);
     float crest = saturate(state * state * (3 - 2 * state) * L.z);
     float diffuse = lerp(WrappedFoamDiffuse(NoL, L), pow(NoL, kFoamCrestSharpness), crest) * SunVisibility();
-    return lerp(Ambient(), SunColour(), diffuse);
+    // Foam is white and sees the whole sky, so its shade side takes the sky's light; the engine ambient alone is a
+    // dim, flat term that left crest foam grey whenever the sun term was small.
+    return lerp(max(Ambient(), skyLight), SunColour(), diffuse);
 }
 
 float SunGlint(float roughness, float3 N, float3 V, float3 L)

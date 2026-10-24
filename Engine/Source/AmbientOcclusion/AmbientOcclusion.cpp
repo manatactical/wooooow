@@ -52,16 +52,51 @@ constexpr float kSpreadScale = 4.0f;
 constexpr float kDistance = 145.0f;
 constexpr float kFadeStartFraction = 0.25f;
 
-// The automatic spread. The kernel's reach is chosen per pixel so that, on screen, it always covers between these
-// two sizes:
+// The three scales. One kernel size cannot suit everything: sized for a crate it misses the wide creases of a
+// building, and sized for a building it smothers small props. So the occupancy runs three times, each with its own
+// reach, and the three terms are multiplied at the end. Each lives in its own colour channel of the one AO target
+// (a colour write mask per pass), so the blur and the upsample that follow handle all three in a single pass.
+//
+// The automatic spread, per scale. The kernel's reach is chosen per pixel so that, on screen, it always covers
+// between minPixels and maxPixels:
 //   - a surface far away would otherwise get a reach of a pixel or two, which is noise rather than shading, so
-//     the reach grows with distance until it covers kMinReachPixels, up to kMaxReachGrowth times the base reach;
+//     the reach grows with distance until it covers minPixels, up to maxGrowth times the scale's base reach;
 //   - a surface right under the camera would get a reach of hundreds of pixels, which makes every tap a cache
-//     miss, so it shrinks to kMaxReachPixels.
+//     miss, so it shrinks to maxPixels. This is the main cost control: the wide passes are the ones that would
+//     otherwise thrash the cache, and they are capped hardest.
 // The result is that a crate, a wall and a mountainside each get a shadow proportioned to how big they look.
-constexpr float kMinReachPixels = 9.0f;
-constexpr float kMaxReachPixels = 52.0f;
-constexpr float kMaxReachGrowth = 5.0f;
+//
+//   reachScale   the scale's base reach as a multiple of the spread-scaled kRadius (yards)
+//   strength     how much of the ssaoStrength this scale gets; together they stack to roughly one full-strength term
+//   distance     the fraction of ssaoDistance at which the scale has faded out and stops running. Fine detail is
+//                invisible at a distance, so the small pass is the first to stop, and the big one runs to the end.
+//   spin         the kernel's rotation offset, so the scales do not share a pattern
+//   enabled      false skips the scale's draw altogether, and the composite ignores its channel
+struct PassScale {
+    float reachScale;
+    float minPixels;
+    float maxPixels;
+    float maxGrowth;
+    float strength;
+    float distance;
+    float spin;
+    bool enabled;
+};
+
+constexpr int32_t kPassCount = 3;
+constexpr PassScale kPasses[kPassCount] = {
+    // small: props, contact shadows, the gap under a crate
+    { 1.0f, 8.0f, 40.0f, 5.0f, 0.70f, 0.45f, 0.00f, true },
+    // medium: furniture, boxes, the corner of a room
+    { 3.0f, 14.0f, 70.0f, 4.0f, 0.60f, 0.75f, 0.33f, true },
+    // big: buildings, walls meeting the ground, the underside of an eave. Switched off for now; set enabled to true
+    // to bring it back, nothing else needs to change.
+    { 9.0f, 30.0f, 105.0f, 3.0f, 0.50f, 1.00f, 0.66f, false },
+};
+
+// GxRs_ColorWrite's bits are not Direct3D's: the engine's are 1 red, 4 green, 2 blue, 8 alpha (see Ds_ColorWriteEnable
+// in the device). The scales go to red, green and blue in that order, which is the order the shaders read them in.
+constexpr int32_t kChannelMask[kPassCount] = { 1, 4, 2 };
 
 // The pass runs at half the frame's size in each direction -- a quarter of the pixels -- and is brought back to
 // full size by a depth-aware upsample in the composite.
@@ -69,7 +104,7 @@ constexpr int32_t kResolutionDivisor = 2;
 
 // A tight corner only has about half of its hemisphere covered, so the raw occlusion fraction barely reaches 0.5 and
 // the term would never get dark. This scales it back up before the strength is applied.
-constexpr float kOcclusionGain = 2.1f;
+constexpr float kOcclusionGain = 2.4f;
 
 // The shape of the ramp. The occlusion fraction goes through a power before the strength is applied: above 1 the
 // curve is convex, so a surface that is only lightly shadowed stays nearly clean and the darkening climbs faster
@@ -78,14 +113,8 @@ constexpr float kOcclusionGain = 2.1f;
 // what made the term noisy, because a tap flips from 0 to 1 on a pixel's worth of depth.
 constexpr float kCurvePower = 1.5f;
 
-// Two scales. A single kernel size cannot suit everything: sized for a crate it misses the wide creases of a building
-// (under an eave, where a wall meets the ground), and sized for a building it smothers small props. So the last
-// kCoarseTaps of the kernel reach kCoarseScale times as far, at kCoarseWeight of the weight of a fine tap. Small
-// objects are dominated by the fine taps and stay tight; a large structure picks up a broad, gentle gradient
-// from the coarse ones.
-constexpr int32_t kCoarseTaps = 5;
-constexpr float kCoarseScale = 3.5f;
-constexpr float kCoarseWeight = 1.9f;
+// Each scale takes five taps (kKernel in the shader). Few, because each scale is a pass of its own and the rotation
+// tile plus the two blurs turn five taps into dozens of samples by the time a pixel is shaded.
 constexpr float kSoftness = 0.35f;
 constexpr float kNearTapWeight = 0.7f;
 constexpr float kFarTapWeight = 0.3f;
@@ -122,7 +151,10 @@ constexpr float kSkyMinDepth = 0.99903f;
 // What a pixel with no geometry decodes to. Far past the fade, so it can never occlude or be occluded.
 constexpr float kMaxViewDepth = 2000.0f;
 
-constexpr int32_t kConstantRows = 10;
+// The rows shared by every pass, uploaded once per frame; the two after them are rewritten for each draw.
+constexpr int32_t kConstantRows = 9;
+constexpr int32_t kPassRow = 9;
+constexpr int32_t kPassRows = 2;
 
 // Registers shared by the occupancy, blur and composite shaders. These replace the engine's pixel shader
 // outright, so the whole constant range is free.
@@ -133,10 +165,14 @@ constexpr int32_t kConstantRows = 10;
 // c3 = { radius, strength, bias, viewport width }                         (width normalised to the frame)
 // c4 = { fade start, fade end, viewport height, blur radius in AO texels }
 // c5 = { depth sigma, exclusion mask stamped, 1/AO width, 1/AO height }
-// c6 = { min reach px, max reach px, max reach growth, occlusion gain }
-// c7 = { curve power, tap softness, near tap weight, far tap weight }
-// c8 = { coarse reach scale, coarse tap weight, first coarse tap, bias per yard }
-// c9 = { far normal span, far normal yards, foliage keep, smooth boost }
+// c6 = { occlusion gain, curve power, tap softness, bias per yard }
+// c7 = { near tap weight, far tap weight, far normal span, far normal yards }
+// c8 = { foliage keep, smooth boost, unused, unused }
+//
+// Per draw (kPassRow):
+// c9  = { reach scale, min reach px, max reach px, max reach growth }       (occupancy)
+// c10 = { strength scale, distance fraction, spin offset, unused }          (occupancy)
+// c9  = { show small, show medium, show big, unused }                       (composite: 1 shows a scale, 0 hides it)
 const char* const kCommonHLSL = R"HLSL(
 float4 c0 : register(c0);
 float4 c1 : register(c1);
@@ -148,6 +184,7 @@ float4 c6 : register(c6);
 float4 c7 : register(c7);
 float4 c8 : register(c8);
 float4 c9 : register(c9);
+float4 c10 : register(c10);
 
 // Stored depth back to yards in front of the eye. The denominator is negative for real geometry (the client's
 // projection stores depth = m22 + m32 / z with m32 < 0), which is why there is no clamp on it.
@@ -253,18 +290,14 @@ float3 PosAt(float2 uv)
 }
 
 // The kernel, as (x, y, z, scale): a golden-angle spiral over the unit hemisphere with taps clustered near the
-// surface, where contact shadows live. Precomputed, so a pixel needs one sin/cos for its rotation rather than ten.
-static const float4 kKernel[10] = {
-    float4(0.22361, 0.00000, 0.97468, 0.24000),
-    float4(-0.28558, 0.26162, 0.92195, 0.32000),
-    float4(0.04371, -0.49809, 0.86603, 0.40000),
-    float4(0.35996, 0.46950, 0.80623, 0.48000),
-    float4(-0.66057, -0.11684, 0.74162, 0.56000),
-    float4(0.62575, -0.39805, 0.67082, 0.64000),
-    float4(-0.20930, 0.77858, 0.59161, 0.72000),
-    float4(-0.39916, -0.76855, 0.50000, 0.80000),
-    float4(0.86601, 0.31627, 0.38730, 0.88000),
-    float4(-0.90094, 0.37190, 0.22361, 0.96000)
+// surface, where contact shadows live. Precomputed, so a pixel needs one sin/cos for its rotation rather than five.
+// The same five taps serve all three scales; what differs between them is the reach they are multiplied by.
+static const float4 kKernel[5] = {
+    float4(0.31623, 0.00000, 0.94868, 0.30000),
+    float4(-0.40390, 0.37000, 0.83666, 0.50000),
+    float4(0.06190, -0.70440, 0.70711, 0.70000),
+    float4(0.50950, 0.66380, 0.54772, 0.85000),
+    float4(-0.93420, -0.16530, 0.31623, 1.00000)
 };
 
 float4 main(float2 uv : TEXCOORD0) : COLOR0
@@ -275,15 +308,17 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
     float z = UnpackZ(zc);
 
     // Sky, anything past the far plane and anything marked as not to be occluded (the grass, the water) were all
-    // written as "past the fade", where the term is exactly 1 and there is nothing to compute. The distance rides
-    // along in the other two channels for the blur and the upsample.
-    if (z >= c4.y * 0.999) { return float4(1, zc, 1); }
+    // written as "past the fade", where the term is exactly 1 and there is nothing to compute. The same goes for
+    // anything past this scale's own distance: fine detail is invisible far away, so the small pass stops first.
+    // The output is written through a colour mask, so all four channels carry the one value.
+    float passEnd = c4.y * c10.y;
+    [branch] if (z >= c4.y * 0.999 || z >= passEnd) { return float4(1, 1, 1, 1); }
 
     float3 p = ViewPos(uvC, z);
 
     // Normal from the nearer side on each axis, so a silhouette does not tilt the normal of the pixel beside it. One
     // AO texel is the smallest step that lands on a different sample of the half-size distance.
-    float2 t = c5.zw * lerp(1, c9.x, saturate(z / c9.y));
+    float2 t = c5.zw * lerp(1, c7.z, saturate(z / c7.w));
     float3 pr = PosAt(uvC + float2(t.x, 0));
     float3 pl = PosAt(uvC - float2(t.x, 0));
     float3 pd = PosAt(uvC + float2(0, t.y));
@@ -302,9 +337,10 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
     // lands the kernel between the minimum and maximum size on screen: nearby surfaces get a tighter kernel
     // (cheaper, and proportioned to what is in front of the eye), distant ones a wider one (so they still read).
     float pixelsPerYard = c1.y * 0.5 * (c4.z / c0.y) / z;
-    float reach = clamp(c3.x * pixelsPerYard, c6.x, c6.y) / pixelsPerYard;
-    reach = min(reach, c3.x * c6.z);
-    float bias = c3.z * reach / c3.x + z * c8.w;
+    float baseReach = c3.x * c9.x;
+    float reach = clamp(baseReach * pixelsPerYard, c9.y, c9.z) / pixelsPerYard;
+    reach = min(reach, baseReach * c9.w);
+    float bias = c3.z * reach / c3.x + z * c6.w;
 
     // Each AO texel rotates the kernel by an angle taken from a 3x3 tile of nine evenly spaced angles; without a
     // rotation the taps read as rings. The blur is a 3x3 box over the same texels, so every blur window holds each of
@@ -314,7 +350,7 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
     float2 texel = floor(uv / c5.zw);
     float2 tile = texel - 3 * floor(texel / 3);
     float slot = tile.x + 3 * tile.y;
-    float spin = frac(slot * (4.0 / 9.0)) * 6.2831853;
+    float spin = frac(slot * (4.0 / 9.0) + c10.z) * 6.2831853;
 
     float spinSin, spinCos;
     sincos(spin, spinSin, spinCos);
@@ -339,14 +375,12 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
     float occlusion = 0;
     float weightSum = 0;
 
-    [unroll] for (int i = 0; i < 10; ++i)
+    [unroll] for (int i = 0; i < 5; ++i)
     {
         float4 k = kKernel[i];
         float2 disk = float2(k.x * spinCos - k.y * spinSin, k.x * spinSin + k.y * spinCos);
         float3 dir = tangent * disk.x + bitangent * disk.y + n * k.z;
-        // The last few taps reach further, for the wide creases of large structures.
-        bool coarse = i >= c8.z;
-        float tapReach = coarse ? reach * c8.x : reach;
+        float tapReach = reach;
         float3 tap = p + dir * (tapReach * k.w);
 
         float2 ndc = float2(tap.x / tap.z * c1.x + c1.z, tap.y / tap.z * c1.y + c1.w);
@@ -365,23 +399,29 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
 
         // How far in front of the tap the neighbour is, as a ramp: the whole step from clear to occluded takes
         // kSoftness of the tap's own distance from the surface, so a tap does not flip on a pixel's worth of depth.
-        float blocked = saturate((diff - bias) / (c7.y * tapReach * k.w));
+        float blocked = saturate((diff - bias) / (c6.z * tapReach * k.w));
 
         // A tap near the surface says more about a contact than one at the rim of the kernel.
-        float tapWeight = lerp(c7.z, c7.w, k.w) * (coarse ? c8.y : 1);
+        float tapWeight = lerp(c7.x, c7.y, k.w);
 
         occlusion += inside ? blocked * range * tapWeight : 0;
         weightSum += tapWeight;
     }
 
-    float ao = 1 - c3.y * pow(saturate(occlusion * c6.w / weightSum * lerp(c9.w, c9.z, clutter)), c7.x);
-    ao = lerp(ao, 1, saturate((z - c4.x) / (c4.y - c4.x)));
-    return float4(ao, zc, 1);
+    float ao = 1 - c3.y * c10.x * pow(saturate(occlusion * c6.x / weightSum * lerp(c8.y, c8.x, clutter)), c6.y);
+    ao = lerp(ao, 1, saturate((z - c4.x * c10.y) / ((c4.y - c4.x) * c10.y)));
+    return float4(ao, ao, ao, ao);
 }
 )HLSL";
 
 const char* const kBlurHLSL = R"HLSL(
 sampler2D sAo : register(s0);
+sampler2D sZ : register(s1);
+
+float ZAt(float2 uv)
+{
+    return UnpackZ(tex2Dlod(sZ, float4(uv, 0, 0)).rg);
+}
 
 // The other eight texels of the 3x3 box around this one, exactly one texel apart (kBlurRadius 1).
 static const float2 kOffsets[8] = {
@@ -391,36 +431,39 @@ static const float2 kOffsets[8] = {
 
 float4 main(float2 uv : TEXCOORD0) : COLOR0
 {
-    float4 centre = tex2Dlod(sAo, float4(uv, 0, 0));
-    float centreZ = UnpackZ(centre.gb);
+    float3 centre = tex2Dlod(sAo, float4(uv, 0, 0)).rgb;
+    float centreZ = ZAt(uv);
 
     // Sky, far terrain and excluded surfaces hold exactly 1 and every neighbour that could reach them is either 1 as
     // well or weighted out by the depth test, so the blur would return the texel unchanged. Skipping it is exact, and
     // those texels are most of a typical frame.
     [branch] if (centreZ >= c4.y * 0.999)
     {
-        return float4(1, centre.gb, 1);
+        return float4(1, 1, 1, 1);
     }
 
     // The box doubles its spacing with distance. Offsets of two texels still land on all three residues of the 3x3
     // rotation tile, so the grain keeps cancelling, while each tap reaches twice as far.
     float spacing = lerp(1, 2, saturate((centreZ - c4.x * 0.5) / max(c4.x, 1)));
-    float sum = centre.r;
+    // All three scales are blurred together: they sit in the three colour channels, so the depth test and the fetch
+    // are paid once, not three times.
+    float3 sum = centre;
     float wsum = 1;
 
     [unroll] for (int i = 0; i < 8; ++i)
     {
-        float4 tap = tex2Dlod(sAo, float4(uv + kOffsets[i] * c5.zw * c4.w * spacing, 0, 0));
-        float tapZ = UnpackZ(tap.gb);
+        float2 tapUv = uv + kOffsets[i] * c5.zw * c4.w * spacing;
+        float3 tap = tex2Dlod(sAo, float4(tapUv, 0, 0)).rgb;
+        float tapZ = ZAt(tapUv);
 
         // Bilateral weight: taps on the far side of a silhouette do not contribute, so blurring cannot paint a
         // dark fringe onto the wall behind a fence post.
         float w = saturate(1 - abs(tapZ - centreZ) / (c5.x * centreZ + 0.05));
-        sum += tap.r * w;
+        sum += tap * w;
         wsum += w;
     }
 
-    return float4(sum / wsum, centre.gb, 1);
+    return float4(sum / wsum, 1);
 }
 )HLSL";
 
@@ -431,6 +474,7 @@ const char* const kCompositeHLSL = R"HLSL(
 sampler2D sAo : register(s0);
 sampler2D sDepth : register(s1);
 sampler2D sExclude : register(s2);
+sampler2D sZ : register(s3);
 
 float4 main(float2 uv : TEXCOORD0) : COLOR0
 {
@@ -454,7 +498,7 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
     float2 base = floor(t);
     float2 f = t - base;
 
-    float sum = 0;
+    float3 sum = 0;
     float wsum = 0;
 
     [unroll] for (int i = 0; i < 4; ++i)
@@ -462,15 +506,19 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
         float2 corner = float2((i == 1 || i == 3) ? 1 : 0, i >= 2 ? 1 : 0);
         float2 texel = base + corner;
         float2 aoUv = (texel + 0.5) * c5.zw;
-        float4 tap = tex2Dlod(sAo, float4(aoUv, 0, 0));
+        float3 tap = tex2Dlod(sAo, float4(aoUv, 0, 0)).rgb;
+        float tapZ = UnpackZ(tex2Dlod(sZ, float4(aoUv, 0, 0)).rg);
 
         float2 bil = lerp(1 - f, f, corner);
-        float w = bil.x * bil.y * (saturate(1 - abs(UnpackZ(tap.gb) - centreZ) / (c5.x * centreZ + 0.05)) + 0.001);
-        sum += tap.r * w;
+        float w = bil.x * bil.y * (saturate(1 - abs(tapZ - centreZ) / (c5.x * centreZ + 0.05)) + 0.001);
+        sum += tap * w;
         wsum += w;
     }
 
-    float ao = sum / max(wsum, 1e-6);
+    // The three scales stack by multiplication, each as an independent dimming of the light. c9 picks which of
+    // them take part, for the debug views; a hidden scale is 1.
+    float3 scales = lerp(float3(1, 1, 1), sum / max(wsum, 1e-6), c9.xyz);
+    float ao = scales.x * scales.y * scales.z;
     return float4(ao, ao, ao, 1);
 }
 )HLSL";
@@ -658,7 +706,7 @@ void CAmbientOcclusion::Init() {
 
     // Registered by CWorldParam::Initialize so the options panel can read its default at the login screen. This
     // call is the safety net, and Register reuses an existing var. Unlike antiAlias this defaults to on.
-    s_cvarSsao = CVar::Register("ssao", "screen-space ambient occlusion: 0 off, 1 on, 2 show the occlusion term",
+    s_cvarSsao = CVar::Register("ssao", "screen-space ambient occlusion: 0 off, 1 on, 2 show the occlusion term, 3/4/5 show only the small/medium/big scale",
                                 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
     // The two knobs of the look, registered here as well as by CWorldParam::Initialize for the same reason.
@@ -916,10 +964,9 @@ void CAmbientOcclusion::Apply() {
         kRadius * spread, strength, kBias * spread, maxX - minX,
         distance * kFadeStartFraction, distance, maxY - minY, kBlurRadius,
         kBlurDepthSigma, useExclude ? 1.0f : 0.0f, 1.0f / aoSize.x, 1.0f / aoSize.y,
-        kMinReachPixels, kMaxReachPixels, kMaxReachGrowth, kOcclusionGain,
-        kCurvePower, kSoftness, kNearTapWeight, kFarTapWeight,
-        kCoarseScale, kCoarseWeight, static_cast<float>(10 - kCoarseTaps), kBiasPerYard,
-        kFarNormalSpan, kNormalFarYards, kFoliageKeep, kSmoothBoost,
+        kOcclusionGain, kCurvePower, kSoftness, kBiasPerYard,
+        kNearTapWeight, kFarTapWeight, kFarNormalSpan, kNormalFarYards,
+        kFoliageKeep, kSmoothBoost, 0.0f, 0.0f,
     };
 
     // The engine's own full-screen setup: pixel-space ortho projection, identity view and world, the AO target as
@@ -944,16 +991,37 @@ void CAmbientOcclusion::Apply() {
     GxRsSet(GxRs_Texture1, mask);
     DrawFullscreenQuad(s_zTex);
 
-    // Occupancy.
+    // Occupancy, once per scale. Each scale owns one colour channel of the AO target (small red, medium green, big
+    // blue) and writes only that channel, so the three draws fill one texture between them. The reads are all from
+    // the half-size distance, never from the target being written.
     GxRenderTargetSet(GxBuffers_Color, s_ao, 0);
     GxRsSet(GxRs_PixelShader, s_aoPS);
     GxRsSet(GxRs_Texture0, s_z);
-    DrawFullscreenQuad(s_aoTex);
 
-    // Blur.
+    for (int32_t pass = 0; pass < kPassCount; ++pass) {
+        const PassScale& scale = kPasses[pass];
+
+        if (!scale.enabled) {
+            continue;
+        }
+
+        const float passConstants[kPassRows * 4] = {
+            scale.reachScale, scale.minPixels, scale.maxPixels, scale.maxGrowth,
+            scale.strength, scale.distance, scale.spin, 0.0f,
+        };
+
+        GxShaderConstantsSet(GxSh_Pixel, kPassRow, passConstants, kPassRows);
+        GxRsSet(GxRs_ColorWrite, kChannelMask[pass]);
+        DrawFullscreenQuad(s_aoTex);
+    }
+
+    GxRsSet(GxRs_ColorWrite, 15);
+
+    // Blur, all three scales at once. The distance is the second input, since the AO target no longer carries it.
     GxRenderTargetSet(GxBuffers_Color, s_aoBlur, 0);
     GxRsSet(GxRs_PixelShader, s_blurPS);
     GxRsSet(GxRs_Texture0, s_ao);
+    GxRsSet(GxRs_Texture1, s_z);
     DrawFullscreenQuad(s_aoBlurTex);
 
     // Blur again, back into the first target. Two 3x3 passes are a 5x5 tent, which takes most of what grain the
@@ -972,10 +1040,23 @@ void CAmbientOcclusion::Apply() {
     GxRsSet(GxRs_Texture0, s_ao);
     GxRsSet(GxRs_Texture1, depth);
     GxRsSet(GxRs_Texture2, mask);
+    GxRsSet(GxRs_Texture3, s_z);
+
+    // ssao 3, 4 and 5 show one scale on its own (small, medium, big); anything else shows all three.
+    const bool single = mode >= 3 && mode <= 2 + kPassCount;
+    // A scale that was not drawn has nothing in its channel, so it is never shown.
+    const float shown[4] = {
+        kPasses[0].enabled && (!single || mode == 3) ? 1.0f : 0.0f,
+        kPasses[1].enabled && (!single || mode == 4) ? 1.0f : 0.0f,
+        kPasses[2].enabled && (!single || mode == 5) ? 1.0f : 0.0f,
+        0.0f,
+    };
+    GxShaderConstantsSet(GxSh_Pixel, kPassRow, shown, 1);
     DrawFullscreenQuad(s_aoBlurTex);
 
     GxRsSet(GxRs_Texture0, nullptr);
     GxRsSet(GxRs_Texture1, nullptr);
     GxRsSet(GxRs_Texture2, nullptr);
+    GxRsSet(GxRs_Texture3, nullptr);
     FFX::SetupReset();
 }

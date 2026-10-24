@@ -17,13 +17,17 @@ struct CVar;
 //
 // One frame, in order:
 //
-//   1. Occupancy pass. A fullscreen pixel shader reconstructs each pixel's view-space position and normal from
-//      the frame's shared scene depth (CUnitOutline::DepthPassTexture), spins a 12-sample hemisphere kernel by
-//      an interleaved-gradient-noise angle, and writes how much of that hemisphere an occluder covers. 1.0 is
-//      open space, lower is a corner. Written to a frame-sized AO target.
-//   2. Blur pass. One 8-tap bilateral pass: taps are weighted by how close their depth is to the centre's, so
-//      the term softens without bleeding across a silhouette onto the wall behind it.
-//   3. Composite. A fullscreen quad with multiply blending (GxBlend_Mod: dst * src) reading the blurred term.
+//   1. Occupancy passes, three of them, one per size of thing: small (props, contact shadows), medium (furniture,
+//      boxes) and big (buildings). Each is a fullscreen pixel shader that reconstructs the pixel's view-space
+//      position and normal from the half-size distance buffer, spins a 5-tap hemisphere kernel, and writes how
+//      much of that hemisphere an occluder covers. 1.0 is open space, lower is a corner. The scales differ in
+//      reach (in yards and in on-screen pixels), in strength, and in how far away they still run: the small one
+//      stops first. Each writes one colour channel of the same half-size AO target (a colour write mask).
+//   2. Blur passes. Two 3x3 bilateral passes over all three channels at once: taps are weighted by how close
+//      their depth is to the centre's, so the term softens without bleeding across a silhouette onto the wall
+//      behind it.
+//   3. Composite. A fullscreen quad with multiply blending (GxBlend_Mod: dst * src) reading the blurred term,
+//      upsampled depth-aware to full size, with the three scales multiplied together.
 //      The frame is never read into a texture, so no copy of the back buffer is needed.
 //
 // It sits at the world -> interface boundary, before the outline composite and before the anti-aliasing pass:
@@ -33,7 +37,7 @@ struct CVar;
 // disabled effect.
 //
 // The ssao cvar: 0 off, 1 on, 2 shows the occlusion term itself (an opaque grey blit), for telling "the pass
-// does nothing" apart from "the pass looks wrong".
+// does nothing" apart from "the pass looks wrong". 3, 4 and 5 show the small, medium and big scale alone.
 class CAmbientOcclusion {
     public:
     // Not in the original binary. Registers the ssao cvar and the device-restored callback. Called once from the

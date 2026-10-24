@@ -872,7 +872,7 @@ void CWorldParam::Initialize() {
     // Not in the original binary. Ambient occlusion. Unlike antiAlias this defaults to 1: it is on for everyone
     // who has the hardware for it. CAmbientOcclusion::Init registers it too, and Register reuses an existing
     // var. A value above 1 is the debug view of the occlusion term.
-    CWorldParam::cvar_ssao = CVar::Register("ssao", "screen-space ambient occlusion: 0 off, 1 on, 2 show the occlusion term", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    CWorldParam::cvar_ssao = CVar::Register("ssao", "screen-space ambient occlusion: 0 off, 1 on, 2 show the occlusion term, 3/4/5 show only the small/medium/big scale", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
     // Not in the original binary. How far the occlusion reaches (a multiple of the default, so 1 is the shipped
     // look) and how dark it goes. Registered here so the Advanced panel can read their defaults at the login screen.

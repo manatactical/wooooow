@@ -2634,6 +2634,8 @@ void CGCamera::CalcTargetCamera(CGObject_C* target, uint32_t time) {
         break;
     }
 
+    // Manastorm: the character no longer fades out when the camera zooms in close.
+    fade = 0xFF;
     CGWorldFrame::s_currentWorldFrame->SetPlayerFadeCameraValue(fade);
 
     state = this->m_state;

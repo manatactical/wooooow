@@ -116,6 +116,18 @@ constexpr float kCharCurvePower = 1.5f;
 constexpr float kCharSoftness = 0.35f;
 constexpr float kCharDepthSigma = 0.03f;
 
+// How much of the strength is lost at full rain: 0.5 is half.
+constexpr float kRainStrengthLoss = 0.5f;
+
+// How far the rain's tint is pushed past the fog colour's own hue. The storm's fog is nearly grey, so its hue taken
+// as it is would not show; 1 is the fog's own, higher is more colour.
+constexpr float kRainTintBoost = 2.5f;
+
+// How far past ssaoCharDistance the character's pass takes to fade out, in yards. Inside ssaoCharDistance it is at full
+// strength; over these yards it fades to nothing, handing the character back to the frame-wide pass, and past them it
+// is off and costs nothing.
+constexpr float kCharFadeYards = 4.0f;
+
 // The cvars' defaults: whether the pass is on, and how close the camera has to be (yards from the player).
 constexpr float kCharDistance = 6.0f;
 constexpr int32_t kCharConstantRows = 11;
@@ -189,12 +201,12 @@ constexpr int32_t kPassRows = 2;
 // c5 = { depth sigma, exclusion mask stamped, 1/AO width, 1/AO height }
 // c6 = { occlusion gain, curve power, tap softness, bias per yard }
 // c7 = { near tap weight, far tap weight, far normal span, far normal yards }
-// c8 = { foliage keep, smooth boost, character pass on, unused }
+// c8 = { foliage keep, smooth boost, character pass share (0..1), fog start }
 //
 // Per draw (kPassRow):
 // c9  = { reach scale, min reach px, max reach px, max reach growth }       (occupancy)
 // c10 = { strength scale, distance fraction, spin offset, unused }          (occupancy)
-// c9  = { show small, show medium, show big, unused }                       (composite: 1 shows a scale, 0 hides it)
+// c9  = { show small, show medium, show big, fog end }                      (composite: 1 shows a scale, 0 hides it)
 const char* const kCommonHLSL = R"HLSL(
 float4 c0 : register(c0);
 float4 c1 : register(c1);
@@ -502,12 +514,17 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
 {
     float2 pixel = floor(uv / c0.xy);
 
+    // How much of this pixel's frame-wide term the character's own pass has taken over: c8.z (1 at full, falling to 0 as
+    // the camera moves off) on the character's pixels, 0 anywhere else.
+    float taken = 0;
+
     [branch] if (c5.y > 0.5)
     {
         // Red: grass and water, which take no part. Green: the character, when its own close-up pass is running --
         // the pixels it shades are not shaded twice.
         float2 mask = tex2Dlod(sExclude, float4(uv, 0, 0)).rg;
-        if (mask.r > 0.5 || (c8.z > 0.5 && mask.g > 0.5)) { return float4(1, 1, 1, 1); }
+        if (mask.r > 0.5) { return float4(1, 1, 1, 1); }
+        taken = mask.g > 0.5 ? c8.z : 0;
     }
 
     float centreZ = min(ViewZ(DepthAt(sDepth, uv)), c4.y);
@@ -544,7 +561,23 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
     // them take part, for the debug views; a hidden scale is 1.
     float3 scales = lerp(float3(1, 1, 1), sum / max(wsum, 1e-6), c9.xyz);
     float ao = scales.x * scales.y * scales.z;
-    return float4(ao, ao, ao, 1);
+
+    // The engine's own fog is already in the frame. A pixel that is mostly fog has no surface left to occlude, so the
+    // term goes to 1 by the same linear factor the scene was fogged with; without it the distant haze, and the storm's
+    // grey, is darkened below its own colour and the contrast climbs. c8.w / c9.w = fog start / end; none when the end is
+    // not past the start.
+    float fog = c9.w > c8.w + 1 ? saturate((centreZ - c8.w) / (c9.w - c8.w)) : 0;
+    ao = lerp(ao, 1, fog);
+
+    // The character's own pass has this much of the pixel; what it has not taken stays with this one, so the hand-over
+    // as the camera moves away is a cross-fade and not a step.
+    ao = lerp(ao, 1, taken);
+
+    // In the rain the shading takes the fog's hue: c10.xyz is that colour as a multiplier of the same brightness (so
+    // the luminance of the term is still ao) and c10.w how much of it, which is the rain. Where there is no occlusion
+    // there is no tint, and it builds up with the occlusion. No rain, c10.w is 0 and this is the plain grey it was.
+    float3 shade = ao * lerp(float3(1, 1, 1), c10.xyz, saturate((1 - ao) * 2) * c10.w);
+    return float4(min(shade, 1), 1);
 }
 )HLSL";
 
@@ -654,6 +687,10 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
     }
 
     float ao = 1 - c9.y * pow(saturate(occlusion * c10.y / weightSum), c10.z);
+
+    // Faded out by the engine's fog, as in the frame-wide composite. c5.x / c5.y = fog start / end.
+    float fog = c5.y > c5.x + 1 ? saturate((z - c5.x) / (c5.y - c5.x)) : 0;
+    ao = lerp(ao, 1, fog);
     return float4(ao, ao, ao, 1);
 }
 )HLSL";
@@ -698,7 +735,10 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
 {
     float4 t = tex2Dlod(sAo, float4(uv, 0, 0));
     clip(t.a - 0.5);
-    return float4(t.r, t.r, t.r, 1);
+
+    // The rain's tint, exactly as in the frame-wide composite (c10.xyz the hue, c10.w how much).
+    float3 shade = t.r * lerp(float3(1, 1, 1), c10.xyz, saturate((1 - t.r) * 2) * c10.w);
+    return float4(min(shade, 1), 1);
 }
 )HLSL";
 
@@ -846,6 +886,13 @@ void DrawFullscreenQuad(const FFX::Tex& target) {
     g_theGxDevicePtr->Draw(&FFX::s_quadBatch, 1);
 }
 
+// How much of the character's pass is in force at this camera distance: 1 up to fullDistance, then an eased fall to 0
+// over kCharFadeYards.
+float CharFade(float cameraDistance, float fullDistance) {
+    const float t = std::min(std::max((cameraDistance - fullDistance) / kCharFadeYards, 0.0f), 1.0f);
+    return 1.0f - t * t * (3.0f - 2.0f * t);
+}
+
 // Set when a shader failed to compile. Compiling is expensive, so a failure is not retried every frame -- that
 // turned a broken shader into a large frame-rate loss on top of the missing effect. Cleared by a device restore.
 bool s_compileFailed;
@@ -871,6 +918,10 @@ CGxTex* CAmbientOcclusion::s_charAo;
 CGxTex* CAmbientOcclusion::s_charBlur;
 bool CAmbientOcclusion::s_charStamped;
 bool CAmbientOcclusion::s_submerged;
+float CAmbientOcclusion::s_rain;
+float CAmbientOcclusion::s_fogStart;
+float CAmbientOcclusion::s_fogEnd;
+float CAmbientOcclusion::s_fogColor[3] = { 1.0f, 1.0f, 1.0f };
 float CAmbientOcclusion::s_cameraDistance = 1.0e9f;
 CGxShader* CAmbientOcclusion::s_zPS;
 CGxShader* CAmbientOcclusion::s_aoPS;
@@ -915,7 +966,7 @@ void CAmbientOcclusion::Init() {
 
     s_cvarCharacter = CVar::Register("ssaoCharacter", "dedicated high-quality ambient occlusion for the player character when the camera is close",
                                      1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_cvarCharDistance = CVar::Register("ssaoCharDistance", "the character's own ambient occlusion runs while the camera is closer than this, in yards",
+    s_cvarCharDistance = CVar::Register("ssaoCharDistance", "the character's own ambient occlusion is at full strength while the camera is closer than this, in yards, then fades out over the next few",
                                         1, "6", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
     if (s_registered) {
@@ -933,6 +984,26 @@ bool CAmbientOcclusion::Enabled() {
 // Not in the original binary. See the declaration.
 void CAmbientOcclusion::SetSubmerged(bool submerged) {
     s_submerged = submerged;
+}
+
+// Not in the original binary. See the declaration.
+void CAmbientOcclusion::SetRain(float amount) {
+    s_rain = std::min(std::max(amount, 0.0f), 1.0f);
+}
+
+// Not in the original binary. See the declaration.
+void CAmbientOcclusion::SetFogColor(float r, float g, float b) {
+    s_fogColor[0] = r;
+    s_fogColor[1] = g;
+    s_fogColor[2] = b;
+}
+
+// Not in the original binary. See the declaration. The engine parks its fog at a million yards when the depth-fog pass
+// replaces it; anything that far out is no fog at all as far as this pass is concerned.
+void CAmbientOcclusion::SetFog(float start, float end) {
+    const bool usable = end > start + 1.0f && end < 100000.0f && start >= 0.0f;
+    s_fogStart = usable ? start : 0.0f;
+    s_fogEnd = usable ? end : 0.0f;
 }
 
 // Not in the original binary. See the declaration.
@@ -1105,8 +1176,9 @@ bool CAmbientOcclusion::CharacterWanted() {
         return false;
     }
 
+    // Wanted until it has faded out completely; past that it is off, and nothing is stamped or drawn for it.
     const float distance = s_cvarCharDistance ? s_cvarCharDistance->m_floatValue : kCharDistance;
-    return s_cameraDistance < std::min(std::max(distance, 1.0f), 60.0f);
+    return CharFade(s_cameraDistance, std::min(std::max(distance, 1.0f), 60.0f)) > 0.0f;
 }
 
 // Not in the original binary. See the declaration. A batch at a time, like the liquid stamps: the character is a few
@@ -1228,9 +1300,22 @@ void CAmbientOcclusion::Apply() {
     float strength = s_cvarStrength ? s_cvarStrength->m_floatValue : kStrength;
     spread = std::min(std::max(spread, 0.025f), 0.4f) * kSpreadScale;
     strength = std::min(std::max(strength, 0.0f), 1.0f);
+    // In the rain, the same strength with half the bite. Applied to the frame-wide passes and the character's alike.
+    strength *= 1.0f - kRainStrengthLoss * s_rain;
 
     float distance = s_cvarDistance ? s_cvarDistance->m_floatValue : kDistance;
     distance = std::min(std::max(distance, 10.0f), 500.0f);
+
+    // The rain's tint: the fog's hue as a multiplier of the same brightness (its colour over its luminance, pushed out by
+    // kRainTintBoost), and the rain as how much of it.
+    const float fogLuma = std::max(0.299f * s_fogColor[0] + 0.587f * s_fogColor[1] + 0.114f * s_fogColor[2], 0.05f);
+    float tintRow[4];
+
+    for (int32_t channel = 0; channel < 3; ++channel) {
+        tintRow[channel] = std::min(std::max(1.0f + (s_fogColor[channel] / fogLuma - 1.0f) * kRainTintBoost, 0.35f), 1.7f);
+    }
+
+    tintRow[3] = s_rain;
 
     // The close-up character pass: wanted, something was stamped, and its own targets and shaders are there. The
     // debug views of single scales (3 to 5) leave the character white, so they stay about the frame-wide pass.
@@ -1243,6 +1328,10 @@ void CAmbientOcclusion::Apply() {
         useChar = s_charAo && s_charBlur;
     }
 
+    // How much of the character is its own pass's: full inside ssaoCharDistance, fading to none over kCharFadeYards.
+    const float charFullDistance = s_cvarCharDistance ? s_cvarCharDistance->m_floatValue : kCharDistance;
+    const float charFade = useChar ? CharFade(s_cameraDistance, std::min(std::max(charFullDistance, 1.0f), 60.0f)) : 0.0f;
+
     const float constants[kConstantRows * 4] = {
         1.0f / size.x, 1.0f / size.y, minX, minY,
         m[0], m[5], m[8], m[9],
@@ -1252,7 +1341,7 @@ void CAmbientOcclusion::Apply() {
         kBlurDepthSigma, useExclude ? 1.0f : 0.0f, 1.0f / aoSize.x, 1.0f / aoSize.y,
         kOcclusionGain, kCurvePower, kSoftness, kBiasPerYard,
         kNearTapWeight, kFarTapWeight, kFarNormalSpan, kNormalFarYards,
-        kFoliageKeep, kSmoothBoost, useChar ? 1.0f : 0.0f, 0.0f,
+        kFoliageKeep, kSmoothBoost, charFade, s_fogStart,
     };
 
     // The engine's own full-screen setup: pixel-space ortho projection, identity view and world, the AO target as
@@ -1335,9 +1424,10 @@ void CAmbientOcclusion::Apply() {
         kPasses[0].enabled && (!single || mode == 3) ? 1.0f : 0.0f,
         kPasses[1].enabled && (!single || mode == 4) ? 1.0f : 0.0f,
         kPasses[2].enabled && (!single || mode == 5) ? 1.0f : 0.0f,
-        0.0f,
+        s_fogEnd,
     };
     GxShaderConstantsSet(GxSh_Pixel, kPassRow, shown, 1);
+    GxShaderConstantsSet(GxSh_Pixel, kPassRow + 1, tintRow, 1);
     DrawFullscreenQuad(s_aoBlurTex);
 
     GxRsSet(GxRs_Texture0, nullptr);
@@ -1353,14 +1443,14 @@ void CAmbientOcclusion::Apply() {
     // The close-up character pass, at the frame's full size over the pixels the character stamped. The frame-wide
     // composite above left exactly those pixels alone. The constants are the same layout (see kCharAoHLSL), written
     // again because the frame-wide ones are about a half-size target.
-    const float charStrength = strength * kCharStrengthScale;
+    const float charStrength = strength * kCharStrengthScale * charFade;
     const float charConstants[kCharConstantRows * 4] = {
         1.0f / size.x, 1.0f / size.y, minX, minY,
         m[0], m[5], m[8], m[9],
         mapping.atInfinity, mapping.perInverseViewDepth, mapping.deepest, kMaxViewDepth,
         0.0f, 0.0f, 0.0f, maxX - minX,
         0.0f, 0.0f, maxY - minY, 0.0f,
-        0.0f, 0.0f, 0.0f, 0.0f,
+        s_fogStart, s_fogEnd, 0.0f, 0.0f,
         0.0f, 0.0f, 0.0f, 0.0f,
         0.0f, 0.0f, 0.0f, 0.0f,
         0.0f, 0.0f, kCharDepthSigma, 0.0f,
@@ -1405,6 +1495,8 @@ void CAmbientOcclusion::Apply() {
     GxRsSet(GxRs_PixelShader, s_charCompositePS);
     GxRsSet(GxRs_BlendingMode, mode > 1 ? GxBlend_Opaque : GxBlend_Mod);
     GxRsSet(GxRs_Texture0, s_charAo);
+    // Row 10 held the occupancy's own terms until now; the composite reads the rain's tint from it.
+    GxShaderConstantsSet(GxSh_Pixel, kPassRow + 1, tintRow, 1);
     DrawFullscreenQuad(s_charAoTex);
 
     GxRsSet(GxRs_Texture0, nullptr);

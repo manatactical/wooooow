@@ -60,6 +60,24 @@ class CAmbientOcclusion {
     // blur are drawn over the frame.
     static void SetSubmerged(bool submerged);
 
+    // Not in the original binary. How hard it is raining, 0 to 1, from the game once per frame. Wet, overcast light has
+    // little direct light to take shadow from, so the strength is reduced by up to half (kRainStrengthLoss) as the rain
+    // builds. Follows the weather's own intensity ramp, so it fades in and out with the rain instead of switching.
+    static void SetRain(float amount);
+
+    // Not in the original binary. The distance, in yards, where the engine's own fog begins and where it is complete,
+    // from the game once per frame. The fog (and with it the storm's grey haze, which is that fog drawn in close) is
+    // already in the frame when this pass runs, so a pixel that is mostly fog has no surface left to occlude; the term
+    // is faded to 1 by the same linear factor the scene used. Both zero, or an end that is not past the start, mean no
+    // fog (as when the depth-fog pass has taken it over, which draws after this one).
+    static void SetFog(float start, float end);
+
+    // Not in the original binary. The engine's fog colour, each channel 0 to 1, from the game once per frame. In the rain
+    // the occlusion takes its hue: a shadowed pixel is tinted toward this colour (at the brightness plain occlusion would
+    // have left it) instead of being darkened neutrally, so the shading belongs to the wet, overcast light it sits in.
+    // The tint is scaled by the rain (SetRain), so a clear day is unchanged.
+    static void SetFogColor(float r, float g, float b);
+
     // Not in the original binary. Whether the world being drawn right now is feeding the pass: the option is on
     // and the shared depth is bound. Geometry that must not take part in the occlusion -- the grass -- asks this
     // while it draws, and keeps itself out of the depth.
@@ -84,7 +102,8 @@ class CAmbientOcclusion {
 
     // Not in the original binary. The close-up character pass: while the camera is closer to the player than the
     // ssaoCharDistance cvar (yards), the player's own model -- body, mount, gear -- gets a dedicated occlusion of its
-    // own instead of the frame-wide one. It runs at the frame's full size on the character's pixels only, with a
+    // own instead of the frame-wide one. Past that distance it fades out over the next few yards, the frame-wide pass
+    // taking the character back as the dedicated one lets go, and once it has faded completely it is off. It runs at the frame's full size on the character's pixels only, with a
     // denser kernel and a blur that cancels the per-pixel rotation exactly, so a curved, small, moving surface comes out
     // smooth where the half-size pass is grainy. The frame-wide pass leaves those pixels alone (they are still in the
     // depth it reads, so the character shades the world around it as before).
@@ -122,6 +141,10 @@ class CAmbientOcclusion {
     static CGxTex* s_charBlur;
     static bool s_charStamped;
     static bool s_submerged;
+    static float s_rain;
+    static float s_fogStart;
+    static float s_fogEnd;
+    static float s_fogColor[3];
     static float s_cameraDistance;
     static CGxShader* s_zPS;
     static CGxShader* s_aoPS;

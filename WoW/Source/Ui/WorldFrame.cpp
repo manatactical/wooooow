@@ -1877,6 +1877,20 @@ void CGWorldFrame::OnWorldRender() {
     // The ambient occlusion stands down entirely while the camera is underwater. Told here, ahead of the scene draw,
     // because its stamps (grass, water, the character) go out with the batches.
     CAmbientOcclusion::SetSubmerged(World::SceneCamLiquidStatus(nullptr) != 0);
+
+    // And how hard it is raining, for the occlusion's strength. The weather's own intensity ramps up and down as the
+    // rain comes and goes, so this does too; half intensity already counts as full rain, since a drizzle is still
+    // overcast. Snow and sand storms are not rain.
+    Weather* weather = World::s_weather;
+    CAmbientOcclusion::SetRain(weather && weather->GetType() == 1 ? weather->m_intensity * 2.0f : 0.0f);
+
+    // And the engine's own fog, which the storm pulls in close and tints grey. It is part of the frame by the time the
+    // occlusion runs, so the occlusion fades out by the same factor. The engine parks it at a million yards when the
+    // depth-fog pass has replaced it, which the module reads as none.
+    DayNight::DNInfo* fogInfo = DayNight::GetInfo();
+    CAmbientOcclusion::SetFog(fogInfo->m_fog.m_start, fogInfo->m_fog.m_end);
+    // The fog's colour, which the occlusion takes the hue of in the rain.
+    CAmbientOcclusion::SetFogColor(fogInfo->m_fog.m_color.r * (1.0f / 255.0f), fogInfo->m_fog.m_color.g * (1.0f / 255.0f), fogInfo->m_fog.m_color.b * (1.0f / 255.0f));
     // Terrain and world objects draw into this depth first, so the unit stamps that follow test against the
     // frame's real occluders and a wall clips the line instead of dropping the whole outline. It stays bound
     // across the model passes below, because those are what stamp the units, and is detached at the world ->

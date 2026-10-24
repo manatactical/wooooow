@@ -10641,6 +10641,11 @@ void CGPlayer_C::UpdateInventoryComponent(INVENTORY_SLOTS slot, const VisibleIte
             }
 
             if (!this->m_rangedWeaponModel) {
+                // NOT IN BINARY. A sheathed bow is shown on the back, so a newly equipped one must still be added.
+                if (this->m_sheatheState != WEAPONMODE_RANGEDMODE) {
+                    break;
+                }
+
                 goto applyEffects;
             }
 
@@ -10654,7 +10659,7 @@ void CGPlayer_C::UpdateInventoryComponent(INVENTORY_SLOTS slot, const VisibleIte
                 this->m_rangedWeaponModel->m_drawArg = nullptr;
                 this->m_rangedWeaponModel->Release();
                 this->m_rangedWeaponModel = nullptr;
-                goto applyEffects;
+                break;
             }
 
             break;

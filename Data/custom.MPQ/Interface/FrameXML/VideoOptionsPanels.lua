@@ -1059,7 +1059,6 @@ VIDEOOPT_FOLIAGE = "Foliage";
 VIDEOOPT_FOLIAGE_SUBTEXT = "Grass and clutter, and the wind that moves them.";
 CLUTTER_DENSITY = "Clutter Density";
 CLUTTER_RADIUS = "Clutter Distance";
-WIND_LABEL = "Animate Wind";
 WIND_SWAY = "Sway";
 WIND_FLUTTER = "Flutter";
 WIND_SPEED = "Speed";
@@ -1068,7 +1067,6 @@ GRASS_PARTING_STRENGTH = "Strength";
 GRASS_PARTING_RADIUS = "Radius";
 OPTION_TOOLTIP_CLUTTER_DENSITY = "How much clutter grows per terrain cell. 196 is the ceiling, twelve times the stock maximum, and roughly triples the grass pool.";
 OPTION_TOOLTIP_CLUTTER_RADIUS = "How far clutter is drawn, in yards. A map may cap this lower than the slider allows.";
-OPTION_TOOLTIP_GRASS_WIND = "Sways grass and clutter in the wind. Off draws the stock, motionless grass.";
 OPTION_TOOLTIP_GRASS_WIND_SWAY = "How far the tip of a blade leans at full strength, in yards.";
 OPTION_TOOLTIP_GRASS_WIND_FLUTTER = "Extra per-blade shimmer on top of the sway, in yards, so a field moves as blades rather than as one sheet.";
 OPTION_TOOLTIP_GRASS_WIND_SPEED = "How fast the wind travels, in radians per second.";
@@ -1082,7 +1080,6 @@ PhysicsPanelOptions = {
 	-- ceilings GroundEffectDensityCallback and GroundEffectDistCallback enforce.
 	groundEffectDensity = { text = "CLUTTER_DENSITY", minValue = 16, maxValue = 196, valueStep = 4, tooltip = OPTION_TOOLTIP_CLUTTER_DENSITY },
 	groundEffectDist = { text = "CLUTTER_RADIUS", minValue = 20, maxValue = 196, valueStep = 4, tooltip = OPTION_TOOLTIP_CLUTTER_RADIUS },
-	grassWind = { text = "WIND_LABEL", tooltip = OPTION_TOOLTIP_GRASS_WIND },
 	grassWindSway = { text = "WIND_SWAY", minValue = 0, maxValue = 0.75, valueStep = 0.025, tooltip = OPTION_TOOLTIP_GRASS_WIND_SWAY },
 	grassWindFlutter = { text = "WIND_FLUTTER", minValue = 0, maxValue = 0.25, valueStep = 0.01, tooltip = OPTION_TOOLTIP_GRASS_WIND_FLUTTER },
 	grassWindSpeed = { text = "WIND_SPEED", minValue = 0, maxValue = 10, valueStep = 0.25, tooltip = OPTION_TOOLTIP_GRASS_WIND_SPEED },

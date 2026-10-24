@@ -548,11 +548,10 @@ def pages(flavor):
             Slider("ClutterRadius", "How far grass and clutter is drawn, in yards.", cvar="groundEffectDist"),
         ]),
         Box("WindBox", "Wind", [
-            Check("Wind", "grassWind", "Sway grass and clutter in the wind. Off draws still grass."),
-            Slider("WindSway", "How far the tip of a blade leans at full strength.", cvar="grassWindSway", dep="Wind"),
+            Slider("WindSway", "How far the tip of a blade leans at full strength.", cvar="grassWindSway"),
             Slider("WindFlutter", "Extra shimmer per blade, so a field moves as blades and not one sheet.",
-                   cvar="grassWindFlutter", dep="Wind"),
-            Slider("WindSpeed", "How fast the wind travels.", cvar="grassWindSpeed", dep="Wind"),
+                   cvar="grassWindFlutter"),
+            Slider("WindSpeed", "How fast the wind travels.", cvar="grassWindSpeed"),
         ]),
         Box("PartingBox", "Grass Parting", [
             Check("Parting", "grassParting", "Let grass bend away from nearby characters."),

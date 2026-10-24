@@ -70,7 +70,6 @@ constexpr float kMinUvSpan = 0.01f;
 // which is before any world frame exists, and GetCVarDefault raises on an unregistered name. Register
 // reuses an existing var, so Init order cannot be got wrong.
 // ---------------------------------------------------------------------------------------------
-CVar* s_wind;
 CVar* s_windSway;
 CVar* s_windFlutter;
 CVar* s_windSpeed;
@@ -435,7 +434,6 @@ std::string BuildBody() {
 // The cvars. Registering them here as well as in CWorldParam::Initialize is deliberate: the panel asks for
 // their defaults at the login screen, before a world frame exists.
 void CGrassMotion::Init() {
-    s_wind = CVar::Register("grassWind", "Grass and clutter sway in the wind", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     // Defaults are a percentage of each slider's range (min is 0 for all three), so the thumb opens where the
     // tuning wants it rather than pinned to an end.
     s_windSway = CVar::Register("grassWindSway", "Wind sway at the tip of a blade, in yards", 1, "0.15", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
@@ -468,7 +466,6 @@ void CGrassMotion::BeginFrame() {
     float time = SecondsNow();
     const C3Vector& camera = CWorldScene::s_activeWorldView;
 
-    bool wind = CvarInt(s_wind, 1) != 0;
     bool parting = CvarInt(s_parting, 1) != 0;
 
     float* row = reinterpret_cast<float*>(&CDetailDoodad::s_shaderConstants) + kFrameRow * 4;
@@ -483,8 +480,8 @@ void CGrassMotion::BeginFrame() {
     // c15 = anchor, 1/(1-anchor), sway, flutter.
     row[0] = kStiffAnchor;
     row[1] = 1.0f / (1.0f - kStiffAnchor);
-    row[2] = wind ? CvarFloat(s_windSway, 0.15f) : 0.0f;
-    row[3] = wind ? CvarFloat(s_windFlutter, 0.025f) : 0.0f;
+    row[2] = CvarFloat(s_windSway, 0.15f);
+    row[3] = CvarFloat(s_windFlutter, 0.025f);
     row += 4;
 
     // c16 = 1/spacing, 1/spacing, wind direction x, wind direction y.
@@ -505,7 +502,7 @@ void CGrassMotion::BeginFrame() {
     row[0] = s_playerPosition.x;
     row[1] = s_playerPosition.y;
     row[2] = s_playerPosition.z;
-    row[3] = wind ? 1.0f : 0.0f;
+    row[3] = 1.0f;
 }
 
 // Per chunk, right after the engine's own c0..c22 upload in CDetailDoodad::SetupVertexShader, so nothing

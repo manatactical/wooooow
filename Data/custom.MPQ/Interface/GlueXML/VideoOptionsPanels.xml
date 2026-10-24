@@ -1179,25 +1179,13 @@
 									<Anchor point="TOPLEFT" relativeTo="$parentClutterBox" relativePoint="BOTTOMLEFT"><Offset x="0" y="-30"/></Anchor>
 									<Anchor point="TOPRIGHT" relativeTo="$parentClutterBox" relativePoint="BOTTOMRIGHT"><Offset x="0" y="-30"/></Anchor>
 								</Anchors>
-								<Size y="260"/>
+								<Size y="222"/>
 								<Scripts><OnLoad>VideoOptionsBox_OnLoad(self, "Wind");</OnLoad></Scripts>
 							</Frame>
-							<CheckButton name="$parentWind" inherits="VideoOptionsCheckTemplate">
-								<Anchors><Anchor point="TOPLEFT" relativeTo="$parentWindBox" relativePoint="TOPLEFT"><Offset x="14" y="-14"/></Anchor></Anchors>
-								<Layers><Layer level="ARTWORK"><FontString name="$parentDesc" inherits="VideoOptionsCheckDescFont" text="Sway grass and clutter in the wind. Off draws still grass.">
-									<Size x="420" y="12"/>
-									<Anchors><Anchor point="TOPLEFT" relativePoint="TOPLEFT"><Offset x="25" y="-22"/></Anchor></Anchors>
-								</FontString></Layer></Layers>
-								<Scripts>
-									<OnLoad>
-										VideoOptionsCheck_OnLoad(self, "grassWind", false);
-									</OnLoad>
-								</Scripts>
-							</CheckButton>
 							<Slider name="$parentWindSway" inherits="VideoOptionsSliderTemplate">
 								<Anchors>
-									<Anchor point="TOPLEFT" relativeTo="$parentWindBox" relativePoint="TOPLEFT"><Offset x="46" y="-70"/></Anchor>
-									<Anchor point="TOPRIGHT" relativeTo="$parentWindBox" relativePoint="TOPRIGHT"><Offset x="-24" y="-70"/></Anchor>
+									<Anchor point="TOPLEFT" relativeTo="$parentWindBox" relativePoint="TOPLEFT"><Offset x="24" y="-32"/></Anchor>
+									<Anchor point="TOPRIGHT" relativeTo="$parentWindBox" relativePoint="TOPRIGHT"><Offset x="-24" y="-32"/></Anchor>
 								</Anchors>
 								<Layers><Layer level="ARTWORK"><FontString name="$parentDesc" inherits="VideoOptionsSliderDescFont" text="How far the tip of a blade leans at full strength.">
 									<Size y="12"/>
@@ -1209,7 +1197,6 @@
 								<Scripts>
 									<OnLoad>
 										VideoOptionsSlider_OnLoad(self, "grassWindSway");
-										BlizzardOptionsPanel_SetupDependentControl(VideoOptionsPhysicsPanelWind, self);
 									</OnLoad>
 									<OnValueChanged>
 										VideoOptionsSlider_UpdateValue(self, value);
@@ -1219,8 +1206,8 @@
 							</Slider>
 							<Slider name="$parentWindFlutter" inherits="VideoOptionsSliderTemplate">
 								<Anchors>
-									<Anchor point="TOPLEFT" relativeTo="$parentWindBox" relativePoint="TOPLEFT"><Offset x="46" y="-136"/></Anchor>
-									<Anchor point="TOPRIGHT" relativeTo="$parentWindBox" relativePoint="TOPRIGHT"><Offset x="-24" y="-136"/></Anchor>
+									<Anchor point="TOPLEFT" relativeTo="$parentWindBox" relativePoint="TOPLEFT"><Offset x="24" y="-98"/></Anchor>
+									<Anchor point="TOPRIGHT" relativeTo="$parentWindBox" relativePoint="TOPRIGHT"><Offset x="-24" y="-98"/></Anchor>
 								</Anchors>
 								<Layers><Layer level="ARTWORK"><FontString name="$parentDesc" inherits="VideoOptionsSliderDescFont" text="Extra shimmer per blade, so a field moves as blades and not one sheet.">
 									<Size y="12"/>
@@ -1232,7 +1219,6 @@
 								<Scripts>
 									<OnLoad>
 										VideoOptionsSlider_OnLoad(self, "grassWindFlutter");
-										BlizzardOptionsPanel_SetupDependentControl(VideoOptionsPhysicsPanelWind, self);
 									</OnLoad>
 									<OnValueChanged>
 										VideoOptionsSlider_UpdateValue(self, value);
@@ -1242,8 +1228,8 @@
 							</Slider>
 							<Slider name="$parentWindSpeed" inherits="VideoOptionsSliderTemplate">
 								<Anchors>
-									<Anchor point="TOPLEFT" relativeTo="$parentWindBox" relativePoint="TOPLEFT"><Offset x="46" y="-202"/></Anchor>
-									<Anchor point="TOPRIGHT" relativeTo="$parentWindBox" relativePoint="TOPRIGHT"><Offset x="-24" y="-202"/></Anchor>
+									<Anchor point="TOPLEFT" relativeTo="$parentWindBox" relativePoint="TOPLEFT"><Offset x="24" y="-164"/></Anchor>
+									<Anchor point="TOPRIGHT" relativeTo="$parentWindBox" relativePoint="TOPRIGHT"><Offset x="-24" y="-164"/></Anchor>
 								</Anchors>
 								<Layers><Layer level="ARTWORK"><FontString name="$parentDesc" inherits="VideoOptionsSliderDescFont" text="How fast the wind travels.">
 									<Size y="12"/>
@@ -1255,7 +1241,6 @@
 								<Scripts>
 									<OnLoad>
 										VideoOptionsSlider_OnLoad(self, "grassWindSpeed");
-										BlizzardOptionsPanel_SetupDependentControl(VideoOptionsPhysicsPanelWind, self);
 									</OnLoad>
 									<OnValueChanged>
 										VideoOptionsSlider_UpdateValue(self, value);

@@ -1,5 +1,5 @@
 -- Preset graphics quality tiers. Keys are widget names: the Physics panel owns clutter density, view
--- distance and the wind (the Effects panel used to own the first two), so the clutter and wind entries point
+-- distance (the Effects panel used to own them), so the clutter entries point
 -- at VideoOptionsPhysicsPanel* controls and the rest at VideoOptionsEffectsPanel* / VideoOptionsShadowsPanel*.
 GraphicsQualityLevels = {
 	[1] = {
@@ -9,7 +9,6 @@ GraphicsQualityLevels = {
 		VideoOptionsEffectsPanelEnvironmentDetail = 50,
 		VideoOptionsPhysicsPanelClutterDensity = 16,
 		VideoOptionsPhysicsPanelClutterRadius = 70,
-		VideoOptionsPhysicsPanelWind = false,
 		VideoOptionsEffectsPanelTextureResolution = 0,
 		VideoOptionsEffectsPanelTextureFiltering = 0,
 		VideoOptionsEffectsPanelWeatherIntensity = 0,
@@ -26,7 +25,6 @@ GraphicsQualityLevels = {
 		VideoOptionsEffectsPanelEnvironmentDetail = 75,
 		VideoOptionsPhysicsPanelClutterDensity = 32,
 		VideoOptionsPhysicsPanelClutterRadius = 90,
-		VideoOptionsPhysicsPanelWind = true,
 		VideoOptionsEffectsPanelTextureResolution = 0,
 		VideoOptionsEffectsPanelTextureFiltering = 1,
 		VideoOptionsEffectsPanelWeatherIntensity = 1,
@@ -43,7 +41,6 @@ GraphicsQualityLevels = {
 		VideoOptionsEffectsPanelEnvironmentDetail = 100,
 		VideoOptionsPhysicsPanelClutterDensity = 64,
 		VideoOptionsPhysicsPanelClutterRadius = 120,
-		VideoOptionsPhysicsPanelWind = true,
 		VideoOptionsEffectsPanelTextureResolution = 1,
 		VideoOptionsEffectsPanelTextureFiltering = 3,
 		VideoOptionsEffectsPanelWeatherIntensity = 1,
@@ -60,7 +57,6 @@ GraphicsQualityLevels = {
 		VideoOptionsEffectsPanelEnvironmentDetail = 125,
 		VideoOptionsPhysicsPanelClutterDensity = 96,
 		VideoOptionsPhysicsPanelClutterRadius = 150,
-		VideoOptionsPhysicsPanelWind = true,
 		VideoOptionsEffectsPanelTextureResolution = 1,
 		VideoOptionsEffectsPanelTextureFiltering = 4,
 		VideoOptionsEffectsPanelWeatherIntensity = 2,
@@ -77,7 +73,6 @@ GraphicsQualityLevels = {
 		VideoOptionsEffectsPanelEnvironmentDetail = 150,
 		VideoOptionsPhysicsPanelClutterDensity = 196,
 		VideoOptionsPhysicsPanelClutterRadius = 196,
-		VideoOptionsPhysicsPanelWind = true,
 		VideoOptionsEffectsPanelTextureResolution = 1,
 		VideoOptionsEffectsPanelTextureFiltering = 5,
 		VideoOptionsEffectsPanelWeatherIntensity = 3,
@@ -94,7 +89,6 @@ GraphicsQualityLevels = {
 		VideoOptionsEffectsPanelEnvironmentDetail = 50,
 		VideoOptionsPhysicsPanelClutterDensity = 16,
 		VideoOptionsPhysicsPanelClutterRadius = 70,
-		VideoOptionsPhysicsPanelWind = true,
 		VideoOptionsEffectsPanelTextureResolution = 0,
 		VideoOptionsEffectsPanelTextureFiltering = 0,
 		VideoOptionsEffectsPanelWeatherIntensity = 0,
